@@ -11,7 +11,7 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 15px 30px;
-  border-bottom: 2px solid #7c3aed;
+  border-bottom: 2px solid #000000;
   background-color: #f5f5f5;
 }
 
@@ -65,29 +65,118 @@ body {
 
 /* ABOUT PAGE */
 .about-page {
-  display: flex;
-  flex-direction: column;   
-  justify-content: center;  
-  align-items: center;      
-  height: 80vh;
-  gap: 16px;                
+  padding: 40px 24px 80px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.about-hero {
+  background: #f3f3f3;
+  text-align: center;
+  padding: 80px 20px;
+  margin-bottom: 40px;
 }
 
 .about-title {
   font-size: 3rem;
-  font-weight: bold;
-  margin: 0;
-  text-align: center;
+  margin-bottom: 16px;
 }
 
 .about-description {
   font-size: 1.1rem;
-  color: #555;
-  max-width: 600px;
-  text-align: center;
-  margin: 0;
+  max-width: 700px;
+  margin: 0 auto;
+  line-height: 1.6;
 }
 
+.about-features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+  margin-bottom: 60px;
+}
+
+.feature-card-large {
+  min-height: 320px;
+}
+
+.feature-image-placeholder {
+  height: 180px;
+  background: #dddddd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  font-weight: bold;
+  color: #666;
+}
+
+.section-heading {
+  margin-bottom: 24px;
+}
+
+.section-heading h2 {
+  margin-bottom: 8px;
+}
+
+.about-workflow {
+  margin-bottom: 60px;
+}
+
+.workflow-card {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.workflow-icon-placeholder {
+  width: 70px;
+  height: 70px;
+  background: #fafafa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.workflow-text h3 {
+  margin: 0 0 8px;
+}
+
+.workflow-text p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.about-team {
+  margin-bottom: 40px;
+}
+
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.team-member {
+  padding: 16px;
+  text-align: center;
+}
+
+.feature-card,
+.workflow-card,
+.team-member {
+  border: 1px solid #ddd;
+  background: #f8f8f8;
+  padding: 20px;
+}
+
+.workflow-icon {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
 
 /*Title Page*/
 .title-page {
