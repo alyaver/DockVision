@@ -1,4 +1,6 @@
 import Navigation from '../components/Navigation';
+import autoTestImg from '../assets/autoTest.png';
+import rtMonitoringImg from '../assets/rtMonitoring.png';
 import uploadIcon from '../assets/uploadIcon.png';
 import executeIcon from '../assets/executeIcon.png';
 import viewResultsIcon from '../assets/viewResultsIcon.png';
@@ -21,7 +23,9 @@ const About = () => {
         {/* Section 2 - Feature Overview */}
         <section className="about-features">
           <div className="feature-card feature-card-large">
-            <div className="feature-image-placeholder">Image</div>
+            <div className="feature-image-placeholder">
+              <img src={autoTestImg} alt="Automated testing" className="feature-image" />
+            </div>
             <h2>Automated Testing</h2>
             <p>
               Upload runner scripts and configuration files to start test runs
@@ -30,7 +34,9 @@ const About = () => {
           </div>
 
           <div className="feature-card feature-card-large">
-            <div className="feature-image-placeholder">Image</div>
+            <div className="feature-image-placeholder">
+              <img src={rtMonitoringImg} alt="Real-time monitoring" className="feature-image" />
+            </div>
             <h2>Real-Time Monitoring</h2>
             <p>
               Track logs, screenshots, and execution progress while tests are
@@ -94,14 +100,14 @@ const About = () => {
           </div>
 
           <div className="team-grid">
-            <div className="team-member">Raeshon Minnifield</div>
-            <div className="team-member">Brendan Nichols</div>
-            <div className="team-member">Dann Manganti</div>
-            <div className="team-member">Ashanti Momon</div>
-            <div className="team-member">Johnathan Castaneda</div>
-            <div className="team-member">Michael Normile</div>
-            <div className="team-member">Caleb Lewis</div>
-            <div className="team-member">Anton Lyaver</div>
+            <div className="team-member"><div className="team-avatar">RM</div><span>Raeshon Minnifield</span></div>
+            <div className="team-member"><div className="team-avatar">BN</div><span>Brendan Nichols</span></div>
+            <div className="team-member"><div className="team-avatar">DM</div><span>Dann Manganti</span></div>
+            <div className="team-member"><div className="team-avatar">AM</div><span>Ashanti Momon</span></div>
+            <div className="team-member"><div className="team-avatar">JC</div><span>Johnathan Castaneda</span></div>
+            <div className="team-member"><div className="team-avatar">MN</div><span>Michael Normile</span></div>
+            <div className="team-member"><div className="team-avatar">CL</div><span>Caleb Lewis</span></div>
+            <div className="team-member"><div className="team-avatar">AL</div><span>Anton Lyaver</span></div>
           </div>
         </section>
       </main>
