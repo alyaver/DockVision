@@ -12,15 +12,18 @@ const Navigation = () => {
       </div>
 
       <ul className="nav-links">
-        {location.pathname === '/' && (
+        {location.pathname !== '/about' && (
           <li>
             <Link to="/about" className="hover-underline">About</Link>
           </li>
         )}
 
-        <li>
-          <Link to="/contact" className="hover-underline">Contact</Link>
-        </li>
+        {location.pathname !== '/contact' && (
+          <li>
+            <Link to="/contact" className="hover-underline">Contact</Link>
+          </li>
+        )}
+        
         <li>
           <Link to="/login" className="nav-button">Sign in</Link>
         </li>
