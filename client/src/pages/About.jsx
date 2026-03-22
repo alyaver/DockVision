@@ -1,10 +1,10 @@
 import Navigation from '../components/Navigation';
-import autoTestImg from '../assets/autoTest.png';
-import rtMonitoringImg from '../assets/rtMonitoring.png';
-import uploadIcon from '../assets/uploadIcon.png';
-import executeIcon from '../assets/executeIcon.png';
-import viewResultsIcon from '../assets/viewResultsIcon.png';
-import '../Main.css';
+import autoTestImg from '../assets/aboutImages/autoTest.png';
+import rtMonitoringImg from '../assets/aboutImages/rtMonitoring.png';
+import uploadIcon from '../assets/aboutImages/uploadIcon.png';
+import executeIcon from '../assets/aboutImages/executeIcon.png';
+import viewResultsIcon from '../assets/aboutImages/viewResultsIcon.png';
+import '../About.css';
 
 const About = () => {
   return (
