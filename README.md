@@ -49,3 +49,6 @@ http://localhost:5173
 ## This is to test the discord hook system
 
 ## This is the second test for the discord hook system
+
+## This is to test the second discord hook functionality,
+## now named Merge Monitor
