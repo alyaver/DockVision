@@ -1,0 +1,30 @@
+/* RESET */
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+/*Title Page*/
+.title-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 80vh;
+}
+
+.title-page-heading {
+  font-size: 4rem;
+  font-weight: bold;
+  text-align: center;
+}
+
+.title-page-box {
+  background: #eee;
+  border: 1px solid #ccc;
+  padding: 40px;
+  border-radius: 20px;
+  max-width: 900px;
+  width: 100%;
+  text-align: center;
+  box-shadow: inset 0 0 0 2px #ddd;
+}

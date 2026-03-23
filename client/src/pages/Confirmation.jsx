@@ -1,6 +1,5 @@
 import Navigation from '../components/Navigation';
 import { Link } from 'react-router-dom';
-import '../Main.css';
 import '../confirmationPage.css';
 
 // sample python script and JSON config for testing
