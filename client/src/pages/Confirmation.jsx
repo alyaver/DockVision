@@ -26,6 +26,7 @@ const DisplayCard = ({title, content}) => (
     </div>
 );
 
+
 const Confirmation = ({pythonScript = samplePythonScript, jsonConfig = sampleJsonConfig, onConfirm, onReturn = "/Dashboard"}) => {
     return(
      <>
