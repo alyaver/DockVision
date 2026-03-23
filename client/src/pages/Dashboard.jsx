@@ -1,7 +1,6 @@
 import Navigation from '../components/Navigation';
 import { UploadIcon, RunIcon, SettingsIcon, EmptyIcon } from '../components/Icons';
-//import '../Main.css';
-import '../Dashboard.css'
+import '../Dashboard.css';
 import { useState } from "react";
 
 //filers for test 

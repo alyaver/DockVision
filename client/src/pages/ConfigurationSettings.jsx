@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
 import Navigation from "../components/Navigation";
-import "./ConfigurationSettings.css";
+import "../ConfigurationSettings.css";
 
 function ConfigurationSettings() {
   const navigate = useNavigate();
