@@ -1,0 +1,43 @@
+name: Discord PR Updates
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [closed]
+
+jobs:
+  notify-approval:
+    if: >
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'approved' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.review.user.login == 'Robot-Ray'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send approval message to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          MSG="✅ PR approved by ${GITHUB_ACTOR}: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"$MSG\"}" \
+               "$DISCORD_WEBHOOK_URL"
+
+  notify-merge:
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.actor == 'YOUR_GITHUB_USERNAME'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send merge message to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          MSG="🚀 Merged into main by ${GITHUB_ACTOR}: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}. Everyone pull latest main."
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"$MSG\"}" \
+               "$DISCORD_WEBHOOK_URL"
