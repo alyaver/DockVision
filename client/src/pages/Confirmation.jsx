@@ -1,6 +1,6 @@
 import Navigation from '../components/Navigation';
 import { Link } from 'react-router-dom';
-import '../Main.css';
+//import '../Main.css';
 import '../confirmationPage.css';
 
 // sample python script and JSON config for testing
@@ -26,7 +26,6 @@ const DisplayCard = ({title, content}) => (
         </div>
     </div>
 );
-
 
 const Confirmation = ({pythonScript = samplePythonScript, jsonConfig = sampleJsonConfig, onConfirm, onReturn = "/Dashboard"}) => {
     return(

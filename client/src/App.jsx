@@ -4,6 +4,7 @@ import About from './pages/About';
 import Contact from './pages/Contact'
 import Dashboard from './pages/Dashboard';
 import Confirmation from './pages/Confirmation';
+import ConfigurationSettings from "./pages/ConfigurationSettings,jsx";
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
         <Route path="/contact" element={<Contact />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/confirmation" element={<Confirmation />} />
+        <Route path="/configuration-settings" element={<ConfigurationSettings />} />
       </Routes>
     </Router>
   );
