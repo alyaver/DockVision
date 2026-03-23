@@ -1,0 +1,23 @@
+services:
+  windows:
+    image: dockurr/windows
+    container_name: windows
+    restart: always
+    ports:
+      - "8006:8006"
+      - "3389:3389/tcp"
+      - "3389:3389/udp"
+    environment:
+      VERSION: "10l"
+      RAM_SIZE: "4G"
+      CPU_CORES: "2"
+      DISK_SIZE: "64G"
+    volumes:
+      - ./OS:/storage
+      - ./shared:/shared
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    stop_grace_period: 2m

@@ -1,5 +1,6 @@
 import Navigation from '../components/Navigation';
 import '../Contact.css';
+import '../NavBar.css';
 
 const Contact = () => {
   return(
