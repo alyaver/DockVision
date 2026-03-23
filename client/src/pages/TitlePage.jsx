@@ -1,5 +1,5 @@
 import Navigation from '../components/Navigation';
-import '../Main.css';
+import '../About.css';
 
 const TitlePage = () => {
   return (

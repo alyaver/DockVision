@@ -1,0 +1,97 @@
+/* Confirmation Page */
+
+.Confirmation-Page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 75vh;
+  font-family: sans-serif;
+}
+
+.Confirmation-Box {
+  background: white;
+  border: 1px solid #ddd;
+  padding: 40px;
+  border-radius: 8px;
+  max-width: 900px;
+  width: 100%;
+  text-align: center;
+  box-shadow: inset 0 0 0 2px #eee;
+  
+}
+
+.Display-Card {
+  flex: 1;
+  border: 2px solid #ddd;
+  border-radius: 12px;
+  text-align: left;
+  overflow: hidden;
+}
+
+.Card-Title {
+  background-color: lightgray;
+  padding: 12px 20px;
+  font-weight: bold;
+  font-size: 1.2rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.Card-Content {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 40px;
+  width: 100%;
+}
+
+.Card-Container {
+  height: 300px;
+  padding: 15px;
+  overflow-y: auto;
+  overflow-x: auto;
+  background-color: #fff;
+}
+
+.Title {
+  margin-bottom: 30px;
+  font-weight: 600;
+}
+
+.Button-Group {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+}
+
+.Button {
+  padding: 10px 40px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 500;
+  color: white;
+  background-color: #333;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.Button:hover {
+  opacity: 0.88;
+  transform: translateY(-1px);
+}
+ 
+.Button:active {
+  transform: translateY(0);
+}
+ 
+.Button-primary {
+  background-color: #1a1a1a;
+  color: #ffffff;
+  border-color: #1a1a1a;
+  justify-content: center;
+  font-weight: 600;
+  margin-top: 4px;
+}
+ 
+.Button-primary:hover {
+  opacity: 0.85;
+}
