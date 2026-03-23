@@ -30,7 +30,7 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true &&
       github.event.pull_request.base.ref == 'main' &&
-      github.actor == 'YOUR_GITHUB_USERNAME'
+      github.actor == 'Robot-Ray'
     runs-on: ubuntu-latest
     steps:
       - name: Send merge message to Discord
