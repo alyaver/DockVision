@@ -1,14 +1,17 @@
 $ports = @(5000, 5173)
 
 foreach ($port in $ports) {
-    $lines = netstat -ano | Select-String ":$port"
-    foreach ($line in $lines) {
-        $parts = ($line.ToString() -split '\s+') | Where-Object { $_ -ne '' }
-        $pid = $parts[-1]
+    $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
 
-        if ($pid -match '^\d+$') {
-            Write-Host "Killing PID $pid on port $port"
-            taskkill /PID $pid /F | Out-Null
+    if ($connections) {
+        $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+
+        foreach ($pid in $pids) {
+            Write-Host "Stopping PID $pid on port $port"
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
         }
+    }
+    else {
+        Write-Host "No process found on port $port"
     }
 }
