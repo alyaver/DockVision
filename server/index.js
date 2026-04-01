@@ -50,3 +50,7 @@ app.post("/api/docker/start-smoke", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
+app.get('/api/health', (req, res) => {
+  res.json({ success: true, message: 'Backend is running' })
+})

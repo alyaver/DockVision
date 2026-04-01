@@ -5,26 +5,26 @@ $ports = @(5000, 5173)
 foreach ($port in $ports) {
     $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
     if ($connections) {
-        $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-        foreach ($pid in $pids) {
-            Write-Host "Stopping PID $pid on port $port"
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        $owningProcesses = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($processId in $owningProcesses) {
+            Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
         }
     }
 }
 
-Start-Process wt.exe -ArgumentList @(
-    'new-tab',
-    '--title', 'Client',
-    'cmd.exe',
-    '/k',
-    "cd /d `"$root`" && npm.cmd run client"
-)
+$clientPath = Join-Path $root 'client'
+$serverPath = Join-Path $root 'server'
 
 Start-Process wt.exe -ArgumentList @(
     'new-tab',
-    '--title', 'Server',
-    'cmd.exe',
-    '/k',
-    "cd /d `"$root`" && npm.cmd run server"
+    '--title', 'ProjectAtlas Client',
+    'powershell.exe', '-NoExit', '-Command', "Set-Location '$clientPath'; npm.cmd run dev"
+)
+
+Start-Sleep -Milliseconds 500
+
+Start-Process wt.exe -ArgumentList @(
+    'new-tab',
+    '--title', 'ProjectAtlas Server',
+    'powershell.exe', '-NoExit', '-Command', "Set-Location '$serverPath'; npm.cmd run dev"
 )
