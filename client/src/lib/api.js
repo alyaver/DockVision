@@ -7,7 +7,7 @@ async function parseJson(response) {
     throw new Error(data.error || data.message || "Request failed");
   }
 
-  return data; //here is a change
+  return data; 
 
 }
 
