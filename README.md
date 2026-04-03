@@ -67,3 +67,17 @@ DockVision/
 ├── WindowsVm/     # VM-related work and future guest-environment direction
 ├── package.json   # Root workspace scripts
 └── README.md
+```
+
+## Getting Started
+---
+
+Prerequisites
+
+Make sure the following are installed on your machine:
+
+Node.js
+npm
+Docker Desktop
+
+Docker Desktop is required for backend routes that interact with containers.
