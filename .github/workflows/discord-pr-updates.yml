@@ -4,9 +4,25 @@ on:
   pull_request_review:
     types: [submitted]
   pull_request:
-    types: [closed]
+    types: [opened, closed]
 
 jobs:
+  notify-pr-created:
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.action == 'opened' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send PR created message to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          MSG="📬 New PR opened by ${{ github.event.pull_request.user.login }}: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\":\"$MSG\"}" \
+               "$DISCORD_WEBHOOK_URL"
+
   notify-approval:
     if: >
       github.event_name == 'pull_request_review' &&
@@ -30,7 +46,7 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true &&
       github.event.pull_request.base.ref == 'main' &&
-      github.actor == 'YOUR_GITHUB_USERNAME'
+      github.actor == 'Robot-Ray'
     runs-on: ubuntu-latest
     steps:
       - name: Send merge message to Discord
