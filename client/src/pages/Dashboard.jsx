@@ -70,6 +70,17 @@ const Dashboard = () => {
               <button className="btn btn-primary" type="button" onClick={handleStartRun}><RunIcon /> Start Test Run</button>
             </div>
           </div>
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Launcher readiness</div>
+            </div>
+            <div className="card-body">
+              <div>Readiness check: Last Update Time goes here</div>
+              <div>Backend availability: Available</div>
+              <div>Docker availability: Available</div>
+              <div>Launch readiness: Not ready</div>
+            </div>
+          </div>
           {/* Recent Test Runs just display no function —*/}
           <div className="card">
             <div className="card-header">
