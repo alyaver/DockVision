@@ -2,8 +2,9 @@ import Navigation from '../components/Navigation';
 import { UploadIcon, RunIcon, SettingsIcon, EmptyIcon } from '../components/Icons';
 import '../Dashboard.css';
 import '../NavBar.css';
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from 'react-router-dom';
+import { getReadiness } from '../lib/api';
 
 // fillers for test
 const RECENT_RUNS = [
@@ -19,8 +20,19 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [testName, setTestName] = useState("");
   const [Notify, setNotify] = useState([]);
+  const [backendAvailable, setBackendAvailable] = useState(null);
 
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
+
+  useEffect(() => {
+    getReadiness()
+      .then((result) => {
+        setBackendAvailable(result.backendAvailable);
+      })
+      .catch(() => {
+        setBackendAvailable(false);
+      });
+  }, []);
 
   function pushNotify(type, title, msg) {
     const id = crypto.randomUUID();
@@ -76,7 +88,7 @@ const Dashboard = () => {
             </div>
             <div className="card-body">
               <div>Readiness check: Last Update Time goes here</div>
-              <div>Backend availability: Available</div>
+              <div>Backend availability: {backendAvailable === null ? 'Checking...' : backendAvailable ? 'Available' : 'Unavailable'}</div>
               <div>Docker availability: Available</div>
               <div>Launch readiness: Not ready</div>
             </div>
