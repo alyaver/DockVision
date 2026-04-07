@@ -83,3 +83,16 @@
   font-weight: 100px;
   color: rgb(0, 0, 0)
 }
+
+.sign-in-value-box ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.valid {
+  color: green;
+}
+
+.invalid {
+  color: red;
+}
