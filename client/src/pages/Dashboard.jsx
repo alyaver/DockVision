@@ -19,6 +19,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [testName, setTestName] = useState("");
   const [Notify, setNotify] = useState([]);
+  const [runnerFile, setRunnerFile] = useState(null);
 
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
 
@@ -27,12 +28,42 @@ const Dashboard = () => {
     setNotify((n) => [...n, { id, type, title, msg }]);
   }
 
+  const handleFileChange = (e) => { // validate file type and size before accepting
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith(".py") && !fileName.endsWith(".ps1")) { // only accept .py or .ps1 files
+      pushNotify(
+        "error",
+        "Invalid Runner Script File type",
+        "Please upload a valid runner script (.py or .ps1).");
+      setRunnerFile(null);
+    } else {
+      setRunnerFile(file);
+    }
+    e.target.value = null; // reset file input
+  };
+
+  const removeRunnerFile = () => { // remove selected file
+    setRunnerFile(null);
+  };
+
   function handleStartRun() {
     if (!testName.trim()) {
       pushNotify(
         "error",
         "Test name required",
         "Please enter a test run name before continuing."
+      );
+      return;
+    }
+    
+    if(!runnerFile) { // runner script is required to start a test run
+      pushNotify(
+        "error",
+        "Runner script required",
+        "Please upload a runner script before continuing."
       );
       return;
     }
@@ -63,7 +94,15 @@ const Dashboard = () => {
                 placeholder="Name #1"
               />
               <div className="form-stack">
-                <button className="btn" type="button"><UploadIcon /> Upload Runner Script</button>
+                {runnerFile ? ( // if file is uploaded, show file info and remove option
+                  <button className="btn" type="button" onClick={removeRunnerFile}>Remove {runnerFile.name} ({`${(runnerFile.size / 1024).toFixed(2)} KB`})</button>
+                ) : ( // if no file, show upload button
+                  <label className="btn">
+                    <UploadIcon /> Upload Runner Script (.py or .ps1)
+                    <input type="file" accept=".py, .ps1" onChange={handleFileChange} style={{ display: "none" }} />
+                  </label>
+                )}
+
                 <button className="btn" type="button"><UploadIcon /> Upload Config</button>
                 <button className="btn" type="button" onClick={() => navigate('/configuration-settings')}><SettingsIcon /> Configure Settings</button>
               </div>
