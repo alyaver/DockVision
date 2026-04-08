@@ -31,10 +31,12 @@ const Dashboard = () => {
 
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
 
-  useEffect(() => {
-    getReadiness()
-      .then((result) => {
-        setReadiness({
+  async function refreshReadiness() {
+    setReadiness((prev) => ({ ...prev, loading: true, errorMessage: "" }));
+
+    try {
+      const result = await getReadiness();
+      setReadiness({
           backendAvailable: result.backendAvailable,
           dockerAvailable: result.dockerAvailable,
           requiredLaunchReady: result.requiredLaunchReady,
@@ -42,17 +44,24 @@ const Dashboard = () => {
           lastChecked: new Date().toLocaleTimeString(),
           errorMessage: "",
         });
-      })
-      .catch(() => {
+    } catch (error) {
+      //if the backend is not reachable then set everything to false
         setReadiness({
           backendAvailable: false,
           dockerAvailable: false,
           requiredLaunchReady: false,
           loading: false,
           lastChecked: new Date().toLocaleTimeString(),
-          errorMessage: "Unable to refresh readiness",
-        });
+          errorMessage: error.message || "Unable to refresh readiness",
       });
+    }
+  }
+
+  useEffect(() => {
+    refreshReadiness();
+    //refresh interval is set to every 10 seconds
+    const interval = setInterval(refreshReadiness, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   function pushNotify(type, title, msg) {
