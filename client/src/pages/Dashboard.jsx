@@ -20,6 +20,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [testName, setTestName] = useState("");
   const [Notify, setNotify] = useState([]);
+  //initial readiness state sets all to false until first check is complete
   const [readiness, setReadiness] = useState({
     backendAvailable: false,
     dockerAvailable: false,
@@ -119,26 +120,29 @@ const Dashboard = () => {
             <div className="card-body">
               <div className="status-row status-header">
                 <div className="status-label">Readiness check</div>
-                <div className="status-value">
-                  {readiness.loading ? "Checking..." : readiness.lastChecked ? `Updated ${readiness.lastChecked}` : "Not checked yet"}
-                </div>
+                <div className="status-value">{readiness.loading ? "Checking..." : readiness.lastChecked ? `Updated ${readiness.lastChecked}` : "Not checked yet"}</div>
               </div>
               <div className="status-row">
                 <div className="status-label">Backend availability</div>
-                <div className={`status-badge ${readiness.loading ? 'unknown' : readiness.backendAvailable ? 'ready' : 'unready'}`}>
-                  {readiness.loading ? 'Checking...' : readiness.backendAvailable ? 'Ready' : 'Unavailable'}
+                <div className={`status-badge ${readiness.backendAvailable ? "ready" : "unready"}`}>
+                  {readiness.loading ? "…" : readiness.backendAvailable ? "Ready" : "Unavailable"}
                 </div>
               </div>
               <div className="status-row">
                 <div className="status-label">Docker availability</div>
-                <div className={`status-badge ${readiness.loading ? 'unknown' : readiness.dockerAvailable ? 'ready' : 'unready'}`}>
-                  {readiness.loading ? 'Checking...' : readiness.dockerAvailable ? 'Ready' : 'Unavailable'}
+                <div className={`status-badge ${readiness.dockerAvailable ? "ready" : "unready"}`}>
+                  {readiness.loading ? "…" : readiness.dockerAvailable ? "Ready" : "Unavailable"}
                 </div>
               </div>
               <div className="status-row">
                 <div className="status-label">Launch readiness</div>
-                <div className={`status-badge ${readiness.loading ? 'unknown' : readiness.requiredLaunchReady ? 'ready' : 'unready'}`}>
-                  {readiness.loading ? 'Checking...' : readiness.requiredLaunchReady ? 'Ready' : 'Not ready'}
+                <div className={`status-badge ${
+                  readiness.requiredLaunchReady === null ? "unknown" : 
+                  readiness.requiredLaunchReady ? "ready" : "unready"
+                }`}>
+                  {readiness.loading ? "…" : 
+                   readiness.requiredLaunchReady === null ? "Unknown" :
+                   readiness.requiredLaunchReady ? "Ready" : "Not ready"}
                 </div>
               </div>
               {readiness.errorMessage ? (
