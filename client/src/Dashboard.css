@@ -219,6 +219,66 @@ body, #root {
   color: #ffffff;
   border-color: #1a1a1a;
 }
+
+/*Readiness Indicators*/
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #eeeeee;
+}
+
+.status-row:last-child {
+  border-bottom: none;
+}
+
+.status-label {
+  font-size: 13px;
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.status-value {
+  font-size: 12px;
+  color: #666666;
+}
+
+.status-badge {
+  display: inline-flex;
+  min-width: 96px;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status-badge.ready {
+  background-color: #e6f7ed;
+  color: #1d7a34;
+  border: 1px solid #c7ebd3;
+}
+
+.status-badge.unready {
+  background-color: #fde8e6;
+  color: #c0392b;
+  border: 1px solid #f5c6cb;
+}
+
+.status-badge.unknown {
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
+}
+
+.status-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #666666;
+}
  
 /* EMPTY STATE*/
 .empty-state {

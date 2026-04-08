@@ -87,10 +87,24 @@ const Dashboard = () => {
               <div className="card-title">Launcher readiness</div>
             </div>
             <div className="card-body">
-              <div>Readiness check: Last Update Time goes here</div>
-              <div>Backend availability: {backendAvailable === null ? 'Checking...' : backendAvailable ? 'Available' : 'Unavailable'}</div>
-              <div>Docker availability: Available</div>
-              <div>Launch readiness: Not ready</div>
+              <div className="status-row status-header">
+                <div className="status-label">Readiness check</div>
+                <div className="status-value">Last Update Time goes here</div>
+              </div>
+              <div className="status-row">
+                <div className="status-label">Backend availability</div>
+                <div className={`status-badge ${backendAvailable === null ? 'unknown' : backendAvailable ? 'ready' : 'unready'}`}>
+                  {backendAvailable === null ? 'Checking...' : backendAvailable ? 'Ready' : 'Unavailable'}
+                </div>
+              </div>
+              <div className="status-row">
+                <div className="status-label">Docker availability</div>
+                <div className="status-badge ready">Ready</div>
+              </div>
+              <div className="status-row">
+                <div className="status-label">Launch readiness</div>
+                <div className="status-badge unready">Not ready</div>
+              </div>
             </div>
           </div>
           {/* Recent Test Runs just display no function —*/}
