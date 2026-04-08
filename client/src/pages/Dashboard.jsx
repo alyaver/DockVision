@@ -20,17 +20,38 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [testName, setTestName] = useState("");
   const [Notify, setNotify] = useState([]);
-  const [backendAvailable, setBackendAvailable] = useState(null);
+  const [readiness, setReadiness] = useState({
+    backendAvailable: false,
+    dockerAvailable: false,
+    requiredLaunchReady: false,
+    loading: true,
+    lastChecked: null,
+    errorMessage: "",
+  });
 
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
 
   useEffect(() => {
     getReadiness()
       .then((result) => {
-        setBackendAvailable(result.backendAvailable);
+        setReadiness({
+          backendAvailable: result.backendAvailable,
+          dockerAvailable: result.dockerAvailable,
+          requiredLaunchReady: result.requiredLaunchReady,
+          loading: false,
+          lastChecked: new Date().toLocaleTimeString(),
+          errorMessage: "",
+        });
       })
       .catch(() => {
-        setBackendAvailable(false);
+        setReadiness({
+          backendAvailable: false,
+          dockerAvailable: false,
+          requiredLaunchReady: false,
+          loading: false,
+          lastChecked: new Date().toLocaleTimeString(),
+          errorMessage: "Unable to refresh readiness",
+        });
       });
   }, []);
 
@@ -89,22 +110,31 @@ const Dashboard = () => {
             <div className="card-body">
               <div className="status-row status-header">
                 <div className="status-label">Readiness check</div>
-                <div className="status-value">Last Update Time goes here</div>
+                <div className="status-value">
+                  {readiness.loading ? "Checking..." : readiness.lastChecked ? `Updated ${readiness.lastChecked}` : "Not checked yet"}
+                </div>
               </div>
               <div className="status-row">
                 <div className="status-label">Backend availability</div>
-                <div className={`status-badge ${backendAvailable === null ? 'unknown' : backendAvailable ? 'ready' : 'unready'}`}>
-                  {backendAvailable === null ? 'Checking...' : backendAvailable ? 'Ready' : 'Unavailable'}
+                <div className={`status-badge ${readiness.loading ? 'unknown' : readiness.backendAvailable ? 'ready' : 'unready'}`}>
+                  {readiness.loading ? 'Checking...' : readiness.backendAvailable ? 'Ready' : 'Unavailable'}
                 </div>
               </div>
               <div className="status-row">
                 <div className="status-label">Docker availability</div>
-                <div className="status-badge ready">Ready</div>
+                <div className={`status-badge ${readiness.loading ? 'unknown' : readiness.dockerAvailable ? 'ready' : 'unready'}`}>
+                  {readiness.loading ? 'Checking...' : readiness.dockerAvailable ? 'Ready' : 'Unavailable'}
+                </div>
               </div>
               <div className="status-row">
                 <div className="status-label">Launch readiness</div>
-                <div className="status-badge unready">Not ready</div>
+                <div className={`status-badge ${readiness.loading ? 'unknown' : readiness.requiredLaunchReady ? 'ready' : 'unready'}`}>
+                  {readiness.loading ? 'Checking...' : readiness.requiredLaunchReady ? 'Ready' : 'Not ready'}
+                </div>
               </div>
+              {readiness.errorMessage ? (
+                <div className="status-note">{readiness.errorMessage}</div>
+              ) : null}
             </div>
           </div>
           {/* Recent Test Runs just display no function —*/}
