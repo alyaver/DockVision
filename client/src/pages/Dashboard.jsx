@@ -18,6 +18,7 @@ const RECENT_RUNS = [
 const Dashboard = () => {
   const navigate = useNavigate();
   const configFileInputRef = useRef(null);
+  const [configFile, setConfigFile] = useState(null);
   const [testName, setTestName] = useState("");
   const [Notify, setNotify] = useState([]);
 
@@ -36,11 +37,30 @@ const Dashboard = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    const lowerName = file.name.toLowerCase();
+    const allowedExtensions = [".json", ".yml", ".yaml"];
+    const isValidConfigFile = allowedExtensions.some((ext) =>
+      lowerName.endsWith(ext)
+    );
+
+    if (!isValidConfigFile) {
+      setConfigFile(null);
+      pushNotify(
+        "error",
+        "Invalid config file",
+        `${file.name} is not a supported file type. Please upload a .json, .yml, or .yaml file.`
+      );
+      event.target.value = "";
+      return;
+    }
+
+    setConfigFile(file);
     pushNotify(
       "warn",
       "Config selected",
       `${file.name} is ready for the next step.`
     );
+    event.target.value = "";
   }
 
   function handleStartRun() {
