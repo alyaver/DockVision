@@ -14,13 +14,15 @@ const RECENT_RUNS = [
   { id: "e", name: "Test Run E", date: "xx/xx/xxxx" },
 ];
 
+const ALLOWED_CONFIG_EXTENSIONS = ['.json', '.yml', '.yaml'];
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const configFileInputRef = useRef(null);
-  const [configFile, setConfigFile] = useState(null);
   const [testName, setTestName] = useState("");
+  const [configFile, setConfigFile] = useState(null);
   const [Notify, setNotify] = useState([]);
+  const [isPreparingRun, setIsPreparingRun] = useState(false);
 
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
 
@@ -38,42 +40,100 @@ const Dashboard = () => {
     if (!file) return;
 
     const lowerName = file.name.toLowerCase();
-    const allowedExtensions = [".json", ".yml", ".yaml"];
-    const isValidConfigFile = allowedExtensions.some((ext) =>
+    const isValidConfigFile = ALLOWED_CONFIG_EXTENSIONS.some((ext) =>
       lowerName.endsWith(ext)
     );
 
     if (!isValidConfigFile) {
       setConfigFile(null);
       pushNotify(
-        "error",
-        "Invalid config file",
+        'error',
+        'Invalid config file',
         `${file.name} is not a supported file type. Please upload a .json, .yml, or .yaml file.`
       );
-      event.target.value = "";
+      event.target.value = '';
       return;
     }
 
     setConfigFile(file);
     pushNotify(
-      "warn",
-      "Config selected",
+      'warn',
+      'Config selected',
       `${file.name} is ready for the next step.`
     );
-    event.target.value = "";
+    event.target.value = '';
   }
 
-  function handleStartRun() {
-    if (!testName.trim()) {
-      pushNotify(
-        "error",
-        "Test name required",
-        "Please enter a test run name before continuing."
-      );
-      return;
-    }
-    navigate("/confirmation");
+ function handleStartRun() {
+  if (!testName.trim()) {
+    pushNotify(
+      "error",
+      "Test name required",
+      "Please enter a test run name before continuing."
+    );
+    return;
   }
+
+  if (!configFile) {
+    pushNotify(
+      "error",
+      "Config file required",
+      "Please upload a valid config file before continuing."
+    );
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    navigate("/confirmation", {
+      state: {
+        testName,
+        configFileName: configFile.name,
+        configContent: typeof reader.result === "string" ? reader.result : "",
+      },
+    });
+  };
+
+  reader.onerror = () => {
+    pushNotify(
+      "error",
+      "Unable to read config",
+      "The selected config file could not be read. Please try again."
+    );
+  };
+
+  reader.readAsText(configFile);
+
+  /*
+  // Re-enable this when the backend route exists:
+  async function prepareRun() {
+    const formData = new FormData();
+    formData.append("testName", testName);
+    formData.append("config", configFile);
+
+    const response = await fetch("/api/test-runs/prepare", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to prepare test run");
+    }
+
+    const data = await response.json();
+
+    navigate("/confirmation", {
+      state: {
+        runId: data.runId,
+        testName: data.testName ?? testName,
+        configFileName: data.configFileName ?? configFile.name,
+        configContent: data.configContent ?? "",
+      },
+    });
+  }
+  */
+}
 
   return (
     <>
@@ -85,7 +145,6 @@ const Dashboard = () => {
       </div>
       <div className="Dashboard-wrapper">
         <main className="Dashboard-page">
-          {/* Create New Test Run */}
           <div className="card">
             <div className="card-header">
               <div className="card-title">Create New Test Run</div>
@@ -95,7 +154,7 @@ const Dashboard = () => {
               <input
                 className="form-input"
                 value={testName}
-                onChange={e => setTestName(e.target.value)}
+                onChange={(e) => setTestName(e.target.value)}
                 placeholder="Name #1"
               />
               <div className="form-stack">
@@ -112,17 +171,18 @@ const Dashboard = () => {
                 />
                 <button className="btn" type="button" onClick={() => navigate('/configuration-settings')}><SettingsIcon /> Configure Settings</button>
               </div>
-              <button className="btn btn-primary" type="button" onClick={handleStartRun}><RunIcon /> Start Test Run</button>
+              <button className="btn btn-primary" type="button" onClick={handleStartRun} disabled={isPreparingRun}>
+                <RunIcon /> {isPreparingRun ? 'Preparing Test Run...' : 'Start Test Run'}
+              </button>
             </div>
           </div>
-          {/* Recent Test Runs just display no function —*/}
           <div className="card">
             <div className="card-header">
               <div className="card-title">Recent Test Runs</div>
             </div>
             {RECENT_RUNS.length > 0 ? (
               <ul className="run-list">
-                {RECENT_RUNS.map(run => (
+                {RECENT_RUNS.map((run) => (
                   <li key={run.id} className="run-item">
                     <div className="run-item-left">
                       <div className="run-dot" />
@@ -147,12 +207,11 @@ const Dashboard = () => {
           </div>
         </main>
       </div>
-      {/* Notification Stack */}
       <div className="Notify-stack">
-        {Notify.map(t => (
+        {Notify.map((t) => (
           <div key={t.id} className="Notify">
             <div className={`Notify-icon ${t.type}`}>
-              {t.type === "error" ? "✕" : "!"}
+              {t.type === 'error' ? '✕' : '!'}
             </div>
             <div className="Notify-content">
               <div className="Notify-title">{t.title}</div>
