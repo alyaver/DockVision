@@ -116,7 +116,7 @@ const Dashboard = () => {
         configContent: content,
       });
       pushNotify(
-        'warn',
+        'ready',
         'Config selected',
         `${file.name} is ready for the next step.`
       );
