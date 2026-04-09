@@ -2,7 +2,7 @@ import Navigation from '../components/Navigation';
 import { UploadIcon, RunIcon, SettingsIcon, EmptyIcon } from '../components/Icons';
 import '../Dashboard.css';
 import '../NavBar.css';
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from 'react-router-dom';
 
 // fillers for test
@@ -17,6 +17,7 @@ const RECENT_RUNS = [
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const configFileInputRef = useRef(null);
   const [testName, setTestName] = useState("");
   const [Notify, setNotify] = useState([]);
 
@@ -25,6 +26,21 @@ const Dashboard = () => {
   function pushNotify(type, title, msg) {
     const id = crypto.randomUUID();
     setNotify((n) => [...n, { id, type, title, msg }]);
+  }
+
+  function handleConfigUploadClick() {
+    configFileInputRef.current?.click();
+  }
+
+  function handleConfigFileSelected(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    pushNotify(
+      "warn",
+      "Config selected",
+      `${file.name} is ready for the next step.`
+    );
   }
 
   function handleStartRun() {
@@ -64,7 +80,16 @@ const Dashboard = () => {
               />
               <div className="form-stack">
                 <button className="btn" type="button"><UploadIcon /> Upload Runner Script</button>
-                <button className="btn" type="button"><UploadIcon /> Upload Config</button>
+                <button className="btn" type="button" onClick={handleConfigUploadClick}>
+                  <UploadIcon /> Upload Config
+                </button>
+                <input
+                  ref={configFileInputRef}
+                  type="file"
+                  accept=".json,.yml,.yaml"
+                  onChange={handleConfigFileSelected}
+                  style={{ display: 'none' }}
+                />
                 <button className="btn" type="button" onClick={() => navigate('/configuration-settings')}><SettingsIcon /> Configure Settings</button>
               </div>
               <button className="btn btn-primary" type="button" onClick={handleStartRun}><RunIcon /> Start Test Run</button>
