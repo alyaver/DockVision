@@ -94,3 +94,14 @@ app.listen(PORT, () => {
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Backend is running' })
 })
+
+app.get('/api/auth/reset/validate', (req, res) => {
+  const { token } = req.query;
+
+  //added for testing, test-token is accepted as valid, REMOVE WHEN TOKEN GENERATION is implemented
+  if (token === 'test-token') {
+    res.json({ valid: true });
+  } else {
+    res.json({ valid: false, message: 'Invalid or expired token' });
+  }
+});
