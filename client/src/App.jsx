@@ -6,6 +6,7 @@ import TestPage from './pages/running-test/TestPage';
 import Dashboard from './pages/Dashboard';
 import Confirmation from './pages/Confirmation';
 import ConfigurationSettings from "./pages/ConfigurationSettings.jsx";
+import ForgotPassword from "./pages/ForgotPassword.jsx";
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/confirmation" element={<Confirmation />} />
         <Route path="/configuration-settings" element={<ConfigurationSettings />} />
+        <Route path="/forgot-password" element={<ForgotPassword/>} />
       </Routes>
     </Router>
   );
