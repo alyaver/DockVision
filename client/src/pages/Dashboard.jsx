@@ -150,7 +150,7 @@ const Dashboard = () => {
               ) : null}
             </div>
           </div>
-          {/* Recent Test Runs just display no function —*/}
+          {/* Recent Test Runs just display no function */}
           <div className="card">
             <div className="card-header">
               <div className="card-title">Recent Test Runs</div>
