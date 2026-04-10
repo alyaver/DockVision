@@ -2,7 +2,7 @@ import Navigation from '../components/Navigation';
 import { UploadIcon, RunIcon, SettingsIcon, EmptyIcon } from '../components/Icons';
 import '../Dashboard.css';
 import '../NavBar.css';
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from 'react-router-dom';
 
 // fillers for test
@@ -21,13 +21,43 @@ const Dashboard = () => {
   const [Notify, setNotify] = useState([]);
   const [runnerFile, setRunnerFile] = useState(null);
 
-  const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
+  // readiness state of Docker, Backend, and Storage with a checking flag to indicate if we're still checking status
+  // Docker is the only check avaiable at the moment
+  const [readiness, setRediness] = useState({
+    docker: false,
+    backend: true, // assume backend is ready for demo purposes
+    storage: true, // assume storage is ready for demo purposes
+    checking: true // flag to indicate if we're still checking readiness status
+  });
 
+  const checkReadiness = async () => {
+    try {
+      await fetch("http://localhost:8006", { method: "GET", mode: "cors" });
+      setRediness(r => ({ ...r, docker: true, checking: false }));
+    } catch (err) {
+      setRediness(r => ({ ...r, docker: false, checking: false }));
+    }
+  };
+
+  useEffect(() => {
+    checkReadiness();
+    const interval = setInterval(checkReadiness, 5000); // check every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const isDockerDown = !readiness.docker && !readiness.checking;
+  const isRunDisabled = isDockerDown; // disable starting test run if Docker is down, can add backend/storage checks here when implemented
+
+  
+  // Notify functions
+  const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
   function pushNotify(type, title, msg) {
     const id = crypto.randomUUID();
     setNotify((n) => [...n, { id, type, title, msg }]);
   }
 
+  
+  // File upload handlers
   const handleFileChange = (e) => { // validate file type and size before accepting
     const file = e.target.files[0];
     if (!file) return;
@@ -44,7 +74,6 @@ const Dashboard = () => {
     }
     e.target.value = null; // reset file input
   };
-
   const removeRunnerFile = () => { // remove selected file
     setRunnerFile(null);
   };
