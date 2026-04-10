@@ -25,17 +25,32 @@ const Dashboard = () => {
   // Docker is the only check avaiable at the moment
   const [readiness, setRediness] = useState({
     docker: false,
-    backend: true, // assume backend is ready for demo purposes
+    backend: false,
     storage: true, // assume storage is ready for demo purposes
     checking: true // flag to indicate if we're still checking readiness status
   });
 
   const checkReadiness = async () => {
     try {
-      await fetch("http://localhost:8006", { method: "GET", mode: "cors" });
-      setRediness(r => ({ ...r, docker: true, checking: false }));
+      const healthRes = await fetch("http://localhost:5000/api/health");
+      const healthData = await healthRes.json();
+
+      const dockerRes = await fetch("http://localhost:5000/api/docker/ping");
+      const dockerData = await dockerRes.json();
+
+      setRediness({
+        docker: dockerData.success,
+        backend: healthData.success,
+        storage: true, // assume storage is ready for demo purposes
+        checking: false
+      });
     } catch (err) {
-      setRediness(r => ({ ...r, docker: false, checking: false }));
+      setRediness({
+        docker: false,
+        backend: false,
+        storage: true, // assume storage is ready for demo purposes
+        checking: false
+      })
     }
   };
 
