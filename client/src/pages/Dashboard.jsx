@@ -36,10 +36,15 @@ const Dashboard = () => {
       const healthData = await healthRes.json();
 
       const dockerRes = await fetch("http://localhost:5000/api/docker/ping");
-      const dockerData = await dockerRes.json();
+      
+      let dockerStatus = false;
+      if (dockerRes.ok) {
+        const dockerData = await dockerRes.json();
+        dockerStatus = dockerData.success;
+      }
 
       setRediness({
-        docker: dockerData.success,
+        docker: dockerStatus,
         backend: healthData.success,
         storage: true, // assume storage is ready for demo purposes
         checking: false
@@ -60,8 +65,8 @@ const Dashboard = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const isDockerDown = !readiness.docker && !readiness.checking;
-  const isRunDisabled = isDockerDown; // disable starting test run if Docker is down, can add backend/storage checks here when implemented
+  const isSystemReady = readiness.docker && readiness.backend; // check if docker/backend is ready,
+  const startRunEnabled = isSystemReady; // enable starting test run button if System is ready
 
   
   // Notify functions
@@ -150,8 +155,15 @@ const Dashboard = () => {
                 <button className="btn" type="button"><UploadIcon /> Upload Config</button>
                 <button className="btn" type="button" onClick={() => navigate('/configuration-settings')}><SettingsIcon /> Configure Settings</button>
               </div>
-              <button className="btn btn-primary" type="button" onClick={handleStartRun}><RunIcon /> Start Test Run</button>
+              <button className="btn btn-primary" type="button" onClick={handleStartRun} disabled={!isSystemReady} style={{ opacity: !isSystemReady ? 0.5 : 1, cursor: isSystemReady ? "pointer" : "not-allowed" }}><RunIcon /> Start Test Run</button>
             </div>
+              {!readiness.checking && !isSystemReady && (
+                <div className="readiness-alert">
+                  <strong>Start Run Disabled: </strong>
+                  {!readiness.backend && "Backend is offline. "}
+                  {readiness.backend && !readiness.docker && "Docker Desktop is not running. "}
+                </div>
+              )}
           </div>
           {/* Recent Test Runs just display no function —*/}
           <div className="card">
