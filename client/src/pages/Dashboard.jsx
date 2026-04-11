@@ -34,8 +34,9 @@ const Dashboard = () => {
     try {
       const healthRes = await fetch("http://localhost:5000/api/health");
       const healthData = await healthRes.json();
-
       const dockerRes = await fetch("http://localhost:5000/api/docker/ping");
+      const storageRes = await fetch("http://localhost:5000/api/storage/space");
+      const storageData = await storageRes.json();
       
       let dockerStatus = false;
       if (dockerRes.ok) {
@@ -46,7 +47,7 @@ const Dashboard = () => {
       setRediness({
         docker: dockerStatus,
         backend: healthData.success,
-        storage: true, // assume storage is ready for demo purposes
+        storage: storageData.success,
         checking: false
       });
     } catch (err) {
@@ -65,9 +66,7 @@ const Dashboard = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const isSystemReady = readiness.docker && readiness.backend; // check if docker/backend is ready,
-  const startRunEnabled = isSystemReady; // enable starting test run button if System is ready
-
+  const isSystemReady = readiness.docker && readiness.backend && readiness.storage; // check if docker/backend is ready,
   
   // Notify functions
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
@@ -162,6 +161,7 @@ const Dashboard = () => {
                   <strong>Start Run Disabled: </strong>
                   {!readiness.backend && "Backend is offline. "}
                   {readiness.backend && !readiness.docker && "Docker Desktop is not running. "}
+                  {readiness.backend && readiness.docker && !readiness.storage && "Insufficient storage space for VM."}
                 </div>
               )}
           </div>
