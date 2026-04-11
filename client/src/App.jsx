@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Confirmation from './pages/Confirmation';
 import ConfigurationSettings from "./pages/ConfigurationSettings.jsx";
 import Register from "./pages/Register.jsx";
+import Login from "./pages/Login.jsx";
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
         <Route path="/confirmation" element={<Confirmation />} />
         <Route path="/configuration-settings" element={<ConfigurationSettings />} />
         <Route path="/Register" element={<Register />} />
+        <Route path="/Login" element={<Login />} />
       </Routes>
     </Router>
   );
