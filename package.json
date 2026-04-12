@@ -1,7 +1,10 @@
 {
   "name": "dockvision",
   "private": true,
-  "workspaces": ["client", "server"],
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
     "dev": "concurrently -k -n client,server \"npm run dev -w client\" \"npm run dev -w server\"",
     "dev:client": "npm run dev -w client",
@@ -10,5 +13,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.1"
   }
 }

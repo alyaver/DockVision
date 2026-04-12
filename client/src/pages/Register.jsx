@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import "./Auth.css";
 import "../Register.css";
 
-export default function Register({ onSubmit, errorMessage }) {
+export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -11,6 +11,7 @@ export default function Register({ onSubmit, errorMessage }) {
 
   function handleChange(event) {
     const { name, value } = event.target;
+
     setFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -19,6 +20,9 @@ export default function Register({ onSubmit, errorMessage }) {
 
   async function handleSubmit(event) {
     event.preventDefault();
+
+
+  console.log("FORM SUBMITTED"); // ADD THIS
 
     if (onSubmit) {
       await onSubmit(formData);
@@ -86,8 +90,12 @@ export default function Register({ onSubmit, errorMessage }) {
                 required
               />
 
-              <button className="auth-submit-btn" type="submit">
-                Register
+              <button
+                className="auth-submit-btn"
+                type="submit"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "Creating Account..." : "Register"}
               </button>
             </form>
           </section>
@@ -101,7 +109,7 @@ export default function Register({ onSubmit, errorMessage }) {
       <div className="toast-stack">
         {errorMessage && (
           <div className="toast">
-            <div className="toast-title">Email already exists</div>
+            <div className="toast-title">Registration Error</div>
             <div className="toast-message">{errorMessage}</div>
           </div>
         )}

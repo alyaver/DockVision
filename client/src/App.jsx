@@ -6,7 +6,7 @@ import TestPage from './pages/running-test/TestPage';
 import Dashboard from './pages/Dashboard';
 import Confirmation from './pages/Confirmation';
 import ConfigurationSettings from "./pages/ConfigurationSettings.jsx";
-import Register from "./pages/Register.jsx";
+import Register from "./components/Registration.jsx";
 import Login from "./pages/Login.jsx";
 
 function App() {
