@@ -379,6 +379,11 @@ body, #root {
   background-color: #fdf3e6;
   color: #e67e22;
 }
+
+.Notify-icon.ready {
+  background-color: #48cc1f;
+  color: #fcfcfc;
+}
  
 .Notify-content {
   flex: 1;
