@@ -27,7 +27,8 @@ const Dashboard = () => {
     docker: false,
     backend: false,
     storage: true, // assume storage is ready for demo purposes
-    checking: true // flag to indicate if we're still checking readiness status
+    checking: true, // flag to indicate if we're still checking readiness status
+    lastChecked: null // timestamp of last check
   });
 
   const checkReadiness = async () => {
@@ -48,14 +49,16 @@ const Dashboard = () => {
         docker: dockerStatus,
         backend: healthData.success,
         storage: storageData.success,
-        checking: false
+        checking: false,
+        lastChecked: new Date().toLocaleTimeString() // update timestamp
       });
     } catch (err) {
       setRediness({
         docker: false,
         backend: false,
         storage: true, // assume storage is ready for demo purposes
-        checking: false
+        checking: false,
+        lastChecked: new Date().toLocaleTimeString() // update timestamp
       })
     }
   };
@@ -164,6 +167,36 @@ const Dashboard = () => {
                   {readiness.backend && readiness.docker && !readiness.storage && "Insufficient storage space for VM."}
                 </div>
               )}
+          </div>
+          {/* Launcher Readiness Card */}
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Launcher readiness</div>
+            </div>
+            <div className="card-body">
+              <div className="status-row status-header">
+                <div className="status-label">Readiness check</div>
+                <div className="status-value">{readiness.lastChecked ? `Updated ${readiness.lastChecked}` : readiness.checking ? "Checking..." : "Not checked yet"}</div>
+              </div>
+              <div className="status-row">
+                <div className="status-label">Backend availability</div>
+                <div className={`status-badge ${readiness.backend ? "ready" : "unready"}`}>
+                  {readiness.checking ? "…" : readiness.backend ? "Ready" : "Unavailable"}
+                </div>
+              </div>
+              <div className="status-row">
+                <div className="status-label">Docker availability</div>
+                <div className={`status-badge ${readiness.docker ? "ready" : "unready"}`}>
+                  {readiness.checking ? "…" : readiness.docker ? "Ready" : "Unavailable"}
+                </div>
+              </div>
+              <div className="status-row">
+                <div className="status-label">Required launch readiness</div>
+                <div className={`status-badge ${(readiness.backend && readiness.docker) ? "ready" : "unready"}`}>
+                  {readiness.checking ? "…" : (readiness.backend && readiness.docker) ? "Ready" : "Not ready"}
+                </div>
+              </div>
+            </div>
           </div>
           {/* Recent Test Runs just display no function —*/}
           <div className="card">
