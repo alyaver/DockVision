@@ -26,7 +26,7 @@ const Navigation = () => {
         )}
         
         <li>
-          <Link to="/login" className="nav-button">Sign in</Link>
+          <Link to="/sign-in" className="nav-button">Sign in</Link>
         </li>
         <li>
           <Link to="/register" className="nav-button nav-button-dark">Register</Link>
