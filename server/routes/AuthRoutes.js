@@ -4,23 +4,81 @@ const crypto = require("crypto");
 
 const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
-const LOCK_MINUTES = 15;
+
+function normalizeName(value) {
+  return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+}
+
+function normalizeEmail(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
 
 module.exports = function authRoutes(db) {
   const router = express.Router();
 
-  router.post("/register", async (req, res) => {
-    console.log("REGISTER ROUTE HIT");
-    console.log("BODY:", req.body);
-
+  router.get("/me", async (req, res) => {
     try {
-      const { email, password } = req.body;
+      const token = req.cookies.session_token;
 
-      if (!email || !password) {
-        console.log("REGISTER FAILED: missing email or password");
-        return res
-          .status(400)
-          .json({ message: "Email and password are required" });
+      if (!token) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const result = await db.query(
+        `SELECT
+           u.user_id,
+           u.name,
+           u.email
+         FROM sessions s
+         JOIN users u ON u.user_id = s.user_id
+         WHERE s.session_token = $1
+           AND s.expires_at > CURRENT_TIMESTAMP`,
+        [token]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      return res.json({ user: result.rows[0] });
+    } catch (error) {
+      console.error("ME SERVER ERROR:", error);
+      return res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  router.post("/register", async (req, res) => {
+    try {
+      const name = normalizeName(req.body.name);
+      const email = normalizeEmail(req.body.email);
+      const password =
+        typeof req.body.password === "string" ? req.body.password : "";
+      const confirmPassword =
+        typeof req.body.confirmPassword === "string"
+          ? req.body.confirmPassword
+          : "";
+
+      if (!name || !email || !password || !confirmPassword) {
+        return res.status(400).json({
+          message:
+            "Name, email, password, and confirm password are required",
+        });
+      }
+
+      if (!isValidEmail(email)) {
+        return res.status(400).json({
+          message: "Please enter a valid email address",
+        });
+      }
+
+      if (password !== confirmPassword) {
+        return res.status(400).json({
+          message: "Passwords do not match",
+        });
       }
 
       const existingUser = await db.query(
@@ -29,7 +87,6 @@ module.exports = function authRoutes(db) {
       );
 
       if (existingUser.rows.length > 0) {
-        console.log("REGISTER FAILED: email already exists");
         return res.status(409).json({ message: "Email already exists" });
       }
 
@@ -37,6 +94,7 @@ module.exports = function authRoutes(db) {
 
       const insertedUser = await db.query(
         `INSERT INTO users (
+          name,
           email,
           password_hash,
           created_at,
@@ -44,9 +102,9 @@ module.exports = function authRoutes(db) {
           failed_login_count,
           lock_until
         )
-        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, NULL)
-        RETURNING user_id, email, created_at`,
-        [email, passwordHash]
+        VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, NULL)
+        RETURNING user_id, name, email, created_at`,
+        [name, email, passwordHash]
       );
 
       const user = insertedUser.rows[0];
@@ -70,8 +128,6 @@ module.exports = function authRoutes(db) {
         maxAge: 2 * 60 * 60 * 1000,
       });
 
-      console.log("REGISTER SUCCESS:", user.email);
-
       return res.status(201).json({ user });
     } catch (error) {
       console.error("REGISTER SERVER ERROR:", error);
@@ -80,22 +136,27 @@ module.exports = function authRoutes(db) {
   });
 
   router.post("/login", async (req, res) => {
-    console.log("LOGIN ROUTE HIT");
-    console.log("BODY:", req.body);
-
     try {
-      const { email, password } = req.body;
+      const email = normalizeEmail(req.body.email);
+      const password =
+        typeof req.body.password === "string" ? req.body.password : "";
 
       if (!email || !password) {
-        console.log("LOGIN FAILED: missing email or password");
         return res
           .status(400)
           .json({ message: "Email and password are required" });
       }
 
+      if (!isValidEmail(email)) {
+        return res.status(400).json({
+          message: "Please enter a valid email address",
+        });
+      }
+
       const result = await db.query(
         `SELECT
           user_id,
+          name,
           email,
           password_hash,
           failed_login_count,
@@ -106,14 +167,12 @@ module.exports = function authRoutes(db) {
       );
 
       if (result.rows.length === 0) {
-        console.log("LOGIN FAILED: user not found");
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
       const user = result.rows[0];
 
       if (user.lock_until && new Date(user.lock_until) > new Date()) {
-        console.log("LOGIN FAILED: account locked");
         return res
           .status(423)
           .json({ message: "Account is temporarily locked. Try again later." });
@@ -135,8 +194,6 @@ module.exports = function authRoutes(db) {
             [newFailedCount, user.user_id]
           );
 
-          console.log("LOGIN FAILED: account locked after too many attempts");
-
           return res
             .status(423)
             .json({ message: "Account locked due to too many failed attempts" });
@@ -150,8 +207,6 @@ module.exports = function authRoutes(db) {
            WHERE user_id = $2`,
           [newFailedCount, user.user_id]
         );
-
-        console.log("LOGIN FAILED: bad password");
 
         return res.status(401).json({ message: "Invalid email or password" });
       }
@@ -186,11 +241,10 @@ module.exports = function authRoutes(db) {
         maxAge: 2 * 60 * 60 * 1000,
       });
 
-      console.log("LOGIN SUCCESS:", user.email);
-
       return res.json({
         user: {
           user_id: user.user_id,
+          name: user.name,
           email: user.email,
         },
       });
@@ -201,8 +255,6 @@ module.exports = function authRoutes(db) {
   });
 
   router.post("/logout", async (req, res) => {
-    console.log("LOGOUT ROUTE HIT");
-
     try {
       const token = req.cookies.session_token;
 
@@ -211,7 +263,6 @@ module.exports = function authRoutes(db) {
       }
 
       res.clearCookie("session_token");
-      console.log("LOGOUT SUCCESS");
       return res.status(204).send();
     } catch (error) {
       console.error("LOGOUT SERVER ERROR:", error);

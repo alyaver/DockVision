@@ -18,14 +18,30 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
-app.use("/api", authRoutes(db));
-
 app.get("/api/health", (req, res) => {
   res.status(200).json({
     success: true,
     message: "Auth server is running",
   });
 });
+
+app.get("/api/db-test", async (req, res) => {
+  try {
+    const result = await db.query("SELECT NOW()");
+    res.json({
+      success: true,
+      time: result.rows[0],
+    });
+  } catch (error) {
+    console.error("DB test failed:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+app.use("/api", authRoutes(db));
 
 app.use((req, res) => {
   res.status(404).json({
@@ -45,20 +61,4 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Auth server running on http://localhost:${PORT}`);
-});
-
-app.get("/api/db-test", async (req, res) => {
-  try {
-    const result = await db.query("SELECT NOW()");
-    res.json({
-      success: true,
-      time: result.rows[0],
-    });
-  } catch (error) {
-    console.error("DB test failed:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
 });

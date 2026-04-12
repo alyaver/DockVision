@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import "./Auth.css";
 import "../Login.css";
+import Navigation from "../components/Navigation";
 
 export default function Login({ onSubmit, errorMessage, isLocked }) {
   const [formData, setFormData] = useState({
@@ -19,8 +20,13 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
   async function handleSubmit(event) {
     event.preventDefault();
 
+    const cleanedEmail = formData.email.trim().toLowerCase();
+
     if (onSubmit) {
-      await onSubmit(formData);
+      await onSubmit({
+        email: cleanedEmail,
+        password: formData.password,
+      });
     }
   }
 
@@ -28,13 +34,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
     <div className="auth-page">
       <header className="auth-header">
         <div className="auth-logo">DockVision</div>
-
-        <nav className="auth-nav">
-          <a className="nav-btn" href="/about">About</a>
-          <a className="nav-btn" href="/contact">Contact</a>
-          <a className="nav-btn active" href="/login">Sign In</a>
-          <a className="nav-btn" href="/register">Register</a>
-        </nav>
+        <Navigation />
       </header>
 
       <main className="auth-main login-main">

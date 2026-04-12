@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import Registration from "../pages/Register";
 
+const API_BASE_URL = "http://localhost:3001/api";
+
 export default function Register() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -10,7 +12,7 @@ export default function Register() {
       setErrorMessage("");
       setIsSubmitting(true);
 
-      const response = await fetch("http://localhost:3001/api/register", {
+      const response = await fetch(`${API_BASE_URL}/register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -19,13 +21,18 @@ export default function Register() {
         body: JSON.stringify(formData),
       });
 
-      const data = await response.json();
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (error) {
+        data = {};
+      }
 
       if (!response.ok) {
         throw new Error(data.message || "Registration failed");
       }
 
-      window.location.href = "/Dashboard";
+      window.location.href = "/dashboard";
     } catch (error) {
       setErrorMessage(error.message || "Registration failed");
     } finally {

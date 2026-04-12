@@ -1,13 +1,16 @@
 import React, { useState } from "react";
 import "./Auth.css";
 import "../Register.css";
+import Navigation from "../components/Navigation";
 
 export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
     password: "",
+    confirmPassword: "",
   });
+  const [clientError, setClientError] = useState("");
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -16,16 +19,44 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
       ...prev,
       [name]: value,
     }));
+
+    if (clientError) {
+      setClientError("");
+    }
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
+    setClientError("");
 
+    const cleanedName = formData.name.trim().replace(/\s+/g, " ");
+    const cleanedEmail = formData.email.trim().toLowerCase();
+    const password = formData.password;
+    const confirmPassword = formData.confirmPassword;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  console.log("FORM SUBMITTED"); // ADD THIS
+    if (!cleanedName) {
+      setClientError("Name is required");
+      return;
+    }
+
+    if (!emailRegex.test(cleanedEmail)) {
+      setClientError("Please enter a valid email address");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setClientError("Passwords do not match");
+      return;
+    }
 
     if (onSubmit) {
-      await onSubmit(formData);
+      await onSubmit({
+        name: cleanedName,
+        email: cleanedEmail,
+        password,
+        confirmPassword,
+      });
     }
   }
 
@@ -33,13 +64,7 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
     <div className="auth-page">
       <header className="auth-header">
         <div className="auth-logo">DockVision</div>
-
-        <nav className="auth-nav">
-          <a className="nav-btn" href="/about">About</a>
-          <a className="nav-btn" href="/contact">Contact</a>
-          <a className="nav-btn" href="/login">Sign In</a>
-          <a className="nav-btn active" href="/register">Register</a>
-        </nav>
+        <Navigation />
       </header>
 
       <main className="auth-main register-main">
@@ -90,6 +115,20 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
                 required
               />
 
+              <label className="auth-label" htmlFor="confirmPassword">
+                Confirm Password
+              </label>
+              <input
+                className="auth-input"
+                id="confirmPassword"
+                name="confirmPassword"
+                type="password"
+                placeholder="Re-enter your password"
+                value={formData.confirmPassword}
+                onChange={handleChange}
+                required
+              />
+
               <button
                 className="auth-submit-btn"
                 type="submit"
@@ -107,10 +146,10 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
       </main>
 
       <div className="toast-stack">
-        {errorMessage && (
+        {(clientError || errorMessage) && (
           <div className="toast">
             <div className="toast-title">Registration Error</div>
-            <div className="toast-message">{errorMessage}</div>
+            <div className="toast-message">{clientError || errorMessage}</div>
           </div>
         )}
       </div>
