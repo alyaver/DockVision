@@ -1,6 +1,10 @@
 const express = require("express");
 const cors = require("cors");
 const { exec } = require("child_process");
+const checkDiskSpace = require('check-disk-space').default;
+const path = require('path');
+const bcrypt = require('bcryptjs');
+
 
 const app = express();
 const PORT = 5000;
@@ -90,6 +94,48 @@ app.post("/api/forgot-password", async (req, res) => {
   }
 });
 
+app.post("/api/signIn", async (req, res) => {
+  console.log("Login attempt:", req.body)
+  const { email, password } = req.body
+
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required." })
+  }
+
+  // Test account - remove when DB is ready
+  if (email === "test@test.com" && password === "password") {
+    return res.status(200).json({
+      token: "placeholder-token",
+      user: { id: 0, email, name: "Test User" }
+    })
+  }
+
+  try {
+    const result = await pool.query(
+      "SELECT * FROM users WHERE email = $1", [email]
+    )
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ message: "Invalid credentials" })
+    }
+
+    const user = result.rows[0]
+    const match = await bcrypt.compare(password, user.password_hash)
+
+    if (!match) {
+      return res.status(401).json({ message: "Invalid credentials" })
+    }
+
+    res.status(200).json({
+      token: user.token,
+      user: { id: user.id, email: user.email, name: user.name }
+    })
+
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: "Server error." })
+  }
+})
 
 
 app.listen(PORT, () => {
@@ -99,4 +145,3 @@ app.listen(PORT, () => {
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Backend is running' })
 })
-

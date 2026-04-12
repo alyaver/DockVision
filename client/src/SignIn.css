@@ -1,53 +1,40 @@
-/* RESET */
-/*Contact Page*/
-.contact-page {
+/*Sign In Page*/
+.sign-in-page {
   padding: 40px 24px 80px;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-.contact-hero {
+.sign-in-hero {
   text-align: center;
   padding: 20px 20px;
+  margin-top: 100px;
   margin-bottom: 40px;
 }
 
-.contact-heading {
+.sign-in-heading {
   justify-content: center;
   align-items: center;
-  height: 15vh;
-  margin-bottom: 0px;
-  font-size: 4rem;
-  font-weight: 700;
 }
 
-.contact-description {
-  font-size: 1.08rem;
-  font-weight: 500;
-  color: #3d455d;
-  max-width: 680px;
-  margin: 0 auto;
-  line-height: 1.65;
-}
-
-.info-fields {
+.sign-in-info-fields {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 30px 5px 30px;
-  gap: 30px;
+  padding: 10px 5px 35px;
+  gap: 2px;
   margin: 0 auto;
-  margin-top: 0px;
+  margin-top: 10px;
   margin-bottom: 20px;
-  max-width: 400px;
+  max-width: 600px;
   border: 2px solid #ced0d6;
   border-radius: 10px;
 }
 
-.value-box {
-  margin-top: 5px;
-  margin-bottom: 10px;
-  margin: 0 auto;
-  width: 85%;
+.sign-in-value-box {
+  margin-top: 1px;
+  margin-bottom: 1px;
+  margin-left: 30px;
+  width: 90%;
 
   text-align: left;
   padding: 10px 10px 10px;
@@ -60,28 +47,20 @@
   box-sizing: border-box;
 }
 
-.msg-box {
-  margin-top: 5px;
-  margin-bottom: 10px;
-  margin: 0 auto;
-  width: 85%;
-
+.value-text {
   text-align: left;
-  padding: 10px 10px 100px;
+  padding: 1px 25px 1px;
   font-size: 18px;
   font-weight: 100px;
-  color: rgb(109, 109, 109);
-
-  border: 2px solid #ced0d6;
-  border-radius: 10px;
-  box-sizing: border-box;
+  color: rgb(31, 31, 31)
 }
 
-.submit-button {
-  margin-top: 5px;
+.sign-in-button {
+  margin-top: 30px;
   margin-bottom: 10px;
-  margin: 0 auto;
-  width: 85%;
+  margin-left: 30px;
+  /* margin: 0 auto; */
+  width: 90%;
 
   text-align: center;
   padding: 10px 10px 10px;
@@ -96,11 +75,24 @@
   cursor: pointer;
 }
 
-.value-box:hover,
-.msg-box:hover {
-  background-color: #e4e4e4;
+.sign-in-secondary-link {
+  margin-left: 10px;
+  text-align: left;
+  padding: 5px 25px 5px;
+  font-size: 18px;
+  font-weight: 100px;
+  color: rgb(0, 0, 0)
 }
 
-.submit-button:hover {
-  background-color: #464646;
+.sign-in-value-box ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.valid {
+  color: green;
+}
+
+.invalid {
+  color: red;
 }
