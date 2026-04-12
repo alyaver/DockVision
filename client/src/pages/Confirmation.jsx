@@ -1,9 +1,17 @@
 import Navigation from '../components/Navigation';
+<<<<<<< HEAD
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import '../confirmationPage.css';
+
+
+/*
+=======
 import { Link, useLocation } from 'react-router-dom';
 import '../confirmationPage.css';
 
 const CURRENT_RUN_STORAGE_KEY = 'dockvision-current-run';
 
+>>>>>>> origin/main
 // sample python script and JSON config for testing
 const samplePythonScript = `import time
 
@@ -12,6 +20,14 @@ def main():
     time.sleep(2)
     print("Test run completed!")`;
 
+<<<<<<< HEAD
+const sampleJsonConfig = JSON.stringify({ 
+    "test_name": "Sample Test",
+    "duration": 120
+});
+*/
+
+=======
 const sampleJsonConfig = JSON.stringify(
   {
     test_name: 'Sample Test',
@@ -26,6 +42,7 @@ function readStoredRun() {
     return null;
   }
 }
+>>>>>>> origin/main
 
 // Display both the Python script and the JSON configuration
 const DisplayCard = ({ title, content }) => (
@@ -37,6 +54,50 @@ const DisplayCard = ({ title, content }) => (
   </div>
 );
 
+<<<<<<< HEAD
+// placeholder params for Confirmation() {pythonScript = samplePythonScript, jsonConfig = sampleJsonConfig, onConfirm, onReturn = "/Dashboard"}
+const Confirmation = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
+
+    const { testName, runnerScriptName, configFileName } = location.state || {};
+
+    if(!testName) {
+        return (
+            <>
+                <Navigation />
+                <div>No data found.</div>
+            </>
+        )
+    }
+
+    function handleConfirm() {
+        alert("Test Run Started!");
+        navigate("/Dashboard");
+    }
+
+
+    return(
+     <>
+        <Navigation />
+        <div className="Confirmation-Page">
+            <div className="Confirmation-Box">
+                <h2 className = "Title">You are about to start a new Test Run</h2>
+                <p>Confirm the following before proceeding</p>
+
+                <div className="Card-Content">
+                    <DisplayCard title="Script" content={pythonScript || "no Script uploaded"} />
+                    <DisplayCard title="Config" content={jsonConfig || "no config uploaded"} />
+                </div>
+
+                <div className="Button-Group">
+                    <Link to = "/Dashboard">
+                        <button className="Button Return">Return</button>
+                    </Link>
+                    <button className="Button Confirm" onClick={handleConfirm}>Confirm</button> {/* Awaiting for page to be completed to implement functionality */}
+                </div>
+            </div>
+=======
 const Confirmation = ({
   pythonScript = samplePythonScript,
   jsonConfig = sampleJsonConfig,
@@ -74,6 +135,7 @@ const Confirmation = ({
               Confirm
             </button>
           </div>
+>>>>>>> origin/main
         </div>
       </div>
     </>

@@ -4,6 +4,7 @@ import '../Dashboard.css';
 import '../NavBar.css';
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 
 // fillers for test
 const RECENT_RUNS = [
@@ -43,6 +44,58 @@ const Dashboard = () => {
   const [configFile, setConfigFile] = useState(null);
   const [runnerFile, setRunnerFile] = useState(null);
   const [Notify, setNotify] = useState([]);
+<<<<<<< HEAD
+  const [user, setUser] = useState(null); // store authenticated user's
+  const [runnerScript, setRunnerScript] = useState(null); 
+  const [configFile, setConfigFile] = useState(null); // store uploaded config file
+  
+  const [errors, setErrors] = useState({
+    testName: "",
+    runnerScript: "",
+    configFile: "",
+  });
+
+  const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
+
+  useEffect(() => {
+     // dummy data
+        setUser({
+          fname: "Leo",
+          email:"Leo@leomail.com",
+        })
+  }, [])
+
+/* need db
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const response = await fetch("http://localhost:5000/api/auth/me", {
+          credentials: "include"
+        });
+
+        if (!response.ok) {
+          navigate("/sign-in")
+          return;
+        }
+=
+        const data = await response.json();
+
+        //setUser(data.user);
+        setUser(data.user || data);
+        
+      }
+  
+      catch (err) {
+        // navigate("/sign-in") need db first
+      }
+    }
+
+    fetchUser();
+  }, [navigate])
+*/
+
+
+=======
   const [isPreparingRun, setIsPreparingRun] = useState(false);
   const [readiness, setRediness] = useState({
     docker: false,
@@ -63,11 +116,17 @@ const Dashboard = () => {
   }, []);
 
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
+>>>>>>> origin/main
   function pushNotify(type, title, msg) {
     const id = crypto.randomUUID();
     setNotify((n) => [...n, { id, type, title, msg }]);
   }
 
+<<<<<<< HEAD
+  /*
+  function handleStartRun() {
+    if (!testName.trim()) {
+=======
   function resetRunForm(showNotification = true) {
     setTestName("");
     setConfigFile(null);
@@ -146,6 +205,7 @@ const Dashboard = () => {
     if (!file) return;
     const fileName = file.name.toLowerCase();
     if (!fileName.endsWith(".py") && !fileName.endsWith(".ps1")) {
+>>>>>>> origin/main
       pushNotify(
         "error",
         "Invalid Runner Script File type",
@@ -266,14 +326,93 @@ const Dashboard = () => {
     }
     */
   }
+    */
+
+  // validate test name input
+  function validateTestName(val) {
+
+    // can't be empty
+    if (!val.trim()) {
+      return "Test name required.";
+    }
+
+    // max 50 chars
+    if(val.length > 50) {
+      return "Test name must be 50 characters or less.";
+    }
+
+    // alphanumeric only
+    if(!/^[a-zA-Z0-9 ]+$/.test(val)) {
+      return "Letters and digits only"
+    }
+
+    return ""
+  }
+
+  // validates uploaded runner script
+  function validateRunnerScript(file) {
+    if (!file) {
+      return "Runner Script is required.";
+    }
+
+    return ""
+  }
+
+  // validates uploaded config file
+  function validateConfigFile(file) {
+    if (!file) {
+      return "Config File required.";
+    }
+
+    return ""
+  }
+
+  // rerun validations when test name or uploaded files change
+  useEffect(() => {
+    setErrors({
+      testName: validateTestName(testName),
+      runnerScript: validateRunnerScript(runnerScript),
+      configFile: validateConfigFile(configFile),
+    })
+  }, [testName, runnerScript, configFile])
+
+  const isValid = !errors.testName && !errors.runnerScript && !errors.configFile;
+
+  function handleStartRun() {
+    const newErrors = {
+      testName: validateTestName(testName),
+      runnerScript: validateRunnerScript(runnerScript),
+      configFile: validateConfigFile(configFile),
+    }
+
+    setErrors(newErrors) // update error message
+
+    // stop if there are errors
+    if (newErrors.testName || newErrors.runnerScript || newErrors.configFile) {
+      return;
+    }
+
+    // go to confirmation page
+    navigate("/confirmation", {
+      state: {
+        testName,
+        runnerScriptName: runnerScript ? runnerScript.name : "",
+        configFileName: configFile ? configFile.name : "",
+      },
+    })
+  }
+
+
+  
 
   return (
     <>
       <Navigation />
       <div className="dash-hero">
         <h1 className="dash-welcome">
-          Welcome <span>(Username)</span>
+          Welcome <span>{user ? user.fname : "User"}</span>
         </h1>
+        <p className="dash-email">{user ? user.email : ""}</p>
       </div>
       <div className="Dashboard-wrapper">
         <main className="Dashboard-page">
@@ -290,7 +429,44 @@ const Dashboard = () => {
                 onChange={handleTestNameChange}
                 placeholder="Name #1"
               />
+              {errors.testName && (
+                <p className="error-text">{errors.testName}</p>
+              )}
+
               <div className="form-stack">
+<<<<<<< HEAD
+                {/*
+                <button className="btn" type="button"><UploadIcon /> Upload Runner Script</button>
+                <button className="btn" type="button"><UploadIcon /> Upload Config</button>
+                */}
+
+                <label className="btn">
+                  <UploadIcon /> Upload Runner Script
+                  <input type="file" hidden onChange={(e) => setRunnerScript(e.target.files[0])}/>
+                </label>
+
+                {runnerScript && (
+                  <p className="file-name">Selected: {runnerScript.name}</p>
+                )}
+                
+                {errors.runnerScript && (
+                  <p className="error-text">{errors.runnerScript}</p>
+                )}
+
+                <label className="btn">
+                  <UploadIcon /> Upload Config
+                  <input type="file" hidden onChange={(e) => setConfigFile(e.target.files[0])}/>
+                </label>
+
+                {configFile && (
+                  <p className="file-name">Selected: {configFile.name}</p>
+                )}
+                
+                {errors.configFile && (
+                  <p className="error-text">{errors.configFile}</p>
+                )}
+
+=======
                 {runnerFile ? (
                   <button className="btn" type="button" onClick={removeRunnerFile}>Remove {runnerFile.name} ({`${(runnerFile.size / 1024).toFixed(2)} KB`})</button>
                 ) : (
@@ -308,6 +484,7 @@ const Dashboard = () => {
                   onChange={handleConfigFileSelected}
                   style={{ display: 'none' }}
                 />
+>>>>>>> origin/main
                 <button className="btn" type="button" onClick={() => navigate('/configuration-settings')}><SettingsIcon /> Configure Settings</button>
                 <button className="btn" type="button" onClick={() => resetRunForm(true)}>
                   Clear Current Run
@@ -352,6 +529,10 @@ const Dashboard = () => {
                   {readiness.checking ? "…" : (readiness.backend && readiness.docker) ? "Ready" : "Not ready"}
                 </div>
               </div>
+<<<<<<< HEAD
+              <button className="btn btn-primary" type="button" onClick={handleStartRun} disabled={!isValid} ><RunIcon /> Start Test Run</button>
+=======
+>>>>>>> origin/main
             </div>
           </div>
           {/* Recent Test Runs just display no function —*/}

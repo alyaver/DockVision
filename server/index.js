@@ -5,7 +5,7 @@ const checkDiskSpace = require('check-disk-space').default;
 const path = require('path');
 
 const app = express();
-const PORT = 5000;
+const PORT = 5001; // changed from 5000 to 5001, app was crashing
 
 app.use(cors());
 app.use(express.json());
