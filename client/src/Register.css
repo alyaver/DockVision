@@ -1,0 +1,23 @@
+.auth-main.register-main {
+  padding-top: 130px;
+}
+
+.register-wrapper {
+  width: 100%;
+  max-width: 430px;
+}
+
+.register-title {
+  margin-bottom: 26px;
+}
+
+.register-footer {
+  text-align: center;
+  margin-top: 24px;
+  font-size: 15px;
+}
+
+.register-footer a {
+  color: #222;
+  text-decoration: underline;
+}
