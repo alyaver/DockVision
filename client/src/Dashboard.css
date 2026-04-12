@@ -367,3 +367,30 @@ body, #root {
 }
 
 
+
+/* validation */
+
+.error-text {
+  font-size: 12px;
+  color: red;
+}
+
+.file-name {
+  font-size: 12px;
+  color: gray;
+}
+
+.btn:disabled,
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn:disabled:hover,
+.btn-primary:disabled:hover {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+

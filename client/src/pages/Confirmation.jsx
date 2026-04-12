@@ -1,7 +1,9 @@
 import Navigation from '../components/Navigation';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import '../confirmationPage.css';
 
+
+/*
 // sample python script and JSON config for testing
 const samplePythonScript = `import time
 
@@ -15,6 +17,8 @@ const sampleJsonConfig = JSON.stringify({
     "test_name": "Sample Test",
     "duration": 120
 });
+*/
+
 
 // Display both the Python script and the JSON configuration
 const DisplayCard = ({title, content}) => (
@@ -26,8 +30,28 @@ const DisplayCard = ({title, content}) => (
     </div>
 );
 
+// placeholder params for Confirmation() {pythonScript = samplePythonScript, jsonConfig = sampleJsonConfig, onConfirm, onReturn = "/Dashboard"}
+const Confirmation = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
 
-const Confirmation = ({pythonScript = samplePythonScript, jsonConfig = sampleJsonConfig, onConfirm, onReturn = "/Dashboard"}) => {
+    const { testName, runnerScriptName, configFileName } = location.state || {};
+
+    if(!testName) {
+        return (
+            <>
+                <Navigation />
+                <div>No data found.</div>
+            </>
+        )
+    }
+
+    function handleConfirm() {
+        alert("Test Run Started!");
+        navigate("/Dashboard");
+    }
+
+
     return(
      <>
         <Navigation />
@@ -37,15 +61,15 @@ const Confirmation = ({pythonScript = samplePythonScript, jsonConfig = sampleJso
                 <p>Confirm the following before proceeding</p>
 
                 <div className="Card-Content">
-                    <DisplayCard title="Script" content={pythonScript} />
-                    <DisplayCard title="Config" content={jsonConfig} />
+                    <DisplayCard title="Script" content={pythonScript || "no Script uploaded"} />
+                    <DisplayCard title="Config" content={jsonConfig || "no config uploaded"} />
                 </div>
 
                 <div className="Button-Group">
                     <Link to = "/Dashboard">
                         <button className="Button Return">Return</button>
                     </Link>
-                    <button className="Button Confirm" onClick={onConfirm}>Confirm</button> {/* Awaiting for page to be completed to implement functionality */}
+                    <button className="Button Confirm" onClick={handleConfirm}>Confirm</button> {/* Awaiting for page to be completed to implement functionality */}
                 </div>
             </div>
         </div>
