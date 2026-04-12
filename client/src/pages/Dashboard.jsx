@@ -2,7 +2,7 @@ import Navigation from '../components/Navigation';
 import { UploadIcon, RunIcon, SettingsIcon, EmptyIcon } from '../components/Icons';
 import '../Dashboard.css';
 import '../NavBar.css';
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from 'react-router-dom';
 
 // fillers for test
@@ -19,13 +19,83 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [testName, setTestName] = useState("");
   const [Notify, setNotify] = useState([]);
+  const [runnerFile, setRunnerFile] = useState(null);
 
+  // readiness state of Docker, Backend, and Storage with a checking flag to indicate if we're still checking status
+  // Docker is the only check avaiable at the moment
+  const [readiness, setRediness] = useState({
+    docker: false,
+    backend: false,
+    storage: true, // assume storage is ready for demo purposes
+    checking: true // flag to indicate if we're still checking readiness status
+  });
+
+  const checkReadiness = async () => {
+    try {
+      const healthRes = await fetch("http://localhost:5000/api/health");
+      const healthData = await healthRes.json();
+      const dockerRes = await fetch("http://localhost:5000/api/docker/ping");
+      const storageRes = await fetch("http://localhost:5000/api/storage/space");
+      const storageData = await storageRes.json();
+      
+      let dockerStatus = false;
+      if (dockerRes.ok) {
+        const dockerData = await dockerRes.json();
+        dockerStatus = dockerData.success;
+      }
+
+      setRediness({
+        docker: dockerStatus,
+        backend: healthData.success,
+        storage: storageData.success,
+        checking: false
+      });
+    } catch (err) {
+      setRediness({
+        docker: false,
+        backend: false,
+        storage: true, // assume storage is ready for demo purposes
+        checking: false
+      })
+    }
+  };
+
+  useEffect(() => {
+    checkReadiness();
+    const interval = setInterval(checkReadiness, 5000); // check every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const isSystemReady = readiness.docker && readiness.backend && readiness.storage; // check if docker/backend is ready,
+  
+  // Notify functions
   const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
-
   function pushNotify(type, title, msg) {
     const id = crypto.randomUUID();
     setNotify((n) => [...n, { id, type, title, msg }]);
   }
+
+  
+  // File upload handlers
+  const handleFileChange = (e) => { // validate file type and size before accepting
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith(".py") && !fileName.endsWith(".ps1")) { // only accept .py or .ps1 files
+      pushNotify(
+        "error",
+        "Invalid Runner Script File type",
+        "Please upload a valid runner script (.py or .ps1).");
+      setRunnerFile(null);
+    } else {
+      setRunnerFile(file);
+    }
+    e.target.value = null; // reset file input
+  };
+  const removeRunnerFile = () => { // remove selected file
+    setRunnerFile(null);
+  };
 
   function handleStartRun() {
     if (!testName.trim()) {
@@ -33,6 +103,15 @@ const Dashboard = () => {
         "error",
         "Test name required",
         "Please enter a test run name before continuing."
+      );
+      return;
+    }
+    
+    if(!runnerFile) { // runner script is required to start a test run
+      pushNotify(
+        "error",
+        "Runner script required",
+        "Please upload a runner script before continuing."
       );
       return;
     }
@@ -63,12 +142,28 @@ const Dashboard = () => {
                 placeholder="Name #1"
               />
               <div className="form-stack">
-                <button className="btn" type="button"><UploadIcon /> Upload Runner Script</button>
+                {runnerFile ? ( // if file is uploaded, show file info and remove option
+                  <button className="btn" type="button" onClick={removeRunnerFile}>Remove {runnerFile.name} ({`${(runnerFile.size / 1024).toFixed(2)} KB`})</button>
+                ) : ( // if no file, show upload button
+                  <label className="btn">
+                    <UploadIcon /> Upload Runner Script (.py or .ps1)
+                    <input type="file" accept=".py, .ps1" onChange={handleFileChange} style={{ display: "none" }} />
+                  </label>
+                )}
+
                 <button className="btn" type="button"><UploadIcon /> Upload Config</button>
                 <button className="btn" type="button" onClick={() => navigate('/configuration-settings')}><SettingsIcon /> Configure Settings</button>
               </div>
-              <button className="btn btn-primary" type="button" onClick={handleStartRun}><RunIcon /> Start Test Run</button>
+              <button className="btn btn-primary" type="button" onClick={handleStartRun} disabled={!isSystemReady} style={{ opacity: !isSystemReady ? 0.5 : 1, cursor: isSystemReady ? "pointer" : "not-allowed" }}><RunIcon /> Start Test Run</button>
             </div>
+              {!readiness.checking && !isSystemReady && (
+                <div className="readiness-alert">
+                  <strong>Start Run Disabled: </strong>
+                  {!readiness.backend && "Backend is offline. "}
+                  {readiness.backend && !readiness.docker && "Docker Desktop is not running. "}
+                  {readiness.backend && readiness.docker && !readiness.storage && "Insufficient storage space for VM."}
+                </div>
+              )}
           </div>
           {/* Recent Test Runs just display no function —*/}
           <div className="card">

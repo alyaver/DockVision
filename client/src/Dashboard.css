@@ -276,6 +276,15 @@ body, #root {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   animation: notifyIn 0.2s ease;
 }
+
+.readiness-alert {
+  background-color: #FFF5F5;
+  border: 1px solid #FEB2B2;
+  color: #C53030;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
  
 @keyframes notifyIn {
   from {
