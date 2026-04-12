@@ -26,46 +26,6 @@ app.get("/api/docker/ping", (req, res) => {
   });
 });
 
-app.get("/api/readiness", (req, res) => {
-  exec("docker ps", (error, stdout, stderr) => {
-    const dockerAvailable = !error;
-    const backendAvailable = true; //backend is available if this endpoint responds
-    //if backend is down then we can not confirm launch readiness
-    const requiredLaunchReady = backendAvailable ? dockerAvailable : null; 
-    
-    res.json({
-      success: true,
-      backendAvailable,
-      dockerAvailable,
-      requiredLaunchReady,
-      checks: {
-        backend: {
-          value: backendAvailable,
-          message: backendAvailable
-            ? "Backend is available"
-            : "Backend is unavailable",
-        },
-        docker: {
-          //runs "docker ps" to verify that the daemon is running
-          value: dockerAvailable,
-          message: dockerAvailable
-            ? "Docker is reachable"
-            : "Docker is unavailable",
-        },
-        requiredLaunch: {
-          value: requiredLaunchReady,
-          //null means that the backend was down so that we could not check
-          message: requiredLaunchReady === null
-            ? "Cannot determine launch readiness - backend unavailable"
-            : requiredLaunchReady
-              ? "Required launch readiness is met"
-              : "Required launch readiness is not met",
-        },
-      },
-    });
-  });
-});
-
 app.post("/api/docker/start-smoke", (req, res) => {
   exec(
     'docker run -d --rm --name atlas-smoke alpine sh -c "sleep 300"',

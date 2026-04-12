@@ -10,10 +10,6 @@ async function parseJson(response) {
   return data; 
 }
 
-export async function getReadiness() {
-  const response = await fetch(`${API_BASE}/api/readiness`);
-  return parseJson(response);
-}
 
 export async function startSmokeContainer() {
   const response = await fetch(`${API_BASE}/api/docker/start-smoke`, {
