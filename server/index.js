@@ -5,6 +5,19 @@ const { exec } = require("child_process");
 const app = express();
 const PORT = 5000;
 
+
+const nodemailer = require("nodemailer");
+const transporter = nodemailer.createTransport({
+   host: process.env.EMAIL_HOST,
+   port: process.env.EMAIL_PORT,
+   secure: process.env.EMAIL_PORT ==465,
+   auth:{
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+   }
+});
+
+
 app.use(cors());
 app.use(express.json());
 
@@ -47,6 +60,38 @@ app.post("/api/docker/start-smoke", (req, res) => {
   );
 });
 
+
+app.post("/api/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+      return res.status(400).json({ message: "Email is required." });
+  }
+  try {
+    // TODO: uncomment when database is ready
+    // const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    // if (result.rows.length === 0) {
+    //   return res.status(404).json({ message: "No account found with that email." });
+    // }
+
+    const resetLink = `${process.env.CLIENT_URL}/reset-password`;
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Password Reset",
+      html: `<p>Click the link below to reset your password:</p><a href="${resetLink}">${resetLink}</a>`,
+    });
+
+     res.status(200).json({ message: "Reset link sent." });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error. Please try again." });
+  }
+});
+
+
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
@@ -54,3 +99,4 @@ app.listen(PORT, () => {
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Backend is running' })
 })
+
