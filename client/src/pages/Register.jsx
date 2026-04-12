@@ -3,6 +3,20 @@ import "./Auth.css";
 import "../Register.css";
 import Navigation from "../components/Navigation";
 
+function isValidName(value) {
+  return /^[A-Za-z][A-Za-z\s'-]{1,29}$/.test(value);
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
+}
+
+function isStrongPassword(value) {
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{10,128}$/.test(
+    value
+  );
+}
+
 export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
   const [formData, setFormData] = useState({
     name: "",
@@ -33,15 +47,30 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
     const cleanedEmail = formData.email.trim().toLowerCase();
     const password = formData.password;
     const confirmPassword = formData.confirmPassword;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!cleanedName) {
       setClientError("Name is required");
       return;
     }
 
-    if (!emailRegex.test(cleanedEmail)) {
-      setClientError("Please enter a valid email address");
+    if (!isValidName(cleanedName)) {
+      setClientError(
+        "Name must be 2 to 30 characters and contain only letters, spaces, apostrophes, or hyphens"
+      );
+      return;
+    }
+
+    if (cleanedEmail.length > 40 || !isValidEmail(cleanedEmail)) {
+      setClientError(
+        "Email must be valid and end in .com, .gov, .edu, .net, or .org"
+      );
+      return;
+    }
+
+    if (!isStrongPassword(password)) {
+      setClientError(
+        "Password must be at least 10 characters and include uppercase, lowercase, number, and symbol"
+      );
       return;
     }
 
@@ -84,6 +113,7 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
                 placeholder="Jane Doe"
                 value={formData.name}
                 onChange={handleChange}
+                maxLength={30}
                 required
               />
 
@@ -98,6 +128,7 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
                 placeholder="janedoe@example.com"
                 value={formData.email}
                 onChange={handleChange}
+                maxLength={40}
                 required
               />
 
@@ -109,9 +140,11 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
                 id="password"
                 name="password"
                 type="password"
-                placeholder="password123"
+                placeholder="password123!"
                 value={formData.password}
                 onChange={handleChange}
+                minLength={10}
+                maxLength={128}
                 required
               />
 
@@ -126,6 +159,8 @@ export default function Registration({ onSubmit, errorMessage, isSubmitting }) {
                 placeholder="Re-enter your password"
                 value={formData.confirmPassword}
                 onChange={handleChange}
+                minLength={10}
+                maxLength={128}
                 required
               />
 

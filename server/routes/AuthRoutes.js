@@ -4,6 +4,8 @@ const crypto = require("crypto");
 
 const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
+const MAX_EMAIL_LENGTH = 254;
+const MAX_PASSWORD_LENGTH = 128;
 
 function normalizeName(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
@@ -13,8 +15,18 @@ function normalizeEmail(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+function isValidName(value) {
+  return /^[A-Za-z][A-Za-z\s'-]{1,29}$/.test(value);
+}
+
 function isValidEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
+}
+
+function isStrongPassword(value) {
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{10,128}$/.test(
+    value
+  );
 }
 
 module.exports = function authRoutes(db) {
@@ -69,9 +81,24 @@ module.exports = function authRoutes(db) {
         });
       }
 
-      if (!isValidEmail(email)) {
+      if (!isValidName(name)) {
         return res.status(400).json({
-          message: "Please enter a valid email address",
+          message:
+            "Name must be 2 to 30 characters and contain only letters, spaces, apostrophes, or hyphens",
+        });
+      }
+
+      if (email.length > MAX_EMAIL_LENGTH || !isValidEmail(email)) {
+        return res.status(400).json({
+          message:
+            "Email must be valid and end in .com, .gov, .edu, .net, or .org",
+        });
+      }
+
+      if (password.length > MAX_PASSWORD_LENGTH || !isStrongPassword(password)) {
+        return res.status(400).json({
+          message:
+            "Password must be at least 10 characters and include uppercase, lowercase, number, and symbol",
         });
       }
 
@@ -147,10 +174,15 @@ module.exports = function authRoutes(db) {
           .json({ message: "Email and password are required" });
       }
 
-      if (!isValidEmail(email)) {
+      if (email.length > MAX_EMAIL_LENGTH || !isValidEmail(email)) {
         return res.status(400).json({
-          message: "Please enter a valid email address",
+          message:
+            "Email must be valid and end in .com, .gov, .edu, .net, or .org",
         });
+      }
+
+      if (password.length > MAX_PASSWORD_LENGTH) {
+        return res.status(400).json({ message: "Invalid password" });
       }
 
       const result = await db.query(

@@ -3,11 +3,16 @@ import "./Auth.css";
 import "../Login.css";
 import Navigation from "../components/Navigation";
 
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
+}
+
 export default function Login({ onSubmit, errorMessage, isLocked }) {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
   });
+  const [clientError, setClientError] = useState("");
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -15,19 +20,33 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
       ...prev,
       [name]: value,
     }));
+
+    if (clientError) {
+      setClientError("");
+    }
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
+    setClientError("");
 
     const cleanedEmail = formData.email.trim().toLowerCase();
 
-    if (onSubmit) {
-      await onSubmit({
-        email: cleanedEmail,
-        password: formData.password,
-      });
+    if (cleanedEmail.length > 254 || !isValidEmail(cleanedEmail)) {
+      setClientError(
+        "Email must be valid and end in .com, .gov, .edu, .net, or .org"
+      );
+      return;
     }
+
+    if (!onSubmit) {
+      return;
+    }
+
+    await onSubmit({
+      email: cleanedEmail,
+      password: formData.password,
+    });
   }
 
   return (
@@ -53,6 +72,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
               placeholder="Value"
               value={formData.email}
               onChange={handleChange}
+              maxLength={254}
               required
             />
 
@@ -67,6 +87,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
               placeholder="Value"
               value={formData.password}
               onChange={handleChange}
+              maxLength={128}
               required
             />
 
@@ -95,10 +116,10 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
           </div>
         )}
 
-        {errorMessage && (
+        {(clientError || errorMessage) && (
           <div className="toast">
             <div className="toast-title">Incorrect Credentials</div>
-            <div className="toast-message">{errorMessage}</div>
+            <div className="toast-message">{clientError || errorMessage}</div>
           </div>
         )}
       </div>
