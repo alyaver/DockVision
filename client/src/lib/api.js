@@ -8,8 +8,8 @@ async function parseJson(response) {
   }
 
   return data; 
-
 }
+
 
 export async function startSmokeContainer() {
   const response = await fetch(`${API_BASE}/api/docker/start-smoke`, {

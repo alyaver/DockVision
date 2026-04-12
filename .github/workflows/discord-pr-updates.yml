@@ -28,7 +28,7 @@ jobs:
       github.event_name == 'pull_request_review' &&
       github.event.review.state == 'approved' &&
       github.event.pull_request.base.ref == 'main' &&
-      github.event.review.user.login == 'Robot-Ray'
+      github.event.review.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - name: Send approval message to Discord
@@ -46,7 +46,7 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true &&
       github.event.pull_request.base.ref == 'main' &&
-      github.actor == 'Robot-Ray'
+      github.event.review.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - name: Send merge message to Discord
