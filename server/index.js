@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const { exec } = require("child_process");
+const checkDiskSpace = require('check-disk-space').default;
+const path = require('path');
 
 const app = express();
 const PORT = 5000;
@@ -22,46 +24,6 @@ app.get("/api/docker/ping", (req, res) => {
       success: true,
       message: "Docker is reachable",
       output: stdout,
-    });
-  });
-});
-
-app.get("/api/readiness", (req, res) => {
-  exec("docker ps", (error, stdout, stderr) => {
-    const dockerAvailable = !error;
-    const backendAvailable = true; //backend is available if this endpoint responds
-    //if backend is down then we can not confirm launch readiness
-    const requiredLaunchReady = backendAvailable ? dockerAvailable : null; 
-    
-    res.json({
-      success: true,
-      backendAvailable,
-      dockerAvailable,
-      requiredLaunchReady,
-      checks: {
-        backend: {
-          value: backendAvailable,
-          message: backendAvailable
-            ? "Backend is available"
-            : "Backend is unavailable",
-        },
-        docker: {
-          //runs "docker ps" to verify that the daemon is running
-          value: dockerAvailable,
-          message: dockerAvailable
-            ? "Docker is reachable"
-            : "Docker is unavailable",
-        },
-        requiredLaunch: {
-          value: requiredLaunchReady,
-          //null means that the backend was down so that we could not check
-          message: requiredLaunchReady === null
-            ? "Cannot determine launch readiness - backend unavailable"
-            : requiredLaunchReady
-              ? "Required launch readiness is met"
-              : "Required launch readiness is not met",
-        },
-      },
     });
   });
 });
@@ -103,5 +65,23 @@ app.get('/api/auth/reset/validate', (req, res) => {
     res.json({ valid: true });
   } else {
     res.json({ valid: false, message: 'Invalid or expired token' });
+  }
+});
+
+// check disk space
+app.get('/api/storage/space', async (req, res) => {
+  try {
+    const diskSpace = await checkDiskSpace(path.resolve(__dirname)); // check root disk space
+    const totalGB = (diskSpace.free / (1024 ** 3));
+    const neededGB = 10; // assume we need at least 10GB free for test runs
+
+    res.json({
+      success: totalGB >= neededGB,
+      message: totalGB >= neededGB ? 'Sufficient storage space' : 'Insufficient storage space'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false, message: 'Storage check failed',
+    });
   }
 });
