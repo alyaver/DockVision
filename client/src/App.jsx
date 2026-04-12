@@ -7,7 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Confirmation from './pages/Confirmation';
 import ConfigurationSettings from "./pages/ConfigurationSettings.jsx";
 import Register from "./components/Registration.jsx";
-import Login from "./pages/Login.jsx";
+import Login from "./components/LoginContainer.jsx";
 
 function App() {
   return (
