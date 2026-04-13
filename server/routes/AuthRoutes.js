@@ -7,31 +7,66 @@ const MAX_FAILED_ATTEMPTS = 5;
 const MAX_EMAIL_LENGTH = 254;
 const MAX_PASSWORD_LENGTH = 128;
 
+/**
+ * Normalize name input so the database receives a clean value.
+ */
 function normalizeName(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
 }
 
+/**
+ * Normalize email input so lookups are consistent.
+ */
 function normalizeEmail(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+/**
+ * Basic name validation for the current project rules.
+ */
 function isValidName(value) {
   return /^[A-Za-z][A-Za-z\s'-]{1,29}$/.test(value);
 }
 
+/**
+ * Basic email validation for the current project rules.
+ */
 function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
 }
 
+/**
+ * Strong password rule used by registration.
+ */
 function isStrongPassword(value) {
   return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{10,128}$/.test(
     value
   );
 }
 
+/**
+ * IMPORTANT:
+ * Export a single CommonJS factory function.
+ *
+ * Why this fixes your crash:
+ * - server/index.js is calling authRoutes(db)
+ * - That means require("./routes/AuthRoutes") MUST return a function
+ * - If the live main-branch file was exporting an object, router, named export,
+ *   or a merge-damaged module shape, Node would throw:
+ *   "TypeError: authRoutes is not a function"
+ */
 module.exports = function authRoutes(db) {
+  if (!db || typeof db.query !== "function") {
+    throw new Error(
+      "AuthRoutes requires a database pool/client object with a query() method."
+    );
+  }
+
   const router = express.Router();
 
+  /**
+   * Return the currently authenticated user based on the session cookie.
+   */
   router.get("/me", async (req, res) => {
     try {
       const token = req.cookies.session_token;
@@ -63,6 +98,9 @@ module.exports = function authRoutes(db) {
     }
   });
 
+  /**
+   * Register a new user and immediately create a session.
+   */
   router.post("/register", async (req, res) => {
     try {
       const name = normalizeName(req.body.name);
@@ -148,6 +186,10 @@ module.exports = function authRoutes(db) {
         [user.user_id, sessionToken]
       );
 
+      /**
+       * Dev-friendly cookie settings.
+       * Secure=false is intentional for local HTTP development.
+       */
       res.cookie("session_token", sessionToken, {
         httpOnly: true,
         secure: false,
@@ -162,6 +204,9 @@ module.exports = function authRoutes(db) {
     }
   });
 
+  /**
+   * Log in an existing user and create a session record.
+   */
   router.post("/login", async (req, res) => {
     try {
       const email = normalizeEmail(req.body.email);
@@ -286,6 +331,9 @@ module.exports = function authRoutes(db) {
     }
   });
 
+  /**
+   * Log out the current user by deleting the session and clearing the cookie.
+   */
   router.post("/logout", async (req, res) => {
     try {
       const token = req.cookies.session_token;

@@ -1,12 +1,23 @@
-import Navigation from '../components/Navigation';
-import { UploadIcon, RunIcon, SettingsIcon, EmptyIcon } from '../components/Icons';
-import '../Dashboard.css';
-import '../NavBar.css';
+import Navigation from "../components/Navigation";
+import {
+  UploadIcon,
+  RunIcon,
+  SettingsIcon,
+  EmptyIcon,
+} from "../components/Icons";
+import "../Dashboard.css";
+import "../NavBar.css";
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useNavigate } from "react-router-dom";
 
-// fillers for test
+/**
+ * Dashboard cleanup notes:
+ * - Remove all merge-conflict markers and duplicate branches.
+ * - Keep the readiness-check flow from the spike-style branch.
+ * - Keep the improved upload flow and sessionStorage persistence.
+ * - Do NOT keep the duplicate validation-only branch that conflicted with it.
+ */
+
 const RECENT_RUNS = [
   { id: "a", name: "Test Run A", date: "xx/xx/xxxx" },
   { id: "b", name: "Test Run B", date: "xx/xx/xxxx" },
@@ -15,8 +26,9 @@ const RECENT_RUNS = [
   { id: "e", name: "Test Run E", date: "xx/xx/xxxx" },
 ];
 
-const ALLOWED_CONFIG_EXTENSIONS = ['.json', '.yml', '.yaml'];
-const CURRENT_RUN_STORAGE_KEY = 'dockvision-current-run';
+const ALLOWED_CONFIG_EXTENSIONS = [".json", ".yml", ".yaml"];
+const ALLOWED_RUNNER_EXTENSIONS = [".py", ".ps1"];
+const CURRENT_RUN_STORAGE_KEY = "dockvision-current-run";
 
 function readStoredRun() {
   try {
@@ -37,390 +49,358 @@ function clearStoredRun() {
   sessionStorage.removeItem(CURRENT_RUN_STORAGE_KEY);
 }
 
+function validateTestName(value) {
+  if (!value.trim()) {
+    return "Test name required.";
+  }
+
+  if (value.length > 50) {
+    return "Test name must be 50 characters or less.";
+  }
+
+  if (!/^[a-zA-Z0-9 ]+$/.test(value)) {
+    return "Letters and digits only.";
+  }
+
+  return "";
+}
+
 const Dashboard = () => {
   const navigate = useNavigate();
+
   const configFileInputRef = useRef(null);
+  const runnerFileInputRef = useRef(null);
+
   const [testName, setTestName] = useState("");
-  const [configFile, setConfigFile] = useState(null);
-  const [runnerFile, setRunnerFile] = useState(null);
-  const [Notify, setNotify] = useState([]);
-<<<<<<< HEAD
-  const [user, setUser] = useState(null); // store authenticated user's
-  const [runnerScript, setRunnerScript] = useState(null); 
-  const [configFile, setConfigFile] = useState(null); // store uploaded config file
-  
-  const [errors, setErrors] = useState({
-    testName: "",
-    runnerScript: "",
-    configFile: "",
-  });
-
-  const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
-
-  useEffect(() => {
-     // dummy data
-        setUser({
-          fname: "Leo",
-          email:"Leo@leomail.com",
-        })
-  }, [])
-
-/* need db
-  useEffect(() => {
-    async function fetchUser() {
-      try {
-        const response = await fetch("http://localhost:5000/api/auth/me", {
-          credentials: "include"
-        });
-
-        if (!response.ok) {
-          navigate("/sign-in")
-          return;
-        }
-=
-        const data = await response.json();
-
-        //setUser(data.user);
-        setUser(data.user || data);
-        
-      }
-  
-      catch (err) {
-        // navigate("/sign-in") need db first
-      }
-    }
-
-    fetchUser();
-  }, [navigate])
-*/
-
-
-=======
+  const [runnerScriptName, setRunnerScriptName] = useState("");
+  const [configFileName, setConfigFileName] = useState("");
+  const [notifications, setNotifications] = useState([]);
+  const [user, setUser] = useState(null);
   const [isPreparingRun, setIsPreparingRun] = useState(false);
-  const [readiness, setRediness] = useState({
+
+  const [readiness, setReadiness] = useState({
     docker: false,
     backend: false,
-    storage: true, // assume storage is ready for demo purposes
-    checking: true, // flag to indicate if we're still checking readiness status
-    lastChecked: null // timestamp of last check
+    storage: true,
+    checking: true,
+    lastChecked: null,
   });
 
   useEffect(() => {
     const storedRun = readStoredRun();
+
     if (storedRun?.testName) {
       setTestName(storedRun.testName);
     }
+
+    if (storedRun?.runnerScriptName) {
+      setRunnerScriptName(storedRun.runnerScriptName);
+    }
+
+    if (storedRun?.configFileName) {
+      setConfigFileName(storedRun.configFileName);
+    }
+
+    fetchCurrentUser();
     checkReadiness();
-    const interval = setInterval(checkReadiness, 5000); // check every 5 seconds
+
+    const interval = setInterval(checkReadiness, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  const dismissNotify = (id) => setNotify((n) => n.filter((x) => x.id !== id));
->>>>>>> origin/main
-  function pushNotify(type, title, msg) {
-    const id = crypto.randomUUID();
-    setNotify((n) => [...n, { id, type, title, msg }]);
+  async function fetchCurrentUser() {
+    try {
+      /**
+       * If auth is available and the user is signed in, use that.
+       * If not, fall back to demo data so the Dashboard still works during development.
+       */
+      const response = await fetch("/api/me", {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        setUser({
+          name: "Leo",
+          email: "leo@leomail.com",
+        });
+        return;
+      }
+
+      const data = await response.json();
+      setUser(data.user || data);
+    } catch {
+      setUser({
+        name: "Leo",
+        email: "leo@leomail.com",
+      });
+    }
   }
 
-<<<<<<< HEAD
-  /*
-  function handleStartRun() {
-    if (!testName.trim()) {
-=======
+  async function checkReadiness() {
+    try {
+      const [healthRes, dockerRes, storageRes] = await Promise.all([
+        fetch("/api/health"),
+        fetch("/api/docker/ping"),
+        fetch("/api/storage/space"),
+      ]);
+
+      let backendStatus = false;
+      let dockerStatus = false;
+      let storageStatus = true;
+
+      if (healthRes.ok) {
+        const healthData = await healthRes.json();
+        backendStatus = Boolean(healthData.success);
+      }
+
+      if (dockerRes.ok) {
+        const dockerData = await dockerRes.json();
+        dockerStatus = Boolean(dockerData.success);
+      }
+
+      if (storageRes.ok) {
+        const storageData = await storageRes.json();
+        storageStatus = Boolean(storageData.success);
+      }
+
+      setReadiness({
+        docker: dockerStatus,
+        backend: backendStatus,
+        storage: storageStatus,
+        checking: false,
+        lastChecked: new Date().toLocaleTimeString(),
+      });
+    } catch {
+      setReadiness({
+        docker: false,
+        backend: false,
+        storage: true,
+        checking: false,
+        lastChecked: new Date().toLocaleTimeString(),
+      });
+    }
+  }
+
+  function pushNotification(type, title, msg) {
+    const id = crypto.randomUUID();
+    setNotifications((current) => [...current, { id, type, title, msg }]);
+  }
+
+  function dismissNotification(id) {
+    setNotifications((current) => current.filter((item) => item.id !== id));
+  }
+
   function resetRunForm(showNotification = true) {
     setTestName("");
-    setConfigFile(null);
-    setRunnerFile(null);
+    setRunnerScriptName("");
+    setConfigFileName("");
     setIsPreparingRun(false);
     clearStoredRun();
+
     if (configFileInputRef.current) {
-      configFileInputRef.current.value = '';
+      configFileInputRef.current.value = "";
     }
+
+    if (runnerFileInputRef.current) {
+      runnerFileInputRef.current.value = "";
+    }
+
     if (showNotification) {
-      pushNotify(
-        'warn',
-        'Form reset',
-        'The current test run setup has been cleared.'
+      pushNotification(
+        "warn",
+        "Form reset",
+        "The current test run setup has been cleared."
       );
     }
+  }
+
+  function handleTestNameChange(event) {
+    const nextValue = event.target.value;
+    setTestName(nextValue);
+    writeStoredRun({ testName: nextValue });
   }
 
   function handleConfigUploadClick() {
     configFileInputRef.current?.click();
   }
 
+  function handleRunnerUploadClick() {
+    runnerFileInputRef.current?.click();
+  }
+
+  function handleRunnerFileSelected(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const lowerName = file.name.toLowerCase();
+    const isValidRunner = ALLOWED_RUNNER_EXTENSIONS.some((ext) =>
+      lowerName.endsWith(ext)
+    );
+
+    if (!isValidRunner) {
+      setRunnerScriptName("");
+      writeStoredRun({ runnerScriptName: "" });
+
+      pushNotification(
+        "error",
+        "Invalid runner script",
+        "Please upload a .py or .ps1 runner script."
+      );
+
+      event.target.value = "";
+      return;
+    }
+
+    setRunnerScriptName(file.name);
+    writeStoredRun({ runnerScriptName: file.name });
+
+    pushNotification(
+      "ready",
+      "Runner selected",
+      `${file.name} is ready for the next step.`
+    );
+
+    event.target.value = "";
+  }
+
   function handleConfigFileSelected(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+
     const lowerName = file.name.toLowerCase();
-    const isValidConfigFile = ALLOWED_CONFIG_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
-    if (!isValidConfigFile) {
-      setConfigFile(null);
-      clearStoredRun();
-      writeStoredRun({ testName });
-      pushNotify(
-        'error',
-        'Invalid config file',
-        `${file.name} is not a supported file type. Please upload a .json, .yml, or .yaml file.`
+    const isValidConfig = ALLOWED_CONFIG_EXTENSIONS.some((ext) =>
+      lowerName.endsWith(ext)
+    );
+
+    if (!isValidConfig) {
+      setConfigFileName("");
+      writeStoredRun({ configFileName: "", configContent: "" });
+
+      pushNotification(
+        "error",
+        "Invalid config file",
+        `${file.name} is not a supported config file. Please upload .json, .yml, or .yaml.`
       );
-      event.target.value = '';
+
+      event.target.value = "";
       return;
     }
+
     const reader = new FileReader();
+
     reader.onload = () => {
-      const content = typeof reader.result === 'string' ? reader.result : '';
-      setConfigFile(file);
+      const content = typeof reader.result === "string" ? reader.result : "";
+      setConfigFileName(file.name);
+
       writeStoredRun({
         testName,
         configFileName: file.name,
         configContent: content,
       });
-      pushNotify(
-        'ready',
-        'Config selected',
+
+      pushNotification(
+        "ready",
+        "Config selected",
         `${file.name} is ready for the next step.`
       );
     };
+
     reader.onerror = () => {
-      setConfigFile(null);
-      pushNotify(
-        'error',
-        'Unable to read config',
-        'The selected config file could not be read. Please try again.'
+      setConfigFileName("");
+      writeStoredRun({ configFileName: "", configContent: "" });
+
+      pushNotification(
+        "error",
+        "Unable to read config",
+        "The selected config file could not be read. Please try again."
       );
     };
+
     reader.readAsText(file);
-    event.target.value = '';
+    event.target.value = "";
   }
-
-  function handleTestNameChange(event) {
-    const nextTestName = event.target.value;
-    setTestName(nextTestName);
-    writeStoredRun({ testName: nextTestName });
-  }
-
-  // Runner script upload logic from feature branch
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith(".py") && !fileName.endsWith(".ps1")) {
->>>>>>> origin/main
-      pushNotify(
-        "error",
-        "Invalid Runner Script File type",
-        "Please upload a valid runner script (.py or .ps1)."
-      );
-      setRunnerFile(null);
-    } else {
-      setRunnerFile(file);
-    }
-    e.target.value = null;
-  };
-  const removeRunnerFile = () => {
-    setRunnerFile(null);
-  };
-
-  // Readiness check logic from feature branch
-  const checkReadiness = async () => {
-    try {
-      const healthRes = await fetch("http://localhost:5000/api/health");
-      const healthData = await healthRes.json();
-      const dockerRes = await fetch("http://localhost:5000/api/docker/ping");
-      const storageRes = await fetch("http://localhost:5000/api/storage/space");
-      const storageData = await storageRes.json();
-      let dockerStatus = false;
-      if (dockerRes.ok) {
-        const dockerData = await dockerRes.json();
-        dockerStatus = dockerData.success;
-      }
-      setRediness({
-        docker: dockerStatus,
-        backend: healthData.success,
-        storage: storageData.success,
-        checking: false,
-        lastChecked: new Date().toLocaleTimeString()
-      });
-    } catch (err) {
-      setRediness({
-        docker: false,
-        backend: false,
-        storage: true,
-        checking: false,
-        lastChecked: new Date().toLocaleTimeString()
-      });
-    }
-  };
-
-  const isSystemReady = readiness.docker && readiness.backend && readiness.storage;
 
   function handleStartRun() {
+    const testNameError = validateTestName(testName);
+    const runnerError = !runnerScriptName
+      ? "Runner Script is required."
+      : "";
+    const configError = !configFileName ? "Config File required." : "";
+
+    if (testNameError) {
+      pushNotification("error", "Invalid test name", testNameError);
+      return;
+    }
+
+    if (runnerError) {
+      pushNotification("error", "Runner script required", runnerError);
+      return;
+    }
+
+    if (configError) {
+      pushNotification("error", "Config file required", configError);
+      return;
+    }
+
+    if (!isSystemReady) {
+      pushNotification(
+        "error",
+        "System not ready",
+        "Resolve readiness issues before starting a run."
+      );
+      return;
+    }
+
     const storedRun = readStoredRun();
-    const configFileName = storedRun?.configFileName ?? configFile?.name ?? '';
-    const configContent = storedRun?.configContent ?? '';
-    if (!testName.trim()) {
-      pushNotify(
-        'error',
-        'Test name required',
-        'Please enter a test run name before continuing.'
-      );
-      return;
-    }
-    if (!runnerFile) {
-      pushNotify(
-        'error',
-        'Runner script required',
-        'Please upload a runner script before continuing.'
-      );
-      return;
-    }
-    if (!configFileName || !configContent.trim()) {
-      pushNotify(
-        'error',
-        'Config file required',
-        'Please upload a valid config file before continuing.'
-      );
-      return;
-    }
+    const configContent = storedRun?.configContent ?? "";
+
     setIsPreparingRun(true);
+
     writeStoredRun({
       testName: testName.trim(),
+      runnerScriptName,
       configFileName,
       configContent,
     });
-    navigate('/confirmation', {
+
+    navigate("/confirmation", {
       state: {
         testName: testName.trim(),
+        runnerScriptName,
         configFileName,
         configContent,
       },
     });
+
     setIsPreparingRun(false);
-
-    /*
-    // Re-enable this when the backend route exists:
-    async function prepareRun() {
-      const formData = new FormData();
-      formData.append("testName", testName);
-      formData.append("config", configFile);
-
-      const response = await fetch("/api/test-runs/prepare", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to prepare test run");
-      }
-
-      const data = await response.json();
-
-      navigate("/confirmation", {
-        state: {
-          runId: data.runId,
-          testName: data.testName ?? testName,
-          configFileName: data.configFileName ?? configFile.name,
-          configContent: data.configContent ?? "",
-        },
-      });
-    }
-    */
-  }
-    */
-
-  // validate test name input
-  function validateTestName(val) {
-
-    // can't be empty
-    if (!val.trim()) {
-      return "Test name required.";
-    }
-
-    // max 50 chars
-    if(val.length > 50) {
-      return "Test name must be 50 characters or less.";
-    }
-
-    // alphanumeric only
-    if(!/^[a-zA-Z0-9 ]+$/.test(val)) {
-      return "Letters and digits only"
-    }
-
-    return ""
   }
 
-  // validates uploaded runner script
-  function validateRunnerScript(file) {
-    if (!file) {
-      return "Runner Script is required.";
-    }
+  const testNameError = validateTestName(testName);
+  const runnerError = !runnerScriptName ? "Runner Script is required." : "";
+  const configError = !configFileName ? "Config File required." : "";
+  const isSystemReady =
+    readiness.docker && readiness.backend && readiness.storage;
 
-    return ""
-  }
-
-  // validates uploaded config file
-  function validateConfigFile(file) {
-    if (!file) {
-      return "Config File required.";
-    }
-
-    return ""
-  }
-
-  // rerun validations when test name or uploaded files change
-  useEffect(() => {
-    setErrors({
-      testName: validateTestName(testName),
-      runnerScript: validateRunnerScript(runnerScript),
-      configFile: validateConfigFile(configFile),
-    })
-  }, [testName, runnerScript, configFile])
-
-  const isValid = !errors.testName && !errors.runnerScript && !errors.configFile;
-
-  function handleStartRun() {
-    const newErrors = {
-      testName: validateTestName(testName),
-      runnerScript: validateRunnerScript(runnerScript),
-      configFile: validateConfigFile(configFile),
-    }
-
-    setErrors(newErrors) // update error message
-
-    // stop if there are errors
-    if (newErrors.testName || newErrors.runnerScript || newErrors.configFile) {
-      return;
-    }
-
-    // go to confirmation page
-    navigate("/confirmation", {
-      state: {
-        testName,
-        runnerScriptName: runnerScript ? runnerScript.name : "",
-        configFileName: configFile ? configFile.name : "",
-      },
-    })
-  }
-
-
-  
+  const displayName = user?.name || user?.fname || "User";
 
   return (
     <>
       <Navigation />
+
       <div className="dash-hero">
         <h1 className="dash-welcome">
-          Welcome <span>{user ? user.fname : "User"}</span>
+          Welcome <span>{displayName}</span>
         </h1>
-        <p className="dash-email">{user ? user.email : ""}</p>
+        <p className="dash-email">{user?.email || ""}</p>
       </div>
+
       <div className="Dashboard-wrapper">
         <main className="Dashboard-page">
-          {/* Create New Test Run */}
           <div className="card">
             <div className="card-header">
               <div className="card-title">Create New Test Run</div>
             </div>
+
             <div className="card-body">
               <label className="form-label">Insert Test Run Name</label>
               <input
@@ -429,120 +409,178 @@ const Dashboard = () => {
                 onChange={handleTestNameChange}
                 placeholder="Name #1"
               />
-              {errors.testName && (
-                <p className="error-text">{errors.testName}</p>
-              )}
+              {testNameError && <p className="error-text">{testNameError}</p>}
 
               <div className="form-stack">
-<<<<<<< HEAD
-                {/*
-                <button className="btn" type="button"><UploadIcon /> Upload Runner Script</button>
-                <button className="btn" type="button"><UploadIcon /> Upload Config</button>
-                */}
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={handleRunnerUploadClick}
+                >
+                  <UploadIcon />{" "}
+                  {runnerScriptName
+                    ? `Replace Runner Script (${runnerScriptName})`
+                    : "Upload Runner Script (.py or .ps1)"}
+                </button>
 
-                <label className="btn">
-                  <UploadIcon /> Upload Runner Script
-                  <input type="file" hidden onChange={(e) => setRunnerScript(e.target.files[0])}/>
-                </label>
+                <input
+                  ref={runnerFileInputRef}
+                  type="file"
+                  accept=".py,.ps1"
+                  onChange={handleRunnerFileSelected}
+                  style={{ display: "none" }}
+                />
 
-                {runnerScript && (
-                  <p className="file-name">Selected: {runnerScript.name}</p>
+                {runnerScriptName && (
+                  <p className="file-name">Selected: {runnerScriptName}</p>
                 )}
-                
-                {errors.runnerScript && (
-                  <p className="error-text">{errors.runnerScript}</p>
-                )}
+                {runnerError && <p className="error-text">{runnerError}</p>}
 
-                <label className="btn">
-                  <UploadIcon /> Upload Config
-                  <input type="file" hidden onChange={(e) => setConfigFile(e.target.files[0])}/>
-                </label>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={handleConfigUploadClick}
+                >
+                  <UploadIcon />{" "}
+                  {configFileName
+                    ? `Replace Config (${configFileName})`
+                    : "Upload Config"}
+                </button>
 
-                {configFile && (
-                  <p className="file-name">Selected: {configFile.name}</p>
-                )}
-                
-                {errors.configFile && (
-                  <p className="error-text">{errors.configFile}</p>
-                )}
-
-=======
-                {runnerFile ? (
-                  <button className="btn" type="button" onClick={removeRunnerFile}>Remove {runnerFile.name} ({`${(runnerFile.size / 1024).toFixed(2)} KB`})</button>
-                ) : (
-                  <label className="btn">
-                    <UploadIcon /> Upload Runner Script (.py or .ps1)
-                    <input type="file" accept=".py, .ps1" onChange={handleFileChange} style={{ display: "none" }} />
-                  </label>
-                )}
-
-                <button className="btn" type="button" onClick={handleConfigUploadClick}><UploadIcon /> Upload Config</button>
                 <input
                   ref={configFileInputRef}
                   type="file"
                   accept=".json,.yml,.yaml"
                   onChange={handleConfigFileSelected}
-                  style={{ display: 'none' }}
+                  style={{ display: "none" }}
                 />
->>>>>>> origin/main
-                <button className="btn" type="button" onClick={() => navigate('/configuration-settings')}><SettingsIcon /> Configure Settings</button>
-                <button className="btn" type="button" onClick={() => resetRunForm(true)}>
+
+                {configFileName && (
+                  <p className="file-name">Selected: {configFileName}</p>
+                )}
+                {configError && <p className="error-text">{configError}</p>}
+
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => navigate("/configuration-settings")}
+                >
+                  <SettingsIcon /> Configure Settings
+                </button>
+
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => resetRunForm(true)}
+                >
                   Clear Current Run
                 </button>
               </div>
-              <button className="btn btn-primary" type="button" onClick={handleStartRun} disabled={!isSystemReady} style={{ opacity: !isSystemReady ? 0.5 : 1, cursor: isSystemReady ? "pointer" : "not-allowed" }}><RunIcon /> Start Test Run</button>
+
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={handleStartRun}
+                disabled={!isSystemReady || isPreparingRun}
+                style={{
+                  opacity: !isSystemReady || isPreparingRun ? 0.5 : 1,
+                  cursor:
+                    !isSystemReady || isPreparingRun
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                <RunIcon /> {isPreparingRun ? "Preparing..." : "Start Test Run"}
+              </button>
             </div>
-              {!readiness.checking && !isSystemReady && (
-                <div className="readiness-alert">
-                  <strong>Start Run Disabled: </strong>
-                  {!readiness.backend && "Backend is offline. "}
-                  {readiness.backend && !readiness.docker && "Docker Desktop is not running. "}
-                  {readiness.backend && readiness.docker && !readiness.storage && "Insufficient storage space for VM."}
-                </div>
-              )}
+
+            {!readiness.checking && !isSystemReady && (
+              <div className="readiness-alert">
+                <strong>Start Run Disabled: </strong>
+                {!readiness.backend && "Backend is offline. "}
+                {readiness.backend &&
+                  !readiness.docker &&
+                  "Docker Desktop is not running. "}
+                {readiness.backend &&
+                  readiness.docker &&
+                  !readiness.storage &&
+                  "Insufficient storage space for VM."}
+              </div>
+            )}
           </div>
-          {/* Launcher Readiness Card */}
+
           <div className="card">
             <div className="card-header">
               <div className="card-title">Launcher readiness</div>
             </div>
+
             <div className="card-body">
               <div className="status-row status-header">
                 <div className="status-label">Readiness check</div>
-                <div className="status-value">{readiness.lastChecked ? `Updated ${readiness.lastChecked}` : readiness.checking ? "Checking..." : "Not checked yet"}</div>
+                <div className="status-value">
+                  {readiness.lastChecked
+                    ? `Updated ${readiness.lastChecked}`
+                    : readiness.checking
+                    ? "Checking..."
+                    : "Not checked yet"}
+                </div>
               </div>
+
               <div className="status-row">
                 <div className="status-label">Backend availability</div>
-                <div className={`status-badge ${readiness.backend ? "ready" : "unready"}`}>
-                  {readiness.checking ? "…" : readiness.backend ? "Ready" : "Unavailable"}
+                <div
+                  className={`status-badge ${
+                    readiness.backend ? "ready" : "unready"
+                  }`}
+                >
+                  {readiness.checking
+                    ? "…"
+                    : readiness.backend
+                    ? "Ready"
+                    : "Unavailable"}
                 </div>
               </div>
+
               <div className="status-row">
                 <div className="status-label">Docker availability</div>
-                <div className={`status-badge ${readiness.docker ? "ready" : "unready"}`}>
-                  {readiness.checking ? "…" : readiness.docker ? "Ready" : "Unavailable"}
+                <div
+                  className={`status-badge ${
+                    readiness.docker ? "ready" : "unready"
+                  }`}
+                >
+                  {readiness.checking
+                    ? "…"
+                    : readiness.docker
+                    ? "Ready"
+                    : "Unavailable"}
                 </div>
               </div>
+
               <div className="status-row">
                 <div className="status-label">Required launch readiness</div>
-                <div className={`status-badge ${(readiness.backend && readiness.docker) ? "ready" : "unready"}`}>
-                  {readiness.checking ? "…" : (readiness.backend && readiness.docker) ? "Ready" : "Not ready"}
+                <div
+                  className={`status-badge ${
+                    isSystemReady ? "ready" : "unready"
+                  }`}
+                >
+                  {readiness.checking
+                    ? "…"
+                    : isSystemReady
+                    ? "Ready"
+                    : "Not ready"}
                 </div>
               </div>
-<<<<<<< HEAD
-              <button className="btn btn-primary" type="button" onClick={handleStartRun} disabled={!isValid} ><RunIcon /> Start Test Run</button>
-=======
->>>>>>> origin/main
             </div>
           </div>
-          {/* Recent Test Runs just display no function —*/}
+
           <div className="card">
             <div className="card-header">
               <div className="card-title">Recent Test Runs</div>
             </div>
+
             {RECENT_RUNS.length > 0 ? (
               <ul className="run-list">
-                {RECENT_RUNS.map(run => (
+                {RECENT_RUNS.map((run) => (
                   <li key={run.id} className="run-item">
                     <div className="run-item-left">
                       <div className="run-dot" />
@@ -551,7 +589,9 @@ const Dashboard = () => {
                         <div className="run-date">Last edit: {run.date}</div>
                       </div>
                     </div>
-                    <button className="run-open" type="button">Open</button>
+                    <button className="run-open" type="button">
+                      Open
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -561,24 +601,34 @@ const Dashboard = () => {
                   <EmptyIcon />
                 </div>
                 <div className="empty-title">No recent Test Runs</div>
-                <div className="empty-sub">It's empty in here…<br/>Start a new test run to see it appear.</div>
+                <div className="empty-sub">
+                  It&apos;s empty in here…
+                  <br />
+                  Start a new test run to see it appear.
+                </div>
               </div>
             )}
           </div>
         </main>
       </div>
-      {/* Notification Stack */}
+
       <div className="Notify-stack">
-        {Notify.map(t => (
-          <div key={t.id} className="Notify">
-            <div className={`Notify-icon ${t.type}`}>
-              {t.type === "error" ? "✕" : "!"}
+        {notifications.map((item) => (
+          <div key={item.id} className="Notify">
+            <div className={`Notify-icon ${item.type}`}>
+              {item.type === "error" ? "✕" : "!"}
             </div>
             <div className="Notify-content">
-              <div className="Notify-title">{t.title}</div>
-              <div className="Notify-msg">{t.msg}</div>
+              <div className="Notify-title">{item.title}</div>
+              <div className="Notify-msg">{item.msg}</div>
             </div>
-            <button className="Notify-close" onClick={() => dismissNotify(t.id)} type="button">×</button>
+            <button
+              className="Notify-close"
+              onClick={() => dismissNotification(item.id)}
+              type="button"
+            >
+              ×
+            </button>
           </div>
         ))}
       </div>

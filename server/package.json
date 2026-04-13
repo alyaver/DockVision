@@ -2,15 +2,17 @@
   "name": "dockvision-server",
   "version": "1.0.0",
   "scripts": {
-    "dev": "concurrently \"nodemon index.js\" \"nodemon Server.js\"",
-    "start": "concurrently \"node index.js\" \"node Server.js\""
+    "dev": "nodemon index.js",
+    "start": "node index.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
-    "cookie-parser": "^1.4.7",
     "check-disk-space": "^3.4.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
     "express": "^4.21.0",
+    "nodemailer": "^6.10.1",
     "pg": "^8.20.0"
   },
   "devDependencies": {

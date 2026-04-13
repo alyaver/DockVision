@@ -1,21 +1,22 @@
-import Navigation from '../components/Navigation';
-import '../Title.css';
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import Navigation from "../components/Navigation";
+import "../Title.css";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
+/**
+ * Simple splash/title page.
+ * Redirect target is normalized to lowercase to match App.jsx.
+ */
 const TitlePage = () => {
-
   const navigate = useNavigate();
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      navigate('/Dashboard');
-    }, 3000); // 3 seconds
+      navigate("/dashboard");
+    }, 3000);
 
-    return () => clearTimeout(timer); // cleanup
-  }, 
-  []
-  );
+    return () => clearTimeout(timer);
+  }, [navigate]);
 
   return (
     <>

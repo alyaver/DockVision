@@ -1,54 +1,101 @@
-import Navigation from '../components/Navigation';
-import '../NavBar.css';
-import '../ForgotPassword.css';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import Navigation from "../components/Navigation";
+import "../NavBar.css";
+import "../ForgotPassword.css";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
+/**
+ * Forgot-password page.
+ *
+ * Cleanup decisions:
+ * - Fix reversed success/error logic.
+ * - Always turn loading back off.
+ * - Use the proxied /api path instead of hardcoded hosts.
+ */
 const ForgotPassword = () => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [message, setMessage] = useState('')
+
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [isError, setIsError] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleResetPassword = async () => {
     setLoading(true);
-    try{
-      const res = await fetch('/api/forgot-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+    setMessage("");
+    setIsError(false);
+
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
 
-      if (!res.ok) {
-        setMessage("Link Sent! Check Your Email.")
-      }else{
-        setMessage("Somthing went wrong! Try Again!")
-      }
-    }catch (err){
-      setMessage("Network error. Try Again!")
-    }
-    };
+      const data = await res.json().catch(() => ({}));
 
-return(
-  <>
-  <Navigation />
-  <main className = "forgotPassword">
-    <section className="forgotPassword-hero">
-      <h1 className="forgotPassword-heading">Reset Password</h1>
-        <div className="resetPassword">
-          <div className="email-info">
-            <label className="email-label" htmlFor="emailAddress" >Email </label> 
-            <input className="email-box" type="text" id="emailAddress" placeholder="Enter E-mail" value={email} onChange={(e) => setEmail(e.target.value)}/>
+      if (!res.ok) {
+        throw new Error(data.message || "Something went wrong. Try again.");
+      }
+
+      setMessage(data.message || "Link sent. Check your email.");
+      setIsError(false);
+    } catch (err) {
+      setMessage(err.message || "Network error. Try again.");
+      setIsError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <Navigation />
+      <main className="forgotPassword">
+        <section className="forgotPassword-hero">
+          <h1 className="forgotPassword-heading">Reset Password</h1>
+
+          <div className="resetPassword">
+            <div className="email-info">
+              <label className="email-label" htmlFor="emailAddress">
+                Email
+              </label>
+              <input
+                className="email-box"
+                type="email"
+                id="emailAddress"
+                placeholder="Enter E-mail"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+
+            {message && (
+              <p style={{ color: isError ? "red" : "green" }}>{message}</p>
+            )}
+
+            <div className="button-group">
+              <button
+                className="cancel-Button"
+                type="button"
+                onClick={() => navigate("/sign-in")}
+              >
+                Cancel
+              </button>
+
+              <button
+                className="submit-Button"
+                type="button"
+                onClick={handleResetPassword}
+                disabled={loading || !email.trim()}
+              >
+                {loading ? "Sending..." : "Reset Password"}
+              </button>
+            </div>
           </div>
-          {message && <p className= "reset-message">{message}</p>}
-          <div className="button-group">
-              <button className="cancel-Button" type="button" onClick={() => navigate('/sign-in')}>Cancel </button>  {/*redirect to signin page */}
-              <button className="submit-Button" type="button" onClick={handleResetPassword} disabled={loading}>{loading ? "Sent" :"Reset Password"}</button> {/*needs to validate user and then send email to user containing link to resetpassword page. */}
-          </div>
-        </div>
-    </section>
-  </main>
-  </>
+        </section>
+      </main>
+    </>
   );
 };
 
