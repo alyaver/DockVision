@@ -7,6 +7,7 @@ import '../NavBar.css';
 const SignIn = () => {
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
+  const [submitted, setSubmitted] = useState("");
 
   const validExtensions = [".com", ".org", ".net", ".gov", ".edu", ".mil"];
   
@@ -24,34 +25,48 @@ const SignIn = () => {
     { label: "Contains exactly one @ symbol", valid: emailParts.length === 2 },
     { label: "Starts with local-part", valid: localPart.length > 0 },
     { label: "Ends with domain-part", valid: domainPart.length > 0 },
-    { label: "Local-part is at most 64 characters", valid: localPart.length > 0 && localPart < 65 },
+    { label: "Local-part is at most 64 characters", valid: localPart.length > 0 && localPart.length < 65 },
     { label: "Local-part does not start or end with .",
       valid:
         localPart.length > 0 &&
         !localPart.startsWith(".") &&
         !localPart.endsWith(".")
     },
-    { label: "Domain-part is at most 255 characters", valid: domainPart.length > 0 && domainPart < 256 },
+    { label: "Domain-part is at most 255 characters", valid: domainPart.length > 0 && domainPart.length < 256 },
     { label: "Domain-part must end with a valid extension", valid: validExtensions.some((ext) => domainPart.endsWith(ext)) }
   ];
 
   const isPasswordValid = passRules.every((rule) => rule.valid);
   const isEmailValid = emailRules.every((rule) => rule.valid);
+  const isEmpty = email === "" || password === "";
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setSubmitted(true);
+
+    if (!isEmailValid || !isPasswordValid) return;
+  };
 
   return(
     <>
       <Navigation />
+        <form onSubmit={handleSubmit}>
         <main className="sign-in-page">
           <section className="sign-in-hero">
             <h1 className="sign-in-heading">Sign In</h1>
             <div className="sign-in-info-fields">
               <h2 className="value-text">Email</h2>
-              <input className="sign-in-value-box" type="text" placeholder="Email" />
+              <input className="sign-in-value-box" type="text" value={email} 
+              onChange={(e) => setEmail(e.target.value)} placeholder="Enter an Email" />
+              {submitted && !isEmailValid && (<p className="error">Invalid email format</p>)}
 
               <h2 className="value-text">Password</h2>
               <input className="sign-in-value-box" type="password" value ={password} 
-              onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
-              <button className="sign-in-button">
+              onChange={(e) => setPassword(e.target.value)} placeholder="Enter Password" />
+              {submitted && !isPasswordValid && (<p className="error">Invalid password format</p>)}
+
+              <button className="sign-in-button" type="submit" disabled={isEmpty} style={{ opacity: isEmpty ? 0.5 : 1, 
+              cursor: !isEmpty ? "pointer": "not-allowed"}} >
                 Sign In
               </button>
               <Link to="/forgot-password" className="sign-in-secondary-link">Forgot Password</Link>
@@ -59,6 +74,7 @@ const SignIn = () => {
             </div>
           </section>
         </main>
+        </form>
     </>
   );
 };
