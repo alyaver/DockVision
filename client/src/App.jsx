@@ -10,6 +10,7 @@ import Register from "./pages/Register.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import SetNewPassword from "./pages/SetNewPassword.jsx";
 import SignIn from "./pages/SignIn.jsx";
+import Registration from "./pages/Registration.jsx";
 
 /**
  * Central router.
@@ -32,6 +33,7 @@ function App() {
         <Route path="/running-test" element={<TestPage />} />
 
         <Route path="/sign-in" element={<SignIn />} />
+<<<<<<< HEAD
         <Route path="/login" element={<SignIn />} />
         <Route path="/Login" element={<SignIn />} />
 
@@ -42,6 +44,9 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/set-new-password" element={<SetNewPassword />} />
         <Route path="/reset-password" element={<SetNewPassword />} />
+=======
+        <Route path="/registration" element={<Registration />} />
+>>>>>>> origin/DOCV-183-registration-page
       </Routes>
     </Router>
   );

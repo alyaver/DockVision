@@ -87,6 +87,7 @@ const Navigation = () => {
             </Link>
           </li>
         )}
+<<<<<<< HEAD
 
         {!isCheckingAuth &&
           (user ? (
@@ -120,6 +121,15 @@ const Navigation = () => {
               </li>
             </>
           ))}
+=======
+        
+        <li>
+          <Link to="/sign-in" className="nav-button">Sign in</Link>
+        </li>
+        <li>
+          <Link to="/registration" className="nav-button nav-button-dark">Register</Link>
+        </li>
+>>>>>>> origin/DOCV-183-registration-page
       </ul>
     </nav>
   );
