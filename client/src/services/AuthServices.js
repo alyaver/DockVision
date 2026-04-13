@@ -1,5 +1,12 @@
+/**
+ * Auth service helpers.
+ *
+ * Use relative /api calls so the Vite proxy forwards to the Express backend
+ * running on port 5000.
+ */
+
 export async function registerUser(formData) {
-  const response = await fetch("http://localhost:3001/api/register", {
+  const response = await fetch("/api/register", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -18,7 +25,7 @@ export async function registerUser(formData) {
 }
 
 export async function loginUser(formData) {
-  const response = await fetch("http://localhost:3001/api/login", {
+  const response = await fetch("/api/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -37,7 +44,7 @@ export async function loginUser(formData) {
 }
 
 export async function logoutUser() {
-  const response = await fetch("http://localhost:3001/api/logout", {
+  const response = await fetch("/api/logout", {
     method: "POST",
     credentials: "include",
   });

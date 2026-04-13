@@ -2,7 +2,10 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import "../NavBar.css";
 
-const API_BASE_URL = "http://localhost:3001/api";
+/**
+ * Use relative /api calls so requests go through the Vite proxy.
+ */
+const API_BASE_URL = "/api";
 
 const Navigation = () => {
   const location = useLocation();
@@ -20,9 +23,7 @@ const Navigation = () => {
           credentials: "include",
         });
 
-        if (!isMounted) {
-          return;
-        }
+        if (!isMounted) return;
 
         if (!response.ok) {
           setUser(null);
@@ -59,7 +60,7 @@ const Navigation = () => {
       console.error("Logout failed:", error);
     } finally {
       setUser(null);
-      navigate("/login");
+      navigate("/sign-in");
     }
   }
 
@@ -87,7 +88,6 @@ const Navigation = () => {
             </Link>
           </li>
         )}
-<<<<<<< HEAD
 
         {!isCheckingAuth &&
           (user ? (
@@ -110,26 +110,17 @@ const Navigation = () => {
           ) : (
             <>
               <li>
-                <Link to="/login" className="nav-button">
+                <Link to="/sign-in" className="nav-button">
                   Sign in
                 </Link>
               </li>
               <li>
-                <Link to="/register" className="nav-button nav-button-dark">
+                <Link to="/registration" className="nav-button nav-button-dark">
                   Register
                 </Link>
               </li>
             </>
           ))}
-=======
-        
-        <li>
-          <Link to="/sign-in" className="nav-button">Sign in</Link>
-        </li>
-        <li>
-          <Link to="/registration" className="nav-button nav-button-dark">Register</Link>
-        </li>
->>>>>>> origin/DOCV-183-registration-page
       </ul>
     </nav>
   );

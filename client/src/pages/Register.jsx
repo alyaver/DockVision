@@ -1,33 +1,59 @@
-import Navigation from "../components/Navigation";
-import "../Title.css";
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+import Registration from "./Registration.jsx";
 
 /**
- * Simple splash/title page.
- * Redirect target is normalized to lowercase to match App.jsx.
+ * Registration page controller.
+ *
+ * Decisions:
+ * - Keep this file as the controller/wrapper for registration submission.
+ * - Render the Registration UI component from Registration.jsx.
+ * - Use relative /api calls so Vite proxies to the Express backend on port 5000.
+ * - Do not hardcode localhost:3001.
  */
-const TitlePage = () => {
-  const navigate = useNavigate();
+const API_BASE_URL = "/api";
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      navigate("/dashboard");
-    }, 3000);
+export default function Register() {
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-    return () => clearTimeout(timer);
-  }, [navigate]);
+  async function handleRegister(formData) {
+    try {
+      setErrorMessage("");
+      setIsSubmitting(true);
+
+      const response = await fetch(`${API_BASE_URL}/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify(formData),
+      });
+
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (error) {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(data.message || "Registration failed");
+      }
+
+      window.location.href = "/dashboard";
+    } catch (error) {
+      setErrorMessage(error.message || "Registration failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
 
   return (
-    <>
-      <Navigation />
-      <main className="title-page">
-        <div className="title-page-box">
-          <h1 className="title-page-heading">DockVision</h1>
-        </div>
-      </main>
-    </>
+    <Registration
+      onSubmit={handleRegister}
+      errorMessage={errorMessage}
+      isSubmitting={isSubmitting}
+    />
   );
-};
-
-export default TitlePage;
+}

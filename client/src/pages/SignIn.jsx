@@ -1,23 +1,21 @@
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import Navigation from "../components/Navigation";
+import { loginUser } from "../services/AuthServices.js";
 import "../SignIn.css";
 import "../NavBar.css";
 
 /**
- * SignIn page
- *
- * Merge repair decision:
- * - Keep this file as a SignIn page only.
- * - Do not keep any Register-page code in this file.
- * - Keep the teammate's client-side validation idea, but restore valid JSX.
+ * SignIn page only.
+ * Do not mix Register-page logic into this file.
  */
 const SignIn = () => {
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [serverError, setServerError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Allowed email endings from the incoming sign-in validation branch.
   const validExtensions = [".com", ".org", ".net", ".gov", ".edu", ".mil"];
 
   const emailParts = email.split("@");
@@ -59,15 +57,27 @@ const SignIn = () => {
   const isEmailValid = emailRules.every((rule) => rule.valid);
   const isEmpty = email.trim() === "" || password === "";
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitted(true);
+    setServerError("");
 
-    // For this merge repair, stop on client-side validation failure.
-    // Backend login wiring can be added after the merge is stable again.
     if (!isEmailValid || !isPasswordValid) return;
 
-    console.log("Sign-in form passed client validation.");
+    setIsSubmitting(true);
+
+    try {
+      await loginUser({
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
+      window.location.href = "/dashboard";
+    } catch (error) {
+      setServerError(error.message || "Login failed");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -104,23 +114,25 @@ const SignIn = () => {
                 <p className="error">Invalid password format</p>
               )}
 
+              {serverError && <p className="error">{serverError}</p>}
+
               <button
                 className="sign-in-button"
                 type="submit"
-                disabled={isEmpty}
+                disabled={isEmpty || isSubmitting}
                 style={{
-                  opacity: isEmpty ? 0.5 : 1,
-                  cursor: isEmpty ? "not-allowed" : "pointer",
+                  opacity: isEmpty || isSubmitting ? 0.5 : 1,
+                  cursor: isEmpty || isSubmitting ? "not-allowed" : "pointer",
                 }}
               >
-                Sign In
+                {isSubmitting ? "Signing In..." : "Sign In"}
               </button>
 
               <Link to="/forgot-password" className="sign-in-secondary-link">
                 Forgot Password
               </Link>
 
-              <Link to="/register" className="sign-in-secondary-link">
+              <Link to="/registration" className="sign-in-secondary-link">
                 Create Account
               </Link>
             </div>

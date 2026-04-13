@@ -10,15 +10,15 @@ import Register from "./pages/Register.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import SetNewPassword from "./pages/SetNewPassword.jsx";
 import SignIn from "./pages/SignIn.jsx";
-import Registration from "./pages/Registration.jsx";
 
 /**
  * Central router.
  *
- * Cleanup decisions:
- * - Standardize on lowercase routes.
- * - Keep a few aliases so older links do not immediately break.
- * - Route reset links to SetNewPassword using both /set-new-password and /reset-password.
+ * Decisions:
+ * - Keep lowercase primary routes.
+ * - Keep compatibility aliases where useful.
+ * - Route /registration and /register to the same Register page.
+ * - Do not introduce a second competing Registration page component.
  */
 function App() {
   return (
@@ -29,24 +29,23 @@ function App() {
         <Route path="/contact" element={<Contact />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/confirmation" element={<Confirmation />} />
-        <Route path="/configuration-settings" element={<ConfigurationSettings />} />
+        <Route
+          path="/configuration-settings"
+          element={<ConfigurationSettings />}
+        />
         <Route path="/running-test" element={<TestPage />} />
 
         <Route path="/sign-in" element={<SignIn />} />
-<<<<<<< HEAD
         <Route path="/login" element={<SignIn />} />
         <Route path="/Login" element={<SignIn />} />
 
+        <Route path="/registration" element={<Register />} />
         <Route path="/register" element={<Register />} />
         <Route path="/Register" element={<Register />} />
-        <Route path="/registration" element={<Register />} />
 
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/set-new-password" element={<SetNewPassword />} />
         <Route path="/reset-password" element={<SetNewPassword />} />
-=======
-        <Route path="/registration" element={<Registration />} />
->>>>>>> origin/DOCV-183-registration-page
       </Routes>
     </Router>
   );
