@@ -49,6 +49,7 @@
 
 .value-text {
   text-align: left;
+  margin-left: -1px;
   padding: 1px 25px 1px;
   font-size: 18px;
   font-weight: 100px;
@@ -95,4 +96,9 @@
 
 .invalid {
   color: red;
+}
+
+.error {
+  margin-left: 40px;
+  margin-bottom: -5px;
 }
