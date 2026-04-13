@@ -9,6 +9,7 @@ import ConfigurationSettings from "./pages/ConfigurationSettings.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import SetNewPassword from "./pages/SetNewPassword.jsx";
 import SignIn from "./pages/SignIn.jsx";
+import Registration from "./pages/Registration.jsx";
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword/>} />
         <Route path="/set-new-password" element={<SetNewPassword />} />
         <Route path="/sign-in" element={<SignIn />} />
+        <Route path="/registration" element={<Registration />} />
       </Routes>
     </Router>
   );

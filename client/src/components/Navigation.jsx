@@ -29,7 +29,7 @@ const Navigation = () => {
           <Link to="/sign-in" className="nav-button">Sign in</Link>
         </li>
         <li>
-          <Link to="/register" className="nav-button nav-button-dark">Register</Link>
+          <Link to="/registration" className="nav-button nav-button-dark">Register</Link>
         </li>
       </ul>
     </nav>
