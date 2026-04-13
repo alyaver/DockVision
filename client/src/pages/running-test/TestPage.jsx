@@ -1,6 +1,7 @@
 import { useEffect, useState} from "react";
 import Navigation from "../../components/Navigation";
 import { useNavigate } from "react-router-dom";
+import "../../TestPage.css";
 
 function TestPage() {
 
@@ -45,36 +46,44 @@ function TestPage() {
     return (
         <>
             <Navigation />
-            <div style={{ padding: '20px'}}>
-                <h1>Running Test</h1>
 
-                <button onClick={() => navigate('/dashboard')}>
+            <div className="Dashboard-wrapper">
+              <main className="Dashboard-page">
+                <div className="card">
+                  <div className="card-header">
+                    <div className="card-title">Running Test</div>
+                  </div>
+
+                  <button className="btn" type="button" onClick={() => navigate('/dashboard')}>
                     Return to Dashboard
-                </button>
+                  </button>
 
-                <p>Run ID: 12345</p>
-                <p>Elapsed Time: 12:34</p>
-                <p>ETA: 56:78</p>
+                    <p>Run ID: 12345</p>
+                    <p>Elapsed Time: 12:34</p>
+                    <p>ETA: 56:78</p>
 
-                <h3>Running Tests</h3>
-                <ul>
-                    <li>Test1: Passed</li>
-                    <li>Warning</li>
-                    <li>Running</li>
-                    <li>Waiting...</li>
-                </ul>
+                    <h3>Running Tests</h3>
+                    <ul>
+                        <li>Test1: Passed</li>
+                        <li>Warning</li>
+                        <li>Running</li>
+                        <li>Waiting...</li>
+                    </ul>
 
-                <h3>Live Log Panel</h3>
-                <div style={{ border: '1px solid black', padding: '10px', minHeight: '120px' }}>
-                    {logs.map((log, index) => (
-                        <p key={index}>{log}</p>
-                    ))}
+                    <h3>Live Log Panel</h3>
+                    <div style={{ border: '1px solid black', padding: '10px', minHeight: '120px' }}>
+                        {logs.map((log, index) => (
+                            <p key={index}>{log}</p>
+                        ))}
+                    </div>
+
+                    <h3>Latest Screenshot</h3>
+                    <div style={{ border: '1px solid black', height: '150px', width: '250px' }}>
+                        (placeholder)
+                    </div>
+
                 </div>
-
-                <h3>Latest Screenshot</h3>
-                <div style={{ border: '1px solid black', height: '150px', width: '250px' }}>
-                    (placeholder)
-                </div>
+              </main>
             </div>
         </>
     );
