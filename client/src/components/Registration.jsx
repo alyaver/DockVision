@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import Registration from "../pages/Register";
+import Registration from "../pages/Registration";
 
 const API_BASE_URL = "http://localhost:3001/api";
 
