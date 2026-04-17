@@ -32,11 +32,14 @@ export default function Registration({
     },
   ];
 
-  const passRules = [
-    { label: "At least 8 characters", valid: password.length >= 8 },
-    { label: "Contains at least 1 number", valid: /\d/.test(password) },
-    { label: "Contains at least 1 letter", valid: /[a-zA-Z]/.test(password) },
-  ];
+const passRules = [
+  { label: "At least 10 characters", valid: password.length >= 8 },
+  { label: "At most 64 characters", valid: password.length <= 64 },
+  { label: "Contains at least 1 lowercase letter", valid: /[a-z]/.test(password) },
+  { label: "Contains at least 1 uppercase letter", valid: /[A-Z]/.test(password) },
+  { label: "Contains at least 1 number", valid: /\d/.test(password) },
+  { label: "Contains at least 1 symbol", valid: /[^A-Za-z\d]/.test(password) },
+];
 
   const confirmPassRules = [
     {

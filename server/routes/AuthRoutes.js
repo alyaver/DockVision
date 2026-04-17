@@ -4,8 +4,8 @@ const crypto = require("crypto");
 
 const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
-const MAX_EMAIL_LENGTH = 254;
-const MAX_PASSWORD_LENGTH = 128;
+const MAX_EMAIL_LENGTH = 50;
+const MAX_PASSWORD_LENGTH = 64;
 
 /**
  * Normalize name input so the database receives a clean value.
@@ -39,7 +39,7 @@ function isValidEmail(value) {
  * Strong password rule used by registration.
  */
 function isStrongPassword(value) {
-  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{10,128}$/.test(
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{10,64}$/.test(
     value
   );
 }
@@ -136,7 +136,7 @@ module.exports = function authRoutes(db) {
       if (password.length > MAX_PASSWORD_LENGTH || !isStrongPassword(password)) {
         return res.status(400).json({
           message:
-            "Password must be at least 10 characters and include uppercase, lowercase, number, and symbol",
+            "Password must be at least 8 characters and include uppercase, lowercase, number, and symbol",
         });
       }
 

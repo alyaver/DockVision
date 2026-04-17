@@ -115,7 +115,7 @@ const Navigation = () => {
                 </Link>
               </li>
               <li>
-                <Link to="/registration" className="nav-button nav-button-dark">
+                <Link to="/register" className="nav-button nav-button-dark">
                   Register
                 </Link>
               </li>
