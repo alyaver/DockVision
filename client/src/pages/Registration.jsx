@@ -96,7 +96,7 @@ const Register = () => {
                 </div>
               )}
 
-              <button className="register-button" type="button" onClick={() => navigate('/dashboard')} disabled={!isRegistrationValid} style={{ opacity: !isRegistrationValid ? 0.5 : 1, cursor: isRegistrationValid ? "pointer" : "not-allowed" }}>
+              <button className="register-button" type="button" onClick={() => navigate('/about?from=Register')} disabled={!isRegistrationValid} style={{ opacity: !isRegistrationValid ? 0.5 : 1, cursor: isRegistrationValid ? "pointer" : "not-allowed" }}>
                 Create Account
               </button>
               <Link to="/forgot-password" className="register-secondary-link">Forgot Password</Link>

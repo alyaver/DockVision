@@ -210,3 +210,20 @@
   height: 40px;
   object-fit: contain;
 }
+
+
+.about-exit-btn {
+  margin-top: 24px;
+  padding: 12px 24px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: #656c74;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.about-exit-btn:hover {
+  background: #ddd;
+  color: #eaebeb;
+}

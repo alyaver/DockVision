@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import Registration from "./Registration.jsx";
-
 /**
  * Registration page controller.
  *
@@ -41,7 +40,7 @@ export default function Register() {
         throw new Error(data.message || "Registration failed");
       }
 
-      window.location.href = "/dashboard";
+      window.location.href = "/about?from=Resgister";
     } catch (error) {
       setErrorMessage(error.message || "Registration failed");
     } finally {

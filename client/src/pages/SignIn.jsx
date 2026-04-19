@@ -72,7 +72,7 @@ const SignIn = () => {
         password,
       });
 
-      window.location.href = "/dashboard";
+      window.location.href = "/about?from=SignIn";
     } catch (error) {
       setServerError(error.message || "Login failed");
     } finally {
