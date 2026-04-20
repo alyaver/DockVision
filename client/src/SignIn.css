@@ -60,7 +60,6 @@
   margin-top: 30px;
   margin-bottom: 10px;
   margin-left: 30px;
-  /* margin: 0 auto; */
   width: 90%;
 
   text-align: center;
@@ -101,4 +100,57 @@
 .error {
   margin-left: 40px;
   margin-bottom: -5px;
+}
+
+/* This removes Microsoft Edge's default "show password" eye icon so that we can use our own without seeing two icons, at least while on edge*/
+input[type="password"]::-ms-reveal {
+  display: none;
+}
+
+.password-input-wrapper {
+  margin-top: 1px;
+  margin-bottom: 1px;
+  margin-left: 30px;
+
+  position: relative;
+  width: 90%;
+}
+
+.sign-in-password-box {
+  width: 100%;
+
+  padding: 10px 42px 10px 10px;
+  font-size: 18px;
+  color: rgb(109, 109, 109);
+
+  border: 2px solid #ced0d6;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.eye-button {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+
+  background: transparent;
+  border: none;
+  padding: 4px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  cursor: pointer;
+  color: #6b7280;
+}
+
+.eye-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.eye-button:hover {
+  color: #111;
 }

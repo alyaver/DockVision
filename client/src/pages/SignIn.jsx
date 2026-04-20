@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useState } from "react";
 import Navigation from "../components/Navigation";
 import { loginUser } from "../services/AuthServices.js";
+import { FiEye, FiEyeOff } from "react-icons/fi";
 import "../SignIn.css";
 import "../NavBar.css";
 
@@ -15,6 +16,7 @@ const SignIn = () => {
   const [submitted, setSubmitted] = useState(false);
   const [serverError, setServerError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const validExtensions = [".com", ".org", ".net", ".gov", ".edu", ".mil"];
 
@@ -103,13 +105,20 @@ const SignIn = () => {
               )}
 
               <h2 className="value-text">Password</h2>
-              <input
-                className="sign-in-value-box"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter Password"
-              />
+              <div className="password-input-wrapper">
+                <input
+                  className="sign-in-password-box"
+                  type={showPassword ? "text" : "password"} 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter Password"
+                />
+
+                <button type="button" className="eye-button" onClick={() => setShowPassword(prev => !prev)}>
+                  {showPassword ? <FiEyeOff /> : <FiEye />}
+                </button>
+              </div>
+
               {submitted && !isPasswordValid && (
                 <p className="error">Invalid password format</p>
               )}

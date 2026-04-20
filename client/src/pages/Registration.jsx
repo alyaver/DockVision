@@ -1,4 +1,5 @@
 import {Link, useNavigate } from "react-router-dom";
+import { FiEye, FiEyeOff } from "react-icons/fi";
 import {useState} from "react";
 import Navigation from '../components/Navigation';
 import '../Registration.css';
@@ -9,6 +10,8 @@ const Register = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm_password, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const navigate = useNavigate();
 
@@ -79,7 +82,14 @@ const Register = () => {
               )}
 
               <h2 className="value-text">Password</h2>
-              <input className="register-value-box" type="password" value ={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
+              <div className="password-input-wrapper">
+                <input className="register-password-box" type={showPassword ? "text" : "password"} 
+                value ={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
+                
+                <button type="button" className="eye-button" onClick={() => setShowPassword(prev => !prev)}>
+                  {showPassword ? <FiEyeOff /> : <FiEye />}
+                </button>
+              </div>
 
               {password.length > 0 && !isPasswordValid && (
                 <div className="error-text">
@@ -88,7 +98,14 @@ const Register = () => {
               )}
 
               <h2 className="value-text">Confirm Password</h2>
-              <input className="register-value-box" type="password" value={confirm_password} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm Password" />
+              <div className="password-input-wrapper">
+                <input className="register-password-box" type={showConfirmPassword ? "text" : "password"} 
+                value={confirm_password} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm Password" />
+                
+                <button type="button" className="eye-button" onClick={() => setShowConfirmPassword(prev => !prev)}>
+                  {showConfirmPassword ? <FiEyeOff /> : <FiEye />}
+                </button>
+              </div>
 
               {confirm_password.length > 0 && !isConfirmPasswordValid && (
                 <div className="error-text">
