@@ -106,3 +106,108 @@
 .invalid {
   color: red;
 }
+
+.strength-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.35s ease, background 0.35s ease;
+}
+
+.strength-label-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.strength-label {
+  font-weight: 500;
+}
+
+.strength-score {
+  color: #999;
+}
+
+.strength-rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.strength-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #999;
+  transition: color 0.2s;
+}
+
+.strength-rule.pass {
+  color: #1D9E75;
+}
+
+.strength-rule-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #ccc;
+  transition: background 0.2s;
+}
+
+.strength-rule.pass .strength-rule-dot {
+  background: #1D9E75;
+}
+
+.strength-bar-track {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.strength-bar-segment {
+  height: 6px;
+  flex: 1;
+  border-radius: 4px;
+  background: #e0e0e0;
+  transition: background 0.3s ease;
+}
+
+.password-strength-checker{
+  margin-left: 30px;
+  width: 100%;
+  max-width: 300px;
+  align-self:flex-start;
+}
+.password-wrapper {
+  position: relative;
+  width: 90%;
+  margin-left: 30px;
+  box-sizing: border-box;
+}
+
+.password-wrapper .register-value-box {
+  width: 100%;
+  margin-left: 0;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #888;
+}
+
+.password-toggle:hover {
+  color: #333;
+}

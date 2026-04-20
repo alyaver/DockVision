@@ -4,14 +4,50 @@ import Navigation from '../components/Navigation';
 import '../Registration.css';
 import '../NavBar.css';
 
+
+function getPasswordStrength(password) {
+  const checks = {
+    length:     password.length >= 8,
+    longEnough: password.length >= 12,
+    uppercase:  /[A-Z]/.test(password),
+    lowercase:  /[a-z]/.test(password),
+    number:     /\d/.test(password),
+    symbol:     /[^A-Za-z0-9]/.test(password),
+  };
+  const score = Object.values(checks).filter(Boolean).length;
+  const levels = [
+    { label: '',            pct: 0,   color: '#ccc'    },
+    { label: 'Very weak',   pct: 16,  color: '#E24B4A' },
+    { label: 'Weak',        pct: 32,  color: '#E24B4A' },
+    { label: 'Fair',        pct: 52,  color: '#EF9F27' },
+    { label: 'Good',        pct: 72,  color: '#639922' },
+    { label: 'Strong',      pct: 88,  color: '#1D9E75' },
+    { label: 'Very strong', pct: 100, color: '#1D9E75' },
+  ];
+  return { checks, score, level: password.length === 0 ? levels[0] : levels[Math.max(1, score)] };
+}
+
+
 const Register = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm_password, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [peekPassword, setPeekPassword] = useState(false);
+  const [peekConfirm, setPeekConfirm] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false); 
+
 
   const navigate = useNavigate();
+  
+  const handlePasswordChange = (e, setter, peekSetter) => {
+    setter(e.target.value);
+    peekSetter(true);
+    setTimeout(() => peekSetter(false), 250);
+  };
 
+  const { checks: pwChecks, score: pwScore, level: pwLevel } = getPasswordStrength(password);
   const validExtensions = [".com", ".org", ".net", ".gov", ".edu", ".mil"];
   
   const emailParts = email.split("@");
@@ -79,8 +115,62 @@ const Register = () => {
               )}
 
               <h2 className="value-text">Password</h2>
-              <input className="register-value-box" type="password" value ={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
+              <div className="password-wrapper">
+              <input className="register-value-box" type={showPassword || peekPassword ? "text" : "password"} value ={password} onChange={(e) => handlePasswordChange(e, setPassword, setPeekPassword)} placeholder="Password" />
+              <button className="password-toggle" onClick={() => setShowPassword(!showPassword)}>
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+              </div>
 
+            <div className="password-strength-checker">
+              {password.length > 0 && (
+                      <>
+                        <div className="strength-bar-track">
+                        {[1, 2, 3, 4].map((seg) => {
+                            const filledCount = (
+                              pwScore <= 2 ? 1 :
+                              pwScore <= 3 ? 2 :
+                              pwScore <= 4 ? 3 : 4
+                            );
+                            const color = (
+                              pwScore <= 2 ? '#E24B4A' :
+                              pwScore <= 3 ? '#EF9F27' :
+                              pwScore <= 4 ? '#639922' :
+                                            '#1D9E75'
+                            );
+                            return (
+                              <div
+                                key={seg}
+                                className="strength-bar-segment"
+                                style={{ background: filledCount >= seg ? color : '#e0e0e0' }}
+                              />
+                            );
+                          })}
+                        </div>
+                        <div className="strength-label-row">
+                          <span className="strength-label" style={{ color: pwLevel.color }}>
+                            {pwLevel.label}
+                          </span>
+                          <span className="strength-score">{pwScore}/6</span>
+                        </div>
+                        <div className="strength-rules">
+                          {[
+                            { label: '8+ characters',    pass: pwChecks.length     },
+                            { label: 'Uppercase letter',  pass: pwChecks.uppercase  },
+                            { label: 'Lowercase letter',  pass: pwChecks.lowercase  },
+                            { label: 'Number',            pass: pwChecks.number     },
+                            { label: 'Special character', pass: pwChecks.symbol     },
+                            { label: '12+ characters for Strong Password',    pass: pwChecks.longEnough },
+                          ].map((r, i) => (
+                            <div key={i} className={`strength-rule ${r.pass ? 'pass' : ''}`}>
+                              <span className="strength-rule-dot" />
+                              {r.label}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+              </div>
               {password.length > 0 && !isPasswordValid && (
                 <div className="error-text">
                   {passRules.filter(rule => !rule.valid).map((rule, index) => (<p key={index}>{rule.label}</p>))}
@@ -88,8 +178,14 @@ const Register = () => {
               )}
 
               <h2 className="value-text">Confirm Password</h2>
-              <input className="register-value-box" type="password" value={confirm_password} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm Password" />
 
+              <div className="password-wrapper">
+              <input className="register-value-box" type={showConfirm || peekConfirm ? "text" : "password"} value={confirm_password} onChange={(e) => handlePasswordChange(e, setConfirmPassword, setPeekConfirm)} placeholder="Confirm Password" />
+              <button className="password-toggle" onClick={() => setShowConfirm(!showConfirm)}>
+                {showConfirm ? 'Hide' : 'Show'}
+              </button>
+              </div>
+              
               {confirm_password.length > 0 && !isConfirmPasswordValid && (
                 <div className="error-text">
                   {confirmPassRules.filter(rule => !rule.valid).map((rule, index) => (<p key={index}>{rule.label}</p>))}
