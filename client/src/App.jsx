@@ -9,7 +9,7 @@ import ConfigurationSettings from "./pages/ConfigurationSettings.jsx";
 import Register from "./components/Registration.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import SetNewPassword from "./pages/SetNewPassword.jsx";
-import SignIn from "./pages/SignIn.jsx";
+import Login from "./components/LoginContainer.jsx";
 
 /**
  * Central router.
@@ -31,8 +31,7 @@ function App() {
         <Route path="/confirmation" element={<Confirmation />} />
         <Route path="/configuration-settings" element={<ConfigurationSettings />} />
         <Route path="/running-test" element={<TestPage />} />
-        <Route path="/sign-in" element={<SignIn />} />
-        <Route path="/Login" element={<SignIn />} />
+        <Route path="/Login" element={<Login />} />
         <Route path="/Register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/set-new-password" element={<SetNewPassword />} />

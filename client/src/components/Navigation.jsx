@@ -52,7 +52,7 @@ const Navigation = () => {
 
   async function handleLogout() {
     try {
-      await fetch(`${API_BASE_URL}/logout`, {
+      await fetch(`${API_BASE_URL}/Dashboard`, {
         method: "POST",
         credentials: "include",
       });
@@ -60,7 +60,7 @@ const Navigation = () => {
       console.error("Logout failed:", error);
     } finally {
       setUser(null);
-      navigate("/sign-in");
+      navigate("/Login");
     }
   }
 
@@ -110,7 +110,7 @@ const Navigation = () => {
           ) : (
             <>
               <li>
-                <Link to="/sign-in" className="nav-button">
+                <Link to="/Login" className="nav-button">
                   Sign in
                 </Link>
               </li>
