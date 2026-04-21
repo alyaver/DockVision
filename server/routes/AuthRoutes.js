@@ -25,7 +25,7 @@ function normalizeEmail(value) {
  * Basic name validation for the current project rules.
  */
 function isValidName(value) {
-  return /^[A-Za-z][A-Za-z\s'-]{1,29}$/.test(value);
+  return /^[A-Za-z][A-Za-z\s'-]{2,29}$/.test(value);
 }
 
 /**

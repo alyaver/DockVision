@@ -23,8 +23,8 @@ export default function Registration({
 
   const nameRules = [
     {
-      label: "Name must be 6 to 30 characters",
-      valid: name.length >= 6 && name.length <= 30,
+      label: "Name must be 2 to 30 characters",
+      valid: name.length >= 2 && name.length <= 30,
     },
     {
       label: "Name must only contain alphanumeric characters and spaces",
