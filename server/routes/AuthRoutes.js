@@ -39,7 +39,7 @@ function isValidEmail(value) {
  * Strong password rule used by registration.
  */
 function isStrongPassword(value) {
-  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{10,64}$/.test(
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,64}$/.test(
     value
   );
 }
