@@ -2,9 +2,6 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import "../NavBar.css";
 
-/**
- * Use relative /api calls so requests go through the Vite proxy.
- */
 const API_BASE_URL = "/api";
 
 const Navigation = () => {
@@ -23,7 +20,9 @@ const Navigation = () => {
           credentials: "include",
         });
 
-        if (!isMounted) return;
+        if (!isMounted) {
+          return;
+        }
 
         if (!response.ok) {
           setUser(null);
@@ -60,7 +59,7 @@ const Navigation = () => {
       console.error("Logout failed:", error);
     } finally {
       setUser(null);
-      navigate("/sign-in");
+      navigate("/login");
     }
   }
 
@@ -110,12 +109,12 @@ const Navigation = () => {
           ) : (
             <>
               <li>
-                <Link to="/sign-in" className="nav-button">
+                <Link to="/login" className="nav-button">
                   Sign in
                 </Link>
               </li>
               <li>
-                <Link to="/registration" className="nav-button nav-button-dark">
+                <Link to="/register" className="nav-button nav-button-dark">
                   Register
                 </Link>
               </li>
