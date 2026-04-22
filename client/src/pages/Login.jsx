@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { FiEye, FiEyeOff } from "react-icons/fi";
 import "./Auth.css";
 import "../Login.css";
 import Navigation from "../components/Navigation";
@@ -13,6 +14,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
     password: "",
   });
   const [clientError, setClientError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -50,54 +52,60 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
   }
 
   return (
-    <div className="auth-page">
-      <header className="auth-header">
-        <div className="auth-logo">DockVision</div>
-        <Navigation />
-      </header>
+    <>
+      <Navigation />
+    
+      <main className="login-page">
+        <section className="login-hero">
+          <h1 className="login-heading">Sign In</h1>
 
-      <main className="auth-main login-main">
-        <section className="auth-card login-card">
-          <h1 className="auth-title">Sign In</h1>
+          <form onSubmit={handleSubmit}>
+            <div className="login-info-fields">
+              <h2 className="value-text" htmlFor="email">
+                Email
+              </h2>
+              <input
+                className="login-value-box"
+                id="email"
+                name="email"
+                type="email"
+                placeholder="Email"
+                value={formData.email}
+                onChange={handleChange}
+                maxLength={128}
+                required
+              />
 
-          <form className="auth-form" onSubmit={handleSubmit}>
-            <label className="auth-label" htmlFor="email">
-              Email
-            </label>
-            <input
-              className="auth-input"
-              id="email"
-              name="email"
-              type="email"
-              placeholder="Value"
-              value={formData.email}
-              onChange={handleChange}
-              maxLength={128}
-              required
-            />
+              <h2 className="value-text" htmlFor="password">
+                Password
+              </h2>
+              <div className="password-input-wrapper">
+                <input
+                  className="login-password-box"
+                  id="password"
+                  name="password"
+                  type={showPassword ? "text" : "password"} 
+                  value={formData.password}
+                  onChange={handleChange}
+                  maxLength={64}
+                  placeholder="Password"
+                  required
+                />
 
-            <label className="auth-label" htmlFor="password">
-              Password
-            </label>
-            <input
-              className="auth-input"
-              id="password"
-              name="password"
-              type="password"
-              placeholder="Value"
-              value={formData.password}
-              onChange={handleChange}
-              maxLength={64}
-              required
-            />
+                <button type="button" className="eye-button" onClick={() => setShowPassword(prev => !prev)}>
+                  {showPassword ? <FiEyeOff /> : <FiEye />}
+                </button>
+              </div>
 
-            <button
-              className="auth-submit-btn"
-              type="submit"
-              disabled={isLocked}
-            >
-              Sign In
-            </button>
+              <button
+                className="login-button"
+                type="submit"
+                disabled={isLocked}
+              >
+                Sign In
+              </button>
+
+            </div>
           </form>
 
           <a className="auth-link" href="/forgot-password">
@@ -123,6 +131,6 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }

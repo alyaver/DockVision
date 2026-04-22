@@ -1,7 +1,164 @@
+/*Login Page*/
 .auth-main.login-main {
   padding-top: 160px;
 }
 
 .login-card {
   max-width: 420px;
+}
+
+.login-page {
+  padding: 40px 24px 80px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.login-hero {
+  text-align: center;
+  padding: 20px 20px;
+  margin-top: 100px;
+  margin-bottom: 40px;
+}
+
+.login-heading {
+  justify-content: center;
+  align-items: center;
+}
+
+.login-info-fields {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 5px 35px;
+  gap: 2px;
+  margin: 0 auto;
+  margin-top: 10px;
+  margin-bottom: 20px;
+  max-width: 600px;
+  border: 2px solid #ced0d6;
+  border-radius: 10px;
+}
+
+.login-value-box {
+  margin-top: 1px;
+  margin-bottom: 1px;
+  margin-left: 30px;
+  width: 90%;
+
+  text-align: left;
+  padding: 10px 10px 10px;
+  font-size: 18px;
+  font-weight: 100px;
+  color: rgb(109, 109, 109);
+
+  border: 2px solid #ced0d6;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.value-text {
+  text-align: left;
+  margin-left: -1px;
+  padding: 1px 25px 1px;
+  font-size: 18px;
+  font-weight: 100px;
+  color: rgb(31, 31, 31)
+}
+
+.login-button {
+  margin-top: 30px;
+  margin-bottom: 10px;
+  margin-left: 30px;
+  width: 90%;
+
+  text-align: center;
+  padding: 10px 10px 10px;
+  font-size: 18px;
+  font-weight: 100px;
+  color: rgb(252, 252, 252);
+  background-color: #333;
+
+  border: 2px solid #ced0d6;
+  border-radius: 10px;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.login-secondary-link {
+  margin-left: 10px;
+  text-align: left;
+  padding: 5px 25px 5px;
+  font-size: 18px;
+  font-weight: 100px;
+  color: rgb(0, 0, 0)
+}
+
+.login-value-box ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.valid {
+  color: green;
+}
+
+.invalid {
+  color: red;
+}
+
+.error {
+  margin-left: 40px;
+  margin-bottom: -5px;
+}
+
+/* This removes Microsoft Edge's default "show password" eye icon so that we can use our own without seeing two icons, at least while on edge*/
+input[type="password"]::-ms-reveal {
+  display: none;
+}
+
+.password-input-wrapper {
+  margin-top: 1px;
+  margin-bottom: 1px;
+  margin-left: 30px;
+
+  position: relative;
+  width: 90%;
+}
+
+.login-password-box {
+  width: 100%;
+
+  padding: 10px 42px 10px 10px;
+  font-size: 18px;
+  color: rgb(109, 109, 109);
+
+  border: 2px solid #ced0d6;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.eye-button {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+
+  background: transparent;
+  border: none;
+  padding: 4px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  cursor: pointer;
+  color: #6b7280;
+}
+
+.eye-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.eye-button:hover {
+  color: #111;
 }
