@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import Login from "../pages/Login";
 
-const API_BASE_URL = "http://localhost:3001/api";
+const API_BASE_URL = "/api";
 
 export default function LoginContainer() {
   const [errorMessage, setErrorMessage] = useState("");

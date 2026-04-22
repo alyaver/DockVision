@@ -32,7 +32,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
 
     const cleanedEmail = formData.email.trim().toLowerCase();
 
-    if (cleanedEmail.length > 254 || !isValidEmail(cleanedEmail)) {
+    if (cleanedEmail.length > 127 || !isValidEmail(cleanedEmail)) {
       setClientError(
         "Email must be valid and end in .com, .gov, .edu, .net, or .org"
       );
@@ -72,7 +72,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
               placeholder="Value"
               value={formData.email}
               onChange={handleChange}
-              maxLength={254}
+              maxLength={128}
               required
             />
 
@@ -87,7 +87,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
               placeholder="Value"
               value={formData.password}
               onChange={handleChange}
-              maxLength={128}
+              maxLength={64}
               required
             />
 

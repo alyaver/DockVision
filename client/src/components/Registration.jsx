@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import Registration from "../pages/Register";
+import Registration from "../pages/Registration";
 
-const API_BASE_URL = "http://localhost:3001/api";
+const API_BASE_URL = "/api";
 
 export default function Register() {
   const [errorMessage, setErrorMessage] = useState("");
