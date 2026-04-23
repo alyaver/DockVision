@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "dotenv": "^17.4.1",
+    "react-icons": "^5.6.0",
     "run": "^1.5.0"
   }
 }
