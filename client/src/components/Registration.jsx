@@ -35,6 +35,7 @@ export default function Register() {
       window.location.href = "/dashboard";
     } catch (error) {
       setErrorMessage(error.message || "Registration failed");
+      throw error;
     } finally {
       setIsSubmitting(false);
     }

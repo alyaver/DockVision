@@ -1,9 +1,9 @@
-import {Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { FiEye, FiEyeOff } from "react-icons/fi";
-import {useState} from "react";
-import Navigation from '../components/Navigation';
-import '../Registration.css';
-import '../NavBar.css';
+import { useState } from "react";
+import Navigation from "../components/Navigation";
+import "../Registration.css";
+import "../NavBar.css";
 
 export default function Registration({
   onSubmit,
@@ -17,6 +17,7 @@ export default function Registration({
   const [confirm_password, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [notifications, setNotifications] = useState([]);
 
   const navigate = useNavigate();
 
@@ -38,14 +39,23 @@ export default function Registration({
     },
   ];
 
-const passRules = [
-  { label: "At least 8 characters", valid: password.length >= 8 },
-  { label: "At most 64 characters", valid: password.length <= 64 },
-  { label: "Contains at least 1 lowercase letter", valid: /[a-z]/.test(password) },
-  { label: "Contains at least 1 uppercase letter", valid: /[A-Z]/.test(password) },
-  { label: "Contains at least 1 number", valid: /\d/.test(password) },
-  { label: "Contains at least 1 symbol", valid: /[^A-Za-z\d]/.test(password) },
-];
+  const passRules = [
+    { label: "At least 8 characters", valid: password.length >= 8 },
+    { label: "At most 64 characters", valid: password.length <= 64 },
+    {
+      label: "Contains at least 1 lowercase letter",
+      valid: /[a-z]/.test(password),
+    },
+    {
+      label: "Contains at least 1 uppercase letter",
+      valid: /[A-Z]/.test(password),
+    },
+    { label: "Contains at least 1 number", valid: /\d/.test(password) },
+    {
+      label: "Contains at least 1 symbol",
+      valid: /[^A-Za-z\d]/.test(password),
+    },
+  ];
 
   const confirmPassRules = [
     {
@@ -86,10 +96,18 @@ const passRules = [
 
   // The form can only submit once every rule passes and no request is in flight.
   const isRegistrationValid =
-    isNameValid &&
-    isEmailValid &&
-    isPasswordValid &&
-    isConfirmPasswordValid;
+    isNameValid && isEmailValid && isPasswordValid && isConfirmPasswordValid;
+
+  // show notifications to user
+  function pushNotification(type, title, msg) {
+    const id = crypto.randomUUID();
+    setNotifications((current) => [...current, { id, type, title, msg }]);
+  }
+
+  // allow users to dismiss notifications
+  function dismissNotification(id) {
+    setNotifications((current) => current.filter((item) => item.id !== id));
+  }
 
   function handleSubmit(event) {
     // Prevent the browser from doing a full page refresh on form submit.
@@ -111,7 +129,29 @@ const passRules = [
     };
 
     // Delegate the actual API/database work to the container.
-    onSubmit?.(formData);
+    onSubmit?.(formData)
+      .then(() => {
+        pushNotification(
+          "success",
+          "Registration Successful",
+          "Your account has been created.",
+        );
+      })
+      .catch((error) => {
+        if (error.status === 409) {
+          pushNotification(
+            "error",
+            "Registration Failed",
+            "Email already in use, select a different email or sign in to your existing account.",
+          );
+        } else {
+          pushNotification(
+            "error",
+            "Registration Failed",
+            "An unexpected error occurred. Please try again later.",
+          );
+        }
+      });
   }
 
   return (
@@ -164,16 +204,20 @@ const passRules = [
 
             <h2 className="value-text">Password</h2>
             <div className="password-input-wrapper">
-              <input 
-                className="register-password-box" 
-                type={showPassword ? "text" : "password"} 
-                value ={password} 
-                onChange={(e) => setPassword(e.target.value)} 
-                placeholder="Password" 
+              <input
+                className="register-password-box"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
                 autoComplete="new-password"
               />
-              
-              <button type="button" className="eye-button" onClick={() => setShowPassword(prev => !prev)}>
+
+              <button
+                type="button"
+                className="eye-button"
+                onClick={() => setShowPassword((prev) => !prev)}
+              >
                 {showPassword ? <FiEyeOff /> : <FiEye />}
               </button>
             </div>
@@ -190,16 +234,20 @@ const passRules = [
 
             <h2 className="value-text">Confirm Password</h2>
             <div className="password-input-wrapper">
-              <input 
-                className="register-password-box" 
-                type={showConfirmPassword ? "text" : "password"} 
-                value={confirm_password} 
-                onChange={(e) => setConfirmPassword(e.target.value)} 
-                placeholder="Confirm Password" 
+              <input
+                className="register-password-box"
+                type={showConfirmPassword ? "text" : "password"}
+                value={confirm_password}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirm Password"
                 autoComplete="new-password"
               />
-              
-              <button type="button" className="eye-button" onClick={() => setShowConfirmPassword(prev => !prev)}>
+
+              <button
+                type="button"
+                className="eye-button"
+                onClick={() => setShowConfirmPassword((prev) => !prev)}
+              >
                 {showConfirmPassword ? <FiEyeOff /> : <FiEye />}
               </button>
             </div>
@@ -231,7 +279,9 @@ const passRules = [
               style={{
                 opacity: !isRegistrationValid || isSubmitting ? 0.5 : 1,
                 cursor:
-                  !isRegistrationValid || isSubmitting ? "not-allowed" : "pointer",
+                  !isRegistrationValid || isSubmitting
+                    ? "not-allowed"
+                    : "pointer",
               }}
             >
               {isSubmitting ? "Creating Account..." : "Create Account"}
@@ -244,6 +294,27 @@ const passRules = [
               Sign In
             </Link>
           </form>
+
+          <div className="Notify-stack">
+            {notifications.map((item) => (
+              <div key={item.id} className="Notify">
+                <div className={`Notify-icon ${item.type}`}>
+                  {item.type === "error" ? "✕" : "!"}
+                </div>
+                <div className="Notify-content">
+                  <div className="Notify-title">{item.title}</div>
+                  <div className="Notify-msg">{item.msg}</div>
+                </div>
+                <button
+                  className="Notify-close"
+                  onClick={() => dismissNotification(item.id)}
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         </section>
       </main>
     </>
