@@ -128,6 +128,7 @@ const passRules = [
               onChange={(e) => setName(e.target.value)}
               placeholder="Name"
               autoComplete="name"
+              disabled={isSubmitting}
             />
 
             {name.length > 0 && !isNameValid && (
@@ -148,6 +149,7 @@ const passRules = [
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email"
               autoComplete="email"
+              disabled={isSubmitting}
             />
 
             {email.length > 0 && !isEmailValid && (
@@ -164,6 +166,7 @@ const passRules = [
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
               autoComplete="new-password"
+              disabled={isSubmitting}
             />
 
             {password.length > 0 && !isPasswordValid && (
@@ -184,6 +187,7 @@ const passRules = [
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Confirm Password"
               autoComplete="new-password"
+              disabled={isSubmitting}
             />
 
             {confirm_password.length > 0 && !isConfirmPasswordValid && (
