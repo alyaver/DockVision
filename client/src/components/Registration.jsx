@@ -29,7 +29,10 @@ export default function Register() {
       }
 
       if (!response.ok) {
-        throw new Error(data.message || "Registration failed");
+        throw {
+          status: response.status, // save the status code for better error handling (used for unique email error)
+          message: data.message || "Registration failed",
+        }
       }
 
       window.location.href = "/dashboard";

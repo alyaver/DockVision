@@ -131,21 +131,21 @@ export default function Registration({
     // Delegate the actual API/database work to the container.
     onSubmit?.(formData)
       .then(() => {
-        pushNotification(
+        pushNotification( // show success message on successful registration
           "success",
           "Registration Successful",
           "Your account has been created.",
         );
       })
       .catch((error) => {
-        if (error.status === 409) {
+        if (error.status === 409) { // show specific message for duplicate email error
           pushNotification(
             "error",
             "Registration Failed",
             "Email already in use, select a different email or sign in to your existing account.",
           );
         } else {
-          pushNotification(
+          pushNotification( // show generic error message for other types of errors
             "error",
             "Registration Failed",
             "An unexpected error occurred. Please try again later.",
