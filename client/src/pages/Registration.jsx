@@ -36,7 +36,7 @@ export default function Registration({
       label: "Name must only contain alphanumeric characters and spaces",
       valid: /^[a-zA-Z0-9 ]+$/.test(name),
     },
-  ];
+  ]; 
 
 const passRules = [
   { label: "At least 8 characters", valid: password.length >= 8 },
@@ -134,6 +134,7 @@ const passRules = [
               onChange={(e) => setName(e.target.value)}
               placeholder="Name"
               autoComplete="name"
+              disabled={isSubmitting}
             />
 
             {name.length > 0 && !isNameValid && (
@@ -154,6 +155,7 @@ const passRules = [
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email"
               autoComplete="email"
+              disabled={isSubmitting}
             />
 
             {email.length > 0 && !isEmailValid && (
@@ -171,6 +173,7 @@ const passRules = [
                 onChange={(e) => setPassword(e.target.value)} 
                 placeholder="Password" 
                 autoComplete="new-password"
+                disabled={isSubmitting}
               />
               
               <button type="button" className="eye-button" onClick={() => setShowPassword(prev => !prev)}>
@@ -197,6 +200,7 @@ const passRules = [
                 onChange={(e) => setConfirmPassword(e.target.value)} 
                 placeholder="Confirm Password" 
                 autoComplete="new-password"
+                disabled={isSubmitting}
               />
               
               <button type="button" className="eye-button" onClick={() => setShowConfirmPassword(prev => !prev)}>
