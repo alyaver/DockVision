@@ -30,7 +30,7 @@ export default function Registration({
       label: "Name must only contain alphanumeric characters and spaces",
       valid: /^[a-zA-Z0-9 ]+$/.test(name),
     },
-  ];
+  ]; 
 
 const passRules = [
   { label: "At least 8 characters", valid: password.length >= 8 },
