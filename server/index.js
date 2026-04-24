@@ -6,6 +6,7 @@ const cookieParser = require("cookie-parser");
 const { exec } = require("child_process");
 const checkDiskSpace = require("check-disk-space").default;
 const path = require("path");
+const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 
 const db = require("./db/db");
@@ -127,18 +128,35 @@ app.post("/api/docker/start-smoke", (req, res) => {
  * This stays in the main backend entry because it is part of the global backend
  * surface, not a second standalone auth server.
  */
-app.get("/api/auth/reset/validate", (req, res) => {
+app.get("/api/auth/reset/validate", async (req, res) => {
   const { token } = req.query;
-
-  // Temporary placeholder until real reset-token generation/storage is added.
-  if (token === "test-token") {
-    return res.json({ valid: true });
+  //reject instantly if token is missing or is not a string
+  if (!token || typeof token !== "string") {
+    return res.status(400).json({ error: "invalid_or_expired" });
   }
+  //hash the incoming token so that we can compare it against the stored hash
+  const tokenHash = crypto
+    .createHash("sha256")
+    .update(token)
+    .digest("hex");
 
-  return res.json({
-    valid: false,
-    message: "Invalid or expired token",
-  });
+  try {
+    //look for a matcfhing token has that has not expired yet
+    const result = await db.query(
+      "SELECT 1 FROM password_reset_tokens WHERE token_hash = $1 AND expires_at > CURRENT_TIMESTAMP LIMIT 1",
+      [tokenHash]
+    );
+    //if no match was found then the token has either expired or is invalid
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: "invalid_or_expired" });
+    }
+    //return 200 if the token is valid and not expired
+    return res.status(200).json({ valid: true });
+  } catch (error) {
+    //server error, log it but dont let client see
+    console.error("RESET VALIDATION SERVER ERROR:", error);
+    return res.status(400).json({ error: "invalid_or_expired" });
+  }
 });
 
 /**
