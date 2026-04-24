@@ -199,6 +199,10 @@ module.exports = function authRoutes(db) {
 
       return res.status(201).json({ user });
     } catch (error) {
+      if (error.code === "23505") { // Unique violation error code from PostgreSQL
+        return res.status(409).json({ message: "Email already exists" });
+      }
+
       console.error("REGISTER SERVER ERROR:", error);
       return res.status(500).json({ message: "Server error" });
     }
