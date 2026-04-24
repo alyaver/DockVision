@@ -95,7 +95,7 @@ const SetNewPassword = () => {
               <button className="set-new-password-button" onClick={handleSetPassword}>
                 Set Password
               </button>
-            <Link to="/sign-in" className="back-link">Back to Sign In</Link>
+            <Link to="/login" className="back-link">Back to Sign In</Link>
             </div>
           </section>
         </main>
