@@ -3,6 +3,48 @@ import Registration from "../pages/Registration";
 
 const API_BASE_URL = "/api";
 
+const REGISTRATION_MESSAGES = {
+  duplicateEmail: "Email already registered",
+  invalidRequest:
+    "Unable to create account. Please check your information and try again.",
+  serviceOffline: "Local service offline",
+  fallback: "Registration failed. Please try again.",
+};
+
+async function readResponseData(response) {
+  const text = await response.text().catch(() => "");
+
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+function getRegistrationErrorMessage(error) {
+  if (error?.name === "TypeError") {
+    return REGISTRATION_MESSAGES.serviceOffline;
+  }
+
+  if (error?.status === 409) {
+    return REGISTRATION_MESSAGES.duplicateEmail;
+  }
+
+  if (error?.status === 400) {
+    return REGISTRATION_MESSAGES.invalidRequest;
+  }
+
+  if (error?.status >= 500) {
+    return REGISTRATION_MESSAGES.serviceOffline;
+  }
+
+  return error?.serverMessage || REGISTRATION_MESSAGES.fallback;
+}
+
 export default function Register() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -21,24 +63,18 @@ export default function Register() {
         body: JSON.stringify(formData),
       });
 
-      let data = {};
-      try {
-        data = await response.json();
-      } catch (error) {
-        data = {};
-      }
+      const data = await readResponseData(response);
 
       if (!response.ok) {
-        throw {
-          status: response.status, // save the status code for better error handling (used for unique email error)
-          message: data.message || "Registration failed",
-        }
+        const error = new Error(data.message || REGISTRATION_MESSAGES.fallback);
+        error.status = response.status;
+        error.serverMessage = data.message;
+        throw error;
       }
 
       window.location.href = "/dashboard";
     } catch (error) {
-      setErrorMessage(error.message || "Registration failed");
-      throw error;
+      setErrorMessage(getRegistrationErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
