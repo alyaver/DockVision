@@ -1,4 +1,4 @@
-import {Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 import {useState} from "react";
 import Navigation from '../components/Navigation';
@@ -17,8 +17,6 @@ export default function Registration({
   const [confirm_password, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  const navigate = useNavigate();
 
   const validExtensions = [".com", ".org", ".net", ".gov", ".edu", ".mil"];
 
@@ -218,12 +216,12 @@ const passRules = [
               </div>
             )}
 
-            {/*
-              Show backend/API errors from the container here.
-              Example: duplicate email, failed registration, server validation error.
-            */}
             {errorMessage && (
-              <div className="error-text">
+              <div
+                className="registration-error-banner"
+                role="alert"
+                aria-live="polite"
+              >
                 <p>{errorMessage}</p>
               </div>
             )}
