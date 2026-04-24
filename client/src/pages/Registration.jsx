@@ -174,6 +174,7 @@ export default function Registration({
               onChange={(e) => setName(e.target.value)}
               placeholder="Name"
               autoComplete="name"
+              disabled={isSubmitting}
             />
 
             {name.length > 0 && !isNameValid && (
@@ -194,6 +195,7 @@ export default function Registration({
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Email"
               autoComplete="email"
+              disabled={isSubmitting}
             />
 
             {email.length > 0 && !isEmailValid && (
@@ -211,12 +213,14 @@ export default function Registration({
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Password"
                 autoComplete="new-password"
+                disabled={isSubmitting}
               />
 
               <button
                 type="button"
                 className="eye-button"
                 onClick={() => setShowPassword((prev) => !prev)}
+                disabled={isSubmitting}
               >
                 {showPassword ? <FiEyeOff /> : <FiEye />}
               </button>
@@ -241,12 +245,14 @@ export default function Registration({
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm Password"
                 autoComplete="new-password"
+                disabled={isSubmitting}
               />
 
               <button
                 type="button"
                 className="eye-button"
                 onClick={() => setShowConfirmPassword((prev) => !prev)}
+                disabled={isSubmitting}
               >
                 {showConfirmPassword ? <FiEyeOff /> : <FiEye />}
               </button>
