@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Registration from "../pages/Registration";
 
 const API_BASE_URL = "/api";
@@ -48,7 +49,7 @@ function getRegistrationErrorMessage(error) {
 export default function Register() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
+  const navigate = useNavigate();
   async function handleRegister(formData) {
     try {
       setErrorMessage("");
@@ -72,7 +73,7 @@ export default function Register() {
         throw error;
       }
 
-      window.location.href = "/dashboard";
+      navigate("/about", { state: { fromAuth: true } });
     } catch (error) {
       setErrorMessage(getRegistrationErrorMessage(error));
     } finally {
