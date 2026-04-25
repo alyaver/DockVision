@@ -47,8 +47,6 @@ function isStrongPassword(value) {
 /**
  * IMPORTANT:
  * Export a single CommonJS factory function.
- *
- * Why this fixes your crash:
  * - server/index.js is calling authRoutes(db)
  * - That means require("./routes/AuthRoutes") MUST return a function
  * - If the live main-branch file was exporting an object, router, named export,
@@ -64,9 +62,7 @@ module.exports = function authRoutes(db) {
 
   const router = express.Router();
 
-  /**
-   * Return the currently authenticated user based on the session cookie.
-   */
+  // Return the currently authenticated user based on the session cookie.
   router.get("/me", async (req, res) => {
     try {
       const token = req.cookies.session_token;
@@ -75,6 +71,25 @@ module.exports = function authRoutes(db) {
         return res.status(401).json({ message: "Not authenticated" });
       }
 
+      // Remove this session row if it is already expired.
+    await db.query(
+      `DELETE FROM sessions
+       WHERE session_token = $1
+         AND expires_at <= CURRENT_TIMESTAMP`,
+      [token]
+    );
+
+      // Extend session if it's within 1 hour of expiring
+      await db.query(
+        `UPDATE sessions
+        SET expires_at = CURRENT_TIMESTAMP + INTERVAL '2 hours'
+        WHERE session_token = $1
+          AND expires_at > CURRENT_TIMESTAMP
+          AND expires_at <= CURRENT_TIMESTAMP + INTERVAL '1 hour'`,
+        [token]
+      );
+
+      // Data to be sent back to the client
       const result = await db.query(
         `SELECT
            u.user_id,
@@ -98,9 +113,7 @@ module.exports = function authRoutes(db) {
     }
   });
 
-  /**
-   * Register a new user and immediately create a session.
-   */
+  // Register a new user and immediately create a session.   
   router.post("/register", async (req, res) => {
     try {
       const name = normalizeName(req.body.name);
@@ -208,9 +221,8 @@ module.exports = function authRoutes(db) {
     }
   });
 
-  /**
-   * Log in an existing user and create a session record.
-   */
+  
+  // Log in an existing user and create a session record.
   router.post("/login", async (req, res) => {
     try {
       const email = normalizeEmail(req.body.email);
@@ -252,6 +264,22 @@ module.exports = function authRoutes(db) {
       }
 
       const user = result.rows[0];
+
+      // If the lock period has passed, clear the stale lock state.
+      if (user.lock_until && new Date(user.lock_until) <= new Date()) {
+        await db.query(
+          `UPDATE users
+          SET
+            failed_login_count = 0,
+            lock_until = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = $1`,
+          [user.user_id]
+        );
+
+        user.failed_login_count = 0;
+        user.lock_until = null;
+      }
 
       if (user.lock_until && new Date(user.lock_until) > new Date()) {
         return res
@@ -335,9 +363,8 @@ module.exports = function authRoutes(db) {
     }
   });
 
-  /**
-   * Log out the current user by deleting the session and clearing the cookie.
-   */
+  
+  // Log out the current user by deleting the session and clearing the cookie.
   router.post("/logout", async (req, res) => {
     try {
       const token = req.cookies.session_token;
