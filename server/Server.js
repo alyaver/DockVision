@@ -41,7 +41,7 @@ app.get("/api/db-test", async (req, res) => {
   }
 });
 
-app.use("/api", authRoutes(db));
+app.use("/api/auth", authRoutes(db)); //updated path to /api/auth according to jira task #211
 
 app.use((req, res) => {
   res.status(404).json({

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import Registration from "../pages/Registration";
 
-const API_BASE_URL = "/api";
+const API_BASE_URL = "/api/auth"; // updated base URL to match server route changes
 
 const REGISTRATION_MESSAGES = {
   duplicateEmail: "Email already registered",
@@ -72,7 +72,7 @@ export default function Register() {
         throw error;
       }
 
-      window.location.href = "/dashboard";
+      window.location.href = "/login"; //redirect to login page after successful registration
     } catch (error) {
       setErrorMessage(getRegistrationErrorMessage(error));
     } finally {

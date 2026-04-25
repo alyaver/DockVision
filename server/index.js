@@ -269,7 +269,7 @@ if (typeof authRoutes !== "function") {
  *
  * No second auth server. No split-brain startup path.
  */
-app.use("/api", authRoutes(db));
+app.use("/api/auth", authRoutes(db)); //updated path to /api/auth according to jira task #211
 
 /**
  * Final 404 for unknown API routes.
