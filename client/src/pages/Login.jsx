@@ -3,6 +3,7 @@ import { FiEye, FiEyeOff } from "react-icons/fi";
 import "./Auth.css";
 import "../Login.css";
 import Navigation from "../components/Navigation";
+import { useLocation } from "react-router-dom";
 
 function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
@@ -15,6 +16,8 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
   });
   const [clientError, setClientError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const location = useLocation();
+  const registerMessage = location.state?.message || "";
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -128,6 +131,13 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
           <div className="toast">
             <div className="toast-title">Incorrect Credentials</div>
             <div className="toast-message">{clientError || errorMessage}</div>
+          </div>
+        )}
+
+        {(registerMessage) && (
+          <div className="toast">
+            <div className="toast-title">Registration Successful</div>
+            <div className="toast-message">{registerMessage}</div>
           </div>
         )}
       </div>
