@@ -195,7 +195,8 @@ app.get("/api/storage/space", async (req, res) => {
  */
 app.post("/api/forgot-password", async (req, res) => {
   const { email } = req.body ?? {};
-
+  const genericResponse = () =>
+    res.status(200).json({ message: "If that email is registered, a reset link has been sent." });
   if (!email) {
     return res.status(400).json({
       message: "Email is required.",
@@ -216,28 +217,46 @@ app.post("/api/forgot-password", async (req, res) => {
     //   return res.status(404).json({ message: "No account found with that email." });
     // }
 
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+   const result = await db.query(
+      "SELECT user_id FROM users WHERE email = $1",
+      [email.trim().toLowerCase()]
+    );
 
-    /**
-     * Temporary placeholder token.
-     * Replace with a real generated token once reset-token persistence exists.
-     */
-    const resetToken = "test-token";
-    const resetLink = `${clientUrl}/set-new-password?token=${resetToken}`;
+    if (result.rows.length === 0) {
+      return genericResponse();
+    }
+
+    const userId = result.rows[0].user_id;
+
+    await db.query(
+      "DELETE FROM password_reset_tokens WHERE user_id = $1",
+      [userId]
+    );
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+    await db.query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP)`,
+      [userId, tokenHash]
+    );
+
+    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const resetLink = `${clientUrl}/set-new-password?token=${rawToken}`;
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
       subject: "Password Reset",
       html: `
-        <p>Click the link below to reset your password:</p>
+        <p>Click the link below to reset your password. It expires in 1 hour.</p>
         <a href="${resetLink}">${resetLink}</a>
+        <p>If you did not request this, you can safely ignore this email.</p>
       `,
     });
 
-    return res.status(200).json({
-      message: "Reset link sent.",
-    });
+    return genericResponse();
   } catch (error) {
     console.error("FORGOT PASSWORD SERVER ERROR:", error);
 
@@ -246,6 +265,22 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /**
  * Defensive guard:
@@ -269,7 +304,7 @@ if (typeof authRoutes !== "function") {
  *
  * No second auth server. No split-brain startup path.
  */
-app.use("/api", authRoutes(db));
+app.use("/api/auth", authRoutes(db)); //updated path to /api/auth according to jira task #211
 
 /**
  * Final 404 for unknown API routes.

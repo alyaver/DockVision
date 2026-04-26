@@ -175,3 +175,74 @@ input[type="password"]::-ms-reveal {
 .eye-button:hover {
   color: #111;
 }
+
+
+.password-strength-checker {
+  margin-left: 30px;
+  width: 90%;
+  box-sizing: border-box;
+}
+
+.strength-bar-track {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  width: 100%;
+}
+
+.strength-bar-segment {
+  height: 6px;
+  flex: 1;
+  border-radius: 4px;
+  background: #e0e0e0;
+  transition: background 0.3s ease;
+}
+
+.strength-label-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.strength-label {
+  font-weight: 500;
+}
+
+.strength-score {
+  color: #999;
+}
+
+.strength-rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.strength-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #999;
+  transition: color 0.2s;
+}
+
+.strength-rule.pass {
+  color: #1D9E75;
+}
+
+.strength-rule-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #ccc;
+  transition: background 0.2s;
+}
+
+.strength-rule.pass .strength-rule-dot {
+  background: #1D9E75;
+}
