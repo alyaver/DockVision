@@ -6,7 +6,7 @@ const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 
 const app = express();
-const PORT = 3001;
+const PORT = 5000;
 
 app.use(
   cors({

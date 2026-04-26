@@ -1,12 +1,13 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom"; 
 import Login from "../pages/Login";
 
-const API_BASE_URL = "http://localhost:3001/api";
+const API_BASE_URL = "/api";
 
 export default function LoginContainer() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isLocked, setIsLocked] = useState(false);
-
+  const navigate = useNavigate(); 
   async function handleLogin(formData) {
     try {
       setErrorMessage("");
@@ -39,8 +40,9 @@ export default function LoginContainer() {
       if (!response.ok) {
         throw new Error(data.message || "Login failed");
       }
-
-      window.location.href = "/dashboard";
+    
+      navigate("/about", { state: { fromAuth: true } }); 
+    
     } catch (error) {
       setErrorMessage(error.message || "Login failed");
     }

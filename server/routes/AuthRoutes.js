@@ -4,8 +4,8 @@ const crypto = require("crypto");
 
 const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
-const MAX_EMAIL_LENGTH = 254;
-const MAX_PASSWORD_LENGTH = 128;
+const MAX_EMAIL_LENGTH = 50;
+const MAX_PASSWORD_LENGTH = 64;
 
 /**
  * Normalize name input so the database receives a clean value.
@@ -25,7 +25,7 @@ function normalizeEmail(value) {
  * Basic name validation for the current project rules.
  */
 function isValidName(value) {
-  return /^[A-Za-z][A-Za-z\s'-]{1,29}$/.test(value);
+  return /^[A-Za-z][A-Za-z\s'-]{2,29}$/.test(value);
 }
 
 /**
@@ -39,7 +39,7 @@ function isValidEmail(value) {
  * Strong password rule used by registration.
  */
 function isStrongPassword(value) {
-  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{10,128}$/.test(
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,64}$/.test(
     value
   );
 }
@@ -136,7 +136,7 @@ module.exports = function authRoutes(db) {
       if (password.length > MAX_PASSWORD_LENGTH || !isStrongPassword(password)) {
         return res.status(400).json({
           message:
-            "Password must be at least 10 characters and include uppercase, lowercase, number, and symbol",
+            "Password must be at least 8 characters and include uppercase, lowercase, number, and symbol",
         });
       }
 
@@ -199,6 +199,10 @@ module.exports = function authRoutes(db) {
 
       return res.status(201).json({ user });
     } catch (error) {
+      if (error.code === "23505") { // Unique violation error code from PostgreSQL
+        return res.status(409).json({ message: "Email already exists" });
+      }
+
       console.error("REGISTER SERVER ERROR:", error);
       return res.status(500).json({ message: "Server error" });
     }
