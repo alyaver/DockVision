@@ -73,7 +73,7 @@ export default function Register() {
         throw error;
       }
 
-      navigate("/about", { state: { fromAuth: true } });
+      navigate("/dashboard");
     } catch (error) {
       setErrorMessage(getRegistrationErrorMessage(error));
     } finally {

@@ -5,14 +5,8 @@ import uploadIcon from '../assets/aboutImages/uploadIcon.png';
 import executeIcon from '../assets/aboutImages/executeIcon.png';
 import viewResultsIcon from '../assets/aboutImages/viewResultsIcon.png';
 import '../About.css';
-import {Link} from 'react-router-dom';
 
 const About = () => {
-
-const urlParams = new URLSearchParams(window.location.search);
-  const fromAuth =['SignIn', 'Register'].includes(urlParams.get('from'));
-
-
   return (
     <>
       <Navigation />
@@ -24,14 +18,6 @@ const urlParams = new URLSearchParams(window.location.search);
             DockVision is a web-based platform for running automated tests and viewing
             results in one place.
           </p>
-          {fromAuth && (
-            <button
-              className="about-exit-btn"
-              onClick={() => window.location.href = '/dashboard'}
-            >
-              Skip to Dashboard →
-            </button>
-          )}
         </section>
 
         {/* Section 2 - Feature Overview */}

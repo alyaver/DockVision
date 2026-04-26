@@ -41,7 +41,7 @@ export default function LoginContainer() {
         throw new Error(data.message || "Login failed");
       }
     
-      navigate("/about", { state: { fromAuth: true } }); 
+      navigate("/dashboard"); 
     
     } catch (error) {
       setErrorMessage(error.message || "Login failed");
