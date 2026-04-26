@@ -381,5 +381,76 @@ module.exports = function authRoutes(db) {
     }
   });
 
+
+
+  router.post("/reset-password", async (req, res) => {
+    const { token, newPassword } = req.body;
+
+    if (!token || typeof token !== "string") {
+      return res.status(400).json({ message: "Invalid or expired token" });
+    }
+
+    if (!newPassword || !isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        message:
+          "Password must be at least 8 characters and include uppercase, lowercase, number, and symbol",
+      });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    const client = await db.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        `SELECT password_reset_token_id, user_id, expires_at
+         FROM password_reset_tokens
+         WHERE token_hash = $1
+         FOR UPDATE`,
+        [tokenHash]
+      );
+
+      const record = rows[0];
+
+      if (!record || new Date() > new Date(record.expires_at)) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Invalid or expired token" });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+      await client.query(
+        `UPDATE users
+         SET password_hash = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = $2`,
+        [passwordHash, record.user_id]
+      );
+
+      await client.query(
+        `DELETE FROM password_reset_tokens WHERE password_reset_token_id = $1`,
+        [record.password_reset_token_id]
+      );
+
+      await client.query(
+        `DELETE FROM sessions WHERE user_id = $1`,
+        [record.user_id]
+      );
+
+      await client.query("COMMIT");
+
+      return res.status(200).json({ message: "Password reset successful" });
+
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("RESET PASSWORD SERVER ERROR:", error);
+      return res.status(500).json({ message: "Server error" });
+    } finally {
+      client.release();
+    }
+  });
+
+
   return router;
 };
