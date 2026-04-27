@@ -6,7 +6,7 @@
  */
 
 export async function registerUser(formData) {
-  const response = await fetch("/api/register", {
+  const response = await fetch("/api/auth/register", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -25,7 +25,7 @@ export async function registerUser(formData) {
 }
 
 export async function loginUser(formData) {
-  const response = await fetch("/api/login", {
+  const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -44,7 +44,7 @@ export async function loginUser(formData) {
 }
 
 export async function logoutUser() {
-  const response = await fetch("/api/logout", {
+  const response = await fetch("/api/auth/logout", {
     method: "POST",
     credentials: "include",
   });
