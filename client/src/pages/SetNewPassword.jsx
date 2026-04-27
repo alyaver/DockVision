@@ -1,3 +1,10 @@
+/**
+ * Reset-password completion page.
+ *
+ * This page validates the reset token from the URL, submits the replacement
+ * password through the main backend, and keeps the browser talking to the same
+ * proxied /api/auth routes used elsewhere in the app.
+ */
 import Navigation from '../components/Navigation';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
@@ -22,7 +29,7 @@ const SetNewPassword = () => {
       return;
     }
 
-    fetch(`http://localhost:5000/api/auth/reset/validate?token=${token}`)
+    fetch(`/api/auth/reset/validate?token=${token}`)
       .then(res => res.json())
       .then(data => {
         if (data.valid) {
@@ -50,7 +57,7 @@ const SetNewPassword = () => {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/reset-password', {
+      const res = await fetch('/api/auth/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, newPassword }),

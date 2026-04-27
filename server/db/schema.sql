@@ -32,6 +32,8 @@ CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)
 CREATE INDEX idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
 CREATE INDEX idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
 
+-- Track forgot-password request patterns so the backend can rate limit both
+-- user-enumeration attempts and repeated reset spam from the same origin.
 CREATE TABLE password_reset_request_attempts (
   password_reset_request_attempt_id SERIAL PRIMARY KEY,
   email VARCHAR(50) NOT NULL,

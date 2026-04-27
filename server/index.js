@@ -35,8 +35,12 @@ const {
 const app = express();
 const PORT = 5000;
 
+// Limit the forgot-password surface in two directions:
+// - many distinct email lookups from one IP (enumeration)
+// - repeated requests for the same email from one IP (spamming)
 const RESET_REQUEST_WINDOW_MINUTES = 15;
 const MAX_UNIQUE_EMAILS_PER_IP = 3;
+const MAX_RESET_REQUESTS_PER_EMAIL_PER_IP = 3;
 
 /**
  * Single backend policy:
@@ -360,10 +364,10 @@ app.get("/api/storage/space", async (req, res) => {
  *   /set-new-password?token=...
  */
 app.post("/api/forgot-password", async (req, res) => {
-  // normalize email 
+  // Normalize user input before any lookup or rate-limit accounting so the
+  // same address is treated consistently across requests.
   const rawEmail = req.body?.email;
   const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
-  // generic response zero data 
   const genericResponse = () =>
     res.status(200).json({ message: "If that email is registered, a reset link has been sent." });
 
@@ -379,7 +383,8 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 
-  // request header for IP address tracking
+  // Prefer the forwarded IP when present so deployments behind a proxy can
+  // still rate limit by client origin.
   const ipAddress =
     req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
     req.socket.remoteAddress ||
@@ -390,25 +395,30 @@ app.post("/api/forgot-password", async (req, res) => {
       `SELECT COUNT(DISTINCT email)::int AS unique_email_count
        FROM password_reset_request_attempts
        WHERE ip_address = $1
-         AND requested_at > CURRENT_TIMESTAMP - INTERVAL '15 minutes'`,
-      [ipAddress]
+         AND requested_at > CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 minute')`,
+      [ipAddress, RESET_REQUEST_WINDOW_MINUTES]
     );
 
     const uniqueEmailCount = rateLimitResult.rows[0].unique_email_count;
 
-    const existingEmailForIpResult = await db.query(
-      `SELECT 1
+    const repeatedEmailResult = await db.query(
+      `SELECT COUNT(*)::int AS request_count
        FROM password_reset_request_attempts
        WHERE ip_address = $1
-         AND email = $2
-         AND requested_at > CURRENT_TIMESTAMP - INTERVAL '15 minutes'
-       LIMIT 1`,
-      [ipAddress, email]
+          AND email = $2
+         AND requested_at > CURRENT_TIMESTAMP - ($3::int * INTERVAL '1 minute')`,
+      [ipAddress, email, RESET_REQUEST_WINDOW_MINUTES]
     );
 
-    const hasAlreadyTriedThisEmail = existingEmailForIpResult.rows.length > 0;
+    const repeatedEmailCount = repeatedEmailResult.rows[0].request_count;
 
-    if (uniqueEmailCount >= MAX_UNIQUE_EMAILS_PER_IP && !hasAlreadyTriedThisEmail) {
+    if (uniqueEmailCount >= MAX_UNIQUE_EMAILS_PER_IP && repeatedEmailCount === 0) {
+      return res.status(429).json({
+        message: "Please wait a few minutes before trying again.",
+      });
+    }
+
+    if (repeatedEmailCount >= MAX_RESET_REQUESTS_PER_EMAIL_PER_IP) {
       return res.status(429).json({
         message: "Please wait a few minutes before trying again.",
       });
