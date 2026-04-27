@@ -1,3 +1,11 @@
+/**
+ * Primary backend entry point.
+ *
+ * This server owns the full local application surface: authentication,
+ * password reset, launcher/run APIs, Windows VM orchestration, readiness
+ * probes, and background session cleanup. Keeping those concerns here avoids
+ * split backend startup paths during development.
+ */
 require("dotenv").config();
 
 const express = require("express");

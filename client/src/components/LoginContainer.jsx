@@ -1,3 +1,12 @@
+/**
+ * Container for the sign-in route.
+ *
+ * Responsibilities:
+ * - receive the normalized form payload from the presentational Login page
+ * - call the backend auth endpoint that creates the session cookie
+ * - forward remember-me so the backend can choose the correct session lifetime
+ * - translate API failures into UI state before routing to the dashboard
+ */
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom"; 
 import Login from "../pages/Login";
@@ -8,6 +17,7 @@ export default function LoginContainer() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isLocked, setIsLocked] = useState(false);
   const navigate = useNavigate(); 
+
   async function handleLogin(formData) {
     try {
       setErrorMessage("");
@@ -19,9 +29,12 @@ export default function LoginContainer() {
           "Content-Type": "application/json",
         },
         credentials: "include",
+        // Forward the remember-me choice through the live login entry point so
+        // the backend can issue the correct session lifetime for this login.
         body: JSON.stringify({
           email: formData.email.trim().toLowerCase(),
           password: formData.password,
+          rememberMe: Boolean(formData.rememberMe),
         }),
       });
 

@@ -1,3 +1,15 @@
+/**
+ * Authentication route module.
+ *
+ * Responsibilities:
+ * - validate registration and login input
+ * - issue, renew, and clear session cookies backed by the sessions table
+ * - expose auth-centric endpoints consumed by the client under /api/auth
+ *
+ * This module is intentionally written as a router factory so the main server
+ * entry can inject the shared database connection and keep auth behavior in
+ * one backend process.
+ */
 const express = require("express");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
@@ -6,7 +18,10 @@ const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
 const MAX_EMAIL_LENGTH = 50;
 const MAX_PASSWORD_LENGTH = 64;
-const SESSION_COOKIE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const STANDARD_SESSION_COOKIE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const REMEMBER_ME_SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const STANDARD_SESSION_INTERVAL = "2 hours";
+const REMEMBER_ME_SESSION_INTERVAL = "7 days";
 
 /**
  * Normalize name input so the database receives a clean value.
@@ -46,15 +61,37 @@ function isStrongPassword(value) {
 }
 
 /**
- * Keep the browser cookie lifetime aligned with the server-side session window.
+ * Keep cookie policy in one place so login, registration, and session renewal
+ * all emit the same browser settings for a given session lifetime.
  */
-function setSessionCookie(res, sessionToken) {
+function setSessionCookie(
+  res,
+  sessionToken,
+  maxAge = STANDARD_SESSION_COOKIE_MAX_AGE_MS
+) {
   res.cookie("session_token", sessionToken, {
     httpOnly: true,
     secure: false,
     sameSite: "lax",
-    maxAge: SESSION_COOKIE_MAX_AGE_MS,
+    maxAge,
   });
+}
+
+/**
+ * Translate the remember-me choice into both database and browser lifetimes.
+ */
+function getSessionLifetime(rememberMe = false) {
+  if (rememberMe) {
+    return {
+      cookieMaxAgeMs: REMEMBER_ME_SESSION_COOKIE_MAX_AGE_MS,
+      sqlInterval: REMEMBER_ME_SESSION_INTERVAL,
+    };
+  }
+
+  return {
+    cookieMaxAgeMs: STANDARD_SESSION_COOKIE_MAX_AGE_MS,
+    sqlInterval: STANDARD_SESSION_INTERVAL,
+  };
 }
 
 /**
@@ -93,19 +130,39 @@ module.exports = function authRoutes(db) {
         [token]
       );
 
-      // Only reissue the cookie when the backing session record is renewed.
-      // That keeps the browser expiry aligned with the DB expiry window.
+      // The sessions table does not carry a separate lifetime flag, so renewal
+      // treats created_at as the start of the current active window. That lets
+      // us preserve the original 2-hour vs 7-day policy without another column.
       const sessionExtensionResult = await db.query(
         `UPDATE sessions
-        SET expires_at = CURRENT_TIMESTAMP + INTERVAL '2 hours'
+        SET
+          created_at = CURRENT_TIMESTAMP,
+          expires_at = CURRENT_TIMESTAMP + CASE
+            WHEN expires_at - created_at > $2::interval THEN $3::interval
+            ELSE $2::interval
+          END
         WHERE session_token = $1
           AND expires_at > CURRENT_TIMESTAMP
-          AND expires_at <= CURRENT_TIMESTAMP + INTERVAL '1 hour'`,
-        [token]
+          AND expires_at <= CURRENT_TIMESTAMP + INTERVAL '1 hour'
+        RETURNING CASE
+          WHEN expires_at - created_at > $2::interval THEN $5::bigint
+          ELSE $4::bigint
+        END AS cookie_max_age_ms`,
+        [
+          token,
+          STANDARD_SESSION_INTERVAL,
+          REMEMBER_ME_SESSION_INTERVAL,
+          STANDARD_SESSION_COOKIE_MAX_AGE_MS,
+          REMEMBER_ME_SESSION_COOKIE_MAX_AGE_MS,
+        ]
       );
 
       if (sessionExtensionResult.rowCount > 0) {
-        setSessionCookie(res, token);
+        setSessionCookie(
+          res,
+          token,
+          Number(sessionExtensionResult.rows[0].cookie_max_age_ms)
+        );
       }
 
       // Read the current authenticated user after any cleanup or renewal.
@@ -211,6 +268,7 @@ module.exports = function authRoutes(db) {
 
       const user = insertedUser.rows[0];
       const sessionToken = crypto.randomBytes(32).toString("hex");
+      const sessionLifetime = getSessionLifetime(false);
 
       await db.query(
         `INSERT INTO sessions (
@@ -219,11 +277,11 @@ module.exports = function authRoutes(db) {
           created_at,
           expires_at
         )
-        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '2 hours')`,
-        [user.user_id, sessionToken]
+        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + $3::interval)`,
+        [user.user_id, sessionToken, sessionLifetime.sqlInterval]
       );
 
-      setSessionCookie(res, sessionToken);
+      setSessionCookie(res, sessionToken, sessionLifetime.cookieMaxAgeMs);
 
       return res.status(201).json({ user });
     } catch (error) {
@@ -244,6 +302,7 @@ module.exports = function authRoutes(db) {
       const email = normalizeEmail(req.body.email);
       const password =
         typeof req.body.password === "string" ? req.body.password : "";
+      const rememberMe = req.body.rememberMe === true;
 
       if (!email || !password) {
         return res
@@ -349,6 +408,7 @@ module.exports = function authRoutes(db) {
         [user.user_id]
       );
 
+      const sessionLifetime = getSessionLifetime(rememberMe);
       const sessionToken = crypto.randomBytes(32).toString("hex");
 
       await db.query(
@@ -358,11 +418,11 @@ module.exports = function authRoutes(db) {
           created_at,
           expires_at
         )
-        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '2 hours')`,
-        [user.user_id, sessionToken]
+        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + $3::interval)`,
+        [user.user_id, sessionToken, sessionLifetime.sqlInterval]
       );
 
-      setSessionCookie(res, sessionToken);
+      setSessionCookie(res, sessionToken, sessionLifetime.cookieMaxAgeMs);
 
       return res.json({
         user: {
