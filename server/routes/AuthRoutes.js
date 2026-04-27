@@ -7,6 +7,7 @@ const MAX_FAILED_ATTEMPTS = 5;
 const MAX_EMAIL_LENGTH = 50;
 const MAX_PASSWORD_LENGTH = 64;
 const MIN_PASSWORD_LENGTH = 8;
+const SESSION_COOKIE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Normalize name input so the database receives a clean value.
@@ -46,6 +47,18 @@ function isStrongPassword(value) {
 }
 
 /**
+ * Keep the browser cookie lifetime aligned with the server-side session window.
+ */
+function setSessionCookie(res, sessionToken) {
+  res.cookie("session_token", sessionToken, {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    maxAge: SESSION_COOKIE_MAX_AGE_MS,
+  });
+}
+
+/**
  * IMPORTANT:
  * Export a single CommonJS factory function.
  * - server/index.js is calling authRoutes(db)
@@ -80,8 +93,8 @@ module.exports = function authRoutes(db) {
       [token]
     );
 
-      // Extend session if it's within 1 hour of expiring
-      await db.query(
+      // Only reissue the cookie when the backing session record is renewed.
+      const sessionExtensionResult = await db.query(
         `UPDATE sessions
         SET expires_at = CURRENT_TIMESTAMP + INTERVAL '2 hours'
         WHERE session_token = $1
@@ -89,6 +102,10 @@ module.exports = function authRoutes(db) {
           AND expires_at <= CURRENT_TIMESTAMP + INTERVAL '1 hour'`,
         [token]
       );
+
+      if (sessionExtensionResult.rowCount > 0) {
+        setSessionCookie(res, token);
+      }
 
       // Data to be sent back to the client
       const result = await db.query(
@@ -200,16 +217,7 @@ module.exports = function authRoutes(db) {
         [user.user_id, sessionToken]
       );
 
-      /**
-       * Dev-friendly cookie settings.
-       * Secure=false is intentional for local HTTP development.
-       */
-      res.cookie("session_token", sessionToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 2 * 60 * 60 * 1000,
-      });
+      setSessionCookie(res, sessionToken);
 
       return res.status(201).json({ user });
     } catch (error) {
@@ -400,12 +408,7 @@ module.exports = function authRoutes(db) {
         [user.user_id, sessionToken]
       );
 
-      res.cookie("session_token", sessionToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 2 * 60 * 60 * 1000,
-      });
+      setSessionCookie(res, sessionToken);
 
       logLoginAttempt({
         success: true,
