@@ -32,17 +32,11 @@ const ForgotPassword = () => {
         body: JSON.stringify({ email }),
       });
 
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.message || "Something went wrong. Try again.");
-      }
-
-      setMessage(data.message || "Link sent. Check your email.");
+      setMessage("If an account exists with this email, you'll receive a password reset link shortly. Please check your inbox.");
       setIsError(false);
     } catch (err) {
-      setMessage(err.message || "Network error. Try again.");
-      setIsError(true);
+      setMessage("If an account exists with this email, you'll receive a password reset link shortly. Please check your inbox.");
+      setIsError(false); // changed to false to have the same success message
     } finally {
       setLoading(false);
     }

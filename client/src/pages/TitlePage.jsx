@@ -12,7 +12,7 @@ const TitlePage = () => {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      navigate("/dashboard");
+      navigate("/about");
     }, 3000);
 
     return () => clearTimeout(timer);
