@@ -19,6 +19,7 @@ const ForgotPassword = () => {
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const handleResetPassword = async () => {
     setLoading(true);
@@ -40,13 +41,41 @@ const ForgotPassword = () => {
 
       setMessage(data.message || "Link sent. Check your email.");
       setIsError(false);
+      setSubmitted(true); // show confirmation panel
     } catch (err) {
       setMessage(err.message || "Network error. Try again.");
       setIsError(true);
+      setSubmitted(true); // show confirmation panel
     } finally {
       setLoading(false);
     }
   };
+
+  // After successful request, replace forgot password form with this confirmation
+  if (submitted) {
+    return (
+      <>
+      <Navigation />
+      <main className="forgotPassword">
+        <section className="forgotPassword-hero">
+          <h1 className="forgotPassword-heading">Reset Password</h1>
+            <div className="resetPassword">
+              <p>If an account exists with this email, you'll receive a password reset link shortly. Please check your inbox.</p>
+              <div className="button-group">
+                <button 
+                  className="submit-Button"
+                  type="button"
+                  onClick={() => navigate("/login")}
+                  >
+                    Back to Sign In
+                  </button>
+              </div>
+            </div>
+        </section>
+      </main>
+    </>
+    );
+  }
 
   return (
     <>
@@ -78,7 +107,7 @@ const ForgotPassword = () => {
               <button
                 className="cancel-Button"
                 type="button"
-                onClick={() => navigate("/sign-in")}
+                onClick={() => navigate("/login")} // changed /sign-in to /login
               >
                 Cancel
               </button>
