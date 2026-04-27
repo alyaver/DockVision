@@ -1,3 +1,15 @@
+/**
+ * Authentication route module.
+ *
+ * Responsibilities:
+ * - validate registration and login input
+ * - issue, renew, and clear session cookies backed by the sessions table
+ * - expose auth-centric endpoints consumed by the client under /api/auth
+ *
+ * This module is intentionally written as a router factory so the main server
+ * entry can inject the shared database connection and keep auth behavior in
+ * one backend process.
+ */
 const express = require("express");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
@@ -6,6 +18,10 @@ const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
 const MAX_EMAIL_LENGTH = 50;
 const MAX_PASSWORD_LENGTH = 64;
+const STANDARD_SESSION_COOKIE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const REMEMBER_ME_SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const STANDARD_SESSION_INTERVAL = "2 hours";
+const REMEMBER_ME_SESSION_INTERVAL = "7 days";
 
 /**
  * Normalize name input so the database receives a clean value.
@@ -45,15 +61,42 @@ function isStrongPassword(value) {
 }
 
 /**
- * IMPORTANT:
- * Export a single CommonJS factory function.
- *
- * Why this fixes your crash:
- * - server/index.js is calling authRoutes(db)
- * - That means require("./routes/AuthRoutes") MUST return a function
- * - If the live main-branch file was exporting an object, router, named export,
- *   or a merge-damaged module shape, Node would throw:
- *   "TypeError: authRoutes is not a function"
+ * Keep cookie policy in one place so login, registration, and session renewal
+ * all emit the same browser settings for a given session lifetime.
+ */
+function setSessionCookie(
+  res,
+  sessionToken,
+  maxAge = STANDARD_SESSION_COOKIE_MAX_AGE_MS
+) {
+  res.cookie("session_token", sessionToken, {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    maxAge,
+  });
+}
+
+/**
+ * Translate the remember-me choice into both database and browser lifetimes.
+ */
+function getSessionLifetime(rememberMe = false) {
+  if (rememberMe) {
+    return {
+      cookieMaxAgeMs: REMEMBER_ME_SESSION_COOKIE_MAX_AGE_MS,
+      sqlInterval: REMEMBER_ME_SESSION_INTERVAL,
+    };
+  }
+
+  return {
+    cookieMaxAgeMs: STANDARD_SESSION_COOKIE_MAX_AGE_MS,
+    sqlInterval: STANDARD_SESSION_INTERVAL,
+  };
+}
+
+/**
+ * Build the auth router against the shared database connection used by the
+ * main backend entry point.
  */
 module.exports = function authRoutes(db) {
   if (!db || typeof db.query !== "function") {
@@ -65,7 +108,10 @@ module.exports = function authRoutes(db) {
   const router = express.Router();
 
   /**
-   * Return the currently authenticated user based on the session cookie.
+   * Return the authenticated user for the current session token.
+   *
+   * This endpoint also performs lightweight session maintenance so the browser
+   * cookie and the backing session record expire on the same timeline.
    */
   router.get("/me", async (req, res) => {
     try {
@@ -75,6 +121,51 @@ module.exports = function authRoutes(db) {
         return res.status(401).json({ message: "Not authenticated" });
       }
 
+      // Remove expired rows eagerly so a stale cookie produces a clean 401
+      // instead of appearing authenticated against dead session state.
+      await db.query(
+        `DELETE FROM sessions
+         WHERE session_token = $1
+           AND expires_at <= CURRENT_TIMESTAMP`,
+        [token]
+      );
+
+      // The sessions table does not carry a separate lifetime flag, so renewal
+      // treats created_at as the start of the current active window. That lets
+      // us preserve the original 2-hour vs 7-day policy without another column.
+      const sessionExtensionResult = await db.query(
+        `UPDATE sessions
+        SET
+          created_at = CURRENT_TIMESTAMP,
+          expires_at = CURRENT_TIMESTAMP + CASE
+            WHEN expires_at - created_at > $2::interval THEN $3::interval
+            ELSE $2::interval
+          END
+        WHERE session_token = $1
+          AND expires_at > CURRENT_TIMESTAMP
+          AND expires_at <= CURRENT_TIMESTAMP + INTERVAL '1 hour'
+        RETURNING CASE
+          WHEN expires_at - created_at > $2::interval THEN $5::bigint
+          ELSE $4::bigint
+        END AS cookie_max_age_ms`,
+        [
+          token,
+          STANDARD_SESSION_INTERVAL,
+          REMEMBER_ME_SESSION_INTERVAL,
+          STANDARD_SESSION_COOKIE_MAX_AGE_MS,
+          REMEMBER_ME_SESSION_COOKIE_MAX_AGE_MS,
+        ]
+      );
+
+      if (sessionExtensionResult.rowCount > 0) {
+        setSessionCookie(
+          res,
+          token,
+          Number(sessionExtensionResult.rows[0].cookie_max_age_ms)
+        );
+      }
+
+      // Read the current authenticated user after any cleanup or renewal.
       const result = await db.query(
         `SELECT
            u.user_id,
@@ -99,7 +190,7 @@ module.exports = function authRoutes(db) {
   });
 
   /**
-   * Register a new user and immediately create a session.
+   * Register a new user and immediately establish an authenticated session.
    */
   router.post("/register", async (req, res) => {
     try {
@@ -133,6 +224,9 @@ module.exports = function authRoutes(db) {
         });
       }
 
+      // The strength regex already enforces the minimum length requirement, so
+      // this guard only needs a separate upper bound to keep the rule defined
+      // in one place instead of splitting length checks across two constants.
       if (password.length > MAX_PASSWORD_LENGTH || !isStrongPassword(password)) {
         return res.status(400).json({
           message:
@@ -174,6 +268,7 @@ module.exports = function authRoutes(db) {
 
       const user = insertedUser.rows[0];
       const sessionToken = crypto.randomBytes(32).toString("hex");
+      const sessionLifetime = getSessionLifetime(false);
 
       await db.query(
         `INSERT INTO sessions (
@@ -182,20 +277,11 @@ module.exports = function authRoutes(db) {
           created_at,
           expires_at
         )
-        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '2 hours')`,
-        [user.user_id, sessionToken]
+        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + $3::interval)`,
+        [user.user_id, sessionToken, sessionLifetime.sqlInterval]
       );
 
-      /**
-       * Dev-friendly cookie settings.
-       * Secure=false is intentional for local HTTP development.
-       */
-      res.cookie("session_token", sessionToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 2 * 60 * 60 * 1000,
-      });
+      setSessionCookie(res, sessionToken, sessionLifetime.cookieMaxAgeMs);
 
       return res.status(201).json({ user });
     } catch (error) {
@@ -209,13 +295,14 @@ module.exports = function authRoutes(db) {
   });
 
   /**
-   * Log in an existing user and create a session record.
+   * Log in an existing user and create a fresh session record.
    */
   router.post("/login", async (req, res) => {
     try {
       const email = normalizeEmail(req.body.email);
       const password =
         typeof req.body.password === "string" ? req.body.password : "";
+      const rememberMe = req.body.rememberMe === true;
 
       if (!email || !password) {
         return res
@@ -247,11 +334,30 @@ module.exports = function authRoutes(db) {
         [email]
       );
 
+      // Keep credential failures uniform so login does not reveal whether the
+      // submitted email exists in the system.
       if (result.rows.length === 0) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
       const user = result.rows[0];
+
+      // Clear expired lock state before we evaluate whether the account is
+      // currently blocked. That prevents old lockouts from persisting forever.
+      if (user.lock_until && new Date(user.lock_until) <= new Date()) {
+        await db.query(
+          `UPDATE users
+          SET
+            failed_login_count = 0,
+            lock_until = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = $1`,
+          [user.user_id]
+        );
+
+        user.failed_login_count = 0;
+        user.lock_until = null;
+      }
 
       if (user.lock_until && new Date(user.lock_until) > new Date()) {
         return res
@@ -302,6 +408,7 @@ module.exports = function authRoutes(db) {
         [user.user_id]
       );
 
+      const sessionLifetime = getSessionLifetime(rememberMe);
       const sessionToken = crypto.randomBytes(32).toString("hex");
 
       await db.query(
@@ -311,16 +418,11 @@ module.exports = function authRoutes(db) {
           created_at,
           expires_at
         )
-        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '2 hours')`,
-        [user.user_id, sessionToken]
+        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + $3::interval)`,
+        [user.user_id, sessionToken, sessionLifetime.sqlInterval]
       );
 
-      res.cookie("session_token", sessionToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 2 * 60 * 60 * 1000,
-      });
+      setSessionCookie(res, sessionToken, sessionLifetime.cookieMaxAgeMs);
 
       return res.json({
         user: {

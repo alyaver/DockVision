@@ -1,3 +1,10 @@
+/**
+ * Legacy auth-focused server entry.
+ *
+ * This file preserves a smaller auth-only Express setup used by some older
+ * local workflows. When it changes, keep its route mounting and middleware
+ * behavior aligned with the main backend entry so auth behavior does not drift.
+ */
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");

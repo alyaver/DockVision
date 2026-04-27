@@ -5,12 +5,13 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 /**
- * Forgot-password page.
+ * Forgot-password request page.
  *
- * Cleanup decisions:
- * - Fix reversed success/error logic.
- * - Always turn loading back off.
- * - Use the proxied /api path instead of hardcoded hosts.
+ * Responsibilities:
+ * - collect the account email for the reset request
+ * - call the backend endpoint that issues the reset token
+ * - surface success and failure states without leaking transport details into
+ *   the rest of the UI
  */
 const ForgotPassword = () => {
   const navigate = useNavigate();
