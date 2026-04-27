@@ -31,3 +31,13 @@ CREATE TABLE password_reset_tokens (
 CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
 CREATE INDEX idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
 CREATE INDEX idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
+
+CREATE TABLE password_reset_request_attempts (
+  password_reset_request_attempt_id SERIAL PRIMARY KEY,
+  email VARCHAR(50) NOT NULL,
+  ip_address VARCHAR(45) NOT NULL,
+  requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_reset_attempts_ip_requested_at ON password_reset_request_attempts (ip_address, requested_at);
+CREATE INDEX idx_reset_attempts_email_requested_at ON password_reset_request_attempts (email, requested_at);
