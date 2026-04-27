@@ -11,11 +11,12 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 /**
- * Dashboard cleanup notes:
- * - Remove all merge-conflict markers and duplicate branches.
- * - Keep the readiness-check flow from the spike-style branch.
- * - Keep the improved upload flow and sessionStorage persistence.
- * - Do NOT keep the duplicate validation-only branch that conflicted with it.
+ * The dashboard owns two pieces of transient user state:
+ * - the in-progress run configuration persisted in sessionStorage
+ * - launcher readiness signals polled from the backend
+ *
+ * Keeping both here lets the flow survive refreshes without pushing partially
+ * complete run setup into a more global store.
  */
 
 const RECENT_RUNS = [
@@ -82,6 +83,10 @@ const Dashboard = () => {
     docker: false,
     backend: false,
     storage: true,
+    // The VM status is informative rather than blocking. The backend can start
+    // the guest on demand, but surfacing its state makes debugging much easier.
+    windowsVmStatus: "unknown",
+    windowsVmMessage: "",
     checking: true,
     lastChecked: null,
   });
@@ -138,15 +143,21 @@ const Dashboard = () => {
 
   async function checkReadiness() {
     try {
-      const [healthRes, dockerRes, storageRes] = await Promise.all([
+      // Poll each subsystem independently so the UI can explain whether the
+      // problem is backend availability, Docker reachability, disk space, or
+      // the Windows guest itself.
+      const [healthRes, dockerRes, storageRes, windowsVmRes] = await Promise.all([
         fetch("/api/health"),
         fetch("/api/docker/ping"),
         fetch("/api/storage/space"),
+        fetch("/api/windows-vm/status"),
       ]);
 
       let backendStatus = false;
       let dockerStatus = false;
       let storageStatus = true;
+      let windowsVmStatus = "unknown";
+      let windowsVmMessage = "";
 
       if (healthRes.ok) {
         const healthData = await healthRes.json();
@@ -163,10 +174,18 @@ const Dashboard = () => {
         storageStatus = Boolean(storageData.success);
       }
 
+      if (windowsVmRes.ok) {
+        const windowsVmData = await windowsVmRes.json();
+        windowsVmStatus = windowsVmData.windowsVm?.status || "unknown";
+        windowsVmMessage = windowsVmData.windowsVm?.message || "";
+      }
+
       setReadiness({
         docker: dockerStatus,
         backend: backendStatus,
         storage: storageStatus,
+        windowsVmStatus,
+        windowsVmMessage,
         checking: false,
         lastChecked: new Date().toLocaleTimeString(),
       });
@@ -175,6 +194,8 @@ const Dashboard = () => {
         docker: false,
         backend: false,
         storage: true,
+        windowsVmStatus: "unknown",
+        windowsVmMessage: "",
         checking: false,
         lastChecked: new Date().toLocaleTimeString(),
       });
@@ -378,8 +399,11 @@ const Dashboard = () => {
   const testNameError = validateTestName(testName);
   const runnerError = !runnerScriptName ? "Runner Script is required." : "";
   const configError = !configFileName ? "Config File required." : "";
+  // Keep the launch gate focused on host prerequisites. The backend is allowed
+  // to cold-start the Windows guest during run creation if it is not up yet.
   const isSystemReady =
     readiness.docker && readiness.backend && readiness.storage;
+  const isWindowsVmRunning = readiness.windowsVmStatus === "running";
 
   const displayName = user?.name || user?.fname || "User";
 
@@ -553,6 +577,26 @@ const Dashboard = () => {
                     : readiness.docker
                     ? "Ready"
                     : "Unavailable"}
+                </div>
+              </div>
+
+              <div className="status-row">
+                <div className="status-label">Windows guest</div>
+                <div
+                  className={`status-badge ${
+                    isWindowsVmRunning ? "ready" : "unready"
+                  }`}
+                  title={readiness.windowsVmMessage || readiness.windowsVmStatus}
+                >
+                  {readiness.checking
+                    ? "â€¦"
+                    : readiness.windowsVmStatus === "not-created"
+                    ? "Not started"
+                    : readiness.windowsVmStatus === "docker-error"
+                    ? "Docker error"
+                    : isWindowsVmRunning
+                    ? "Running"
+                    : readiness.windowsVmStatus || "Unknown"}
                 </div>
               </div>
 
