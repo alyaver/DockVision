@@ -116,7 +116,7 @@ module.exports = function authRoutes(db) {
       if (!name || !email || !password || !confirmPassword) {
         return res.status(400).json({
           message:
-            "Name, email, password, and confirm password are required",
+            "All text fields are required",
         });
       }
 
