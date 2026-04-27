@@ -1,5 +1,5 @@
 import Navigation from '../components/Navigation';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import '../SetNewPassword.css';
 import '../NavBar.css';
@@ -9,6 +9,8 @@ const SetNewPassword = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -36,12 +38,38 @@ const SetNewPassword = () => {
       });
   }, []);
 
-  const handleSetPassword = () => {
+ const handleSetPassword = async () => {
+    setError('');
+
     if (newPassword !== confirmPassword) {
-      alert('Passwords do not match');
+      setError('Passwords do not match');
       return;
     }
-    console.log('Setting new password');
+
+    const token = new URLSearchParams(window.location.search).get('token');
+    setLoading(true);
+
+    try {
+      const res = await fetch('http://localhost:5000/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, newPassword }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setError(data.message || 'Reset failed. Please try again.');
+        return;
+      }
+
+      navigate('/Login');
+
+    } catch {
+      setError('Network error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (isValid === null) {
@@ -92,8 +120,8 @@ const SetNewPassword = () => {
               value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Confirm New Password"
               />
-              <button className="set-new-password-button" onClick={handleSetPassword}>
-                Set Password
+              <button className="set-new-password-button" onClick={handleSetPassword} disabled = {loading || !newPassword || !confirmPassword}>
+                {loading ? 'Saving...':'Set Password'}
               </button>
             <Link to="/login" className="back-link">Back to Sign In</Link>
             </div>

@@ -119,7 +119,7 @@ const Dashboard = () => {
        * If auth is available and the user is signed in, use that.
        * If not, fall back to demo data so the Dashboard still works during development.
        */
-      const response = await fetch("/api/me", {
+      const response = await fetch("/api/auth/me", {
         credentials: "include",
       });
 
