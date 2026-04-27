@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Registration from "../pages/Registration";
+import { useNavigate } from "react-router-dom";
 
-const API_BASE_URL = "/api";
+const API_BASE_URL = "/api/auth"; // updated base URL to match server route changes
 
 const REGISTRATION_MESSAGES = {
   duplicateEmail: "Email already registered",
@@ -50,6 +51,7 @@ export default function Register() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
+
   async function handleRegister(formData) {
     try {
       setErrorMessage("");
@@ -73,9 +75,10 @@ export default function Register() {
         throw error;
       }
 
-      navigate("/dashboard");
+      navigate("/login", { state: { message: "Account created successfully. Please log in." } });
     } catch (error) {
       setErrorMessage(getRegistrationErrorMessage(error));
+      throw error;
     } finally {
       setIsSubmitting(false);
     }

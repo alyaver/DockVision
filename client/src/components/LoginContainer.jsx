@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom"; 
 import Login from "../pages/Login";
 
-const API_BASE_URL = "/api";
+const API_BASE_URL = "/api/auth"; // updated base URL to match server route changes
 
 export default function LoginContainer() {
   const [errorMessage, setErrorMessage] = useState("");
