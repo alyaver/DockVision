@@ -216,6 +216,7 @@ module.exports = function authRoutes(db) {
       const email = normalizeEmail(req.body.email);
       const password =
         typeof req.body.password === "string" ? req.body.password : "";
+      const rememberMe = req.body.rememberMe === true;
 
       if (!email || !password) {
         return res
@@ -302,6 +303,9 @@ module.exports = function authRoutes(db) {
         [user.user_id]
       );
 
+      const sessionMaxAge = rememberMe ? 7 * 24 * 60 * 60 * 1000 : 2 * 60 * 60 * 1000;
+      const expiresInterval = rememberMe ? "7 days" : "2 hours";
+
       const sessionToken = crypto.randomBytes(32).toString("hex");
 
       await db.query(
@@ -311,7 +315,7 @@ module.exports = function authRoutes(db) {
           created_at,
           expires_at
         )
-        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '2 hours')`,
+        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '${expiresInterval}')`,
         [user.user_id, sessionToken]
       );
 
@@ -319,7 +323,7 @@ module.exports = function authRoutes(db) {
         httpOnly: true,
         secure: false,
         sameSite: "lax",
-        maxAge: 2 * 60 * 60 * 1000,
+        maxAge: sessionMaxAge
       });
 
       return res.json({

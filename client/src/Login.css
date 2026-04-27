@@ -162,3 +162,11 @@ input[type="password"]::-ms-reveal {
 .eye-button:hover {
   color: #111;
 }
+
+.remember-me-button {
+  margin-top: 10px;
+  margin-left: 32px;
+  margin-right: 5px;
+
+  cursor: pointer;
+}

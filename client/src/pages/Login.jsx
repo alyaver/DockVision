@@ -16,6 +16,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
   });
   const [clientError, setClientError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const location = useLocation();
   const registerMessage = location.state?.message || "";
 
@@ -51,6 +52,7 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
     await onSubmit({
       email: cleanedEmail,
       password: formData.password,
+      rememberMe: rememberMe
     });
   }
 
@@ -107,6 +109,11 @@ export default function Login({ onSubmit, errorMessage, isLocked }) {
               >
                 Sign In
               </button>
+
+              <label>
+                <input type="checkbox" className="remember-me-button" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+                Stay Signed In
+              </label>
 
             </div>
           </form>
