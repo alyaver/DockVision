@@ -1,3 +1,11 @@
+/**
+ * Presentational login form.
+ *
+ * This page owns local field state, lightweight client validation, and view
+ * concerns such as password reveal and remember-me selection. Submission is
+ * delegated to the container so network and routing behavior stay outside the
+ * form component.
+ */
 import React, { useState } from "react";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 import "./Auth.css";

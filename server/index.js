@@ -1,3 +1,11 @@
+/**
+ * Primary backend entry point.
+ *
+ * This server owns the full local application surface: authentication,
+ * password reset, launcher/run APIs, Windows VM orchestration, readiness
+ * probes, and background session cleanup. Keeping those concerns here avoids
+ * split backend startup paths during development.
+ */
 require("dotenv").config();
 
 const express = require("express");
@@ -486,6 +494,23 @@ app.use((err, req, res, next) => {
 /**
  * Start the single backend after all middleware and routes are registered.
  */
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 1000; // 1 minute for testing
+
+async function cleanupExpiredSessions() {
+  try {
+    console.log("cleanup tick");
+    const result = await db.query(
+      `DELETE FROM sessions
+       WHERE expires_at <= CURRENT_TIMESTAMP`
+    );
+  } catch (error) {
+    console.error("SESSION CLEANUP ERROR:", error);
+  }
+}
+
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Backend running on http://localhost:${PORT}`);
+
+  cleanupExpiredSessions();
+  setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL_MS);
 });

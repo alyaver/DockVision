@@ -5,12 +5,13 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 /**
- * Forgot-password page.
+ * Forgot-password request page.
  *
- * Cleanup decisions:
- * - Fix reversed success/error logic.
- * - Always turn loading back off.
- * - Use the proxied /api path instead of hardcoded hosts.
+ * Responsibilities:
+ * - collect the account email for the reset request
+ * - call the backend endpoint that issues the reset token
+ * - surface success and failure states without leaking transport details into
+ *   the rest of the UI
  */
 const ForgotPassword = () => {
   const navigate = useNavigate();
@@ -32,11 +33,17 @@ const ForgotPassword = () => {
         body: JSON.stringify({ email }),
       });
 
-      setMessage("If an account exists with this email, you'll receive a password reset link shortly. Please check your inbox.");
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || "Something went wrong. Try again.");
+      }
+
+      setMessage(data.message || "Link sent. Check your email.");
       setIsError(false);
     } catch (err) {
-      setMessage("If an account exists with this email, you'll receive a password reset link shortly. Please check your inbox.");
-      setIsError(false); // changed to false to have the same success message
+      setMessage(err.message || "Network error. Try again.");
+      setIsError(true);
     } finally {
       setLoading(false);
     }

@@ -1,8 +1,9 @@
 /**
- * Auth service helpers.
+ * Shared auth request helpers.
  *
- * Use relative /api calls so the Vite proxy forwards to the Express backend
- * running on port 5000.
+ * These helpers centralize relative /api/auth calls for any client code that
+ * wants to use a small service layer instead of calling fetch inline. Relative
+ * URLs keep the Vite dev proxy and the single Express backend aligned.
  */
 
 export async function registerUser(formData) {

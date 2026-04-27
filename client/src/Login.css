@@ -1,4 +1,10 @@
-/*Login Page*/
+/*
+ * Login page styles.
+ *
+ * This stylesheet owns the standalone sign-in layout, password visibility
+ * control, and the remember-me affordance introduced for session-lifetime
+ * selection.
+ */
 .auth-main.login-main {
   padding-top: 160px;
 }
