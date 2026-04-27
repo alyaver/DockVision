@@ -6,6 +6,7 @@ const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
 const MAX_EMAIL_LENGTH = 50;
 const MAX_PASSWORD_LENGTH = 64;
+const MIN_PASSWORD_LENGTH = 8;
 
 /**
  * Normalize name input so the database receives a clean value.
@@ -115,7 +116,7 @@ module.exports = function authRoutes(db) {
       if (!name || !email || !password || !confirmPassword) {
         return res.status(400).json({
           message:
-            "Name, email, password, and confirm password are required",
+            "All text fields are required",
         });
       }
 
@@ -133,10 +134,10 @@ module.exports = function authRoutes(db) {
         });
       }
 
-      if (password.length > MAX_PASSWORD_LENGTH || !isStrongPassword(password)) {
+      if (password.length > MAX_PASSWORD_LENGTH || password.length < MIN_PASSWORD_LENGTH || !isStrongPassword(password)) {
         return res.status(400).json({
           message:
-            "Password must be at least 8 characters and include uppercase, lowercase, number, and symbol",
+            "Password must be 8-64 characters and include uppercase, lowercase, number, and symbol",
         });
       }
 
@@ -212,18 +213,44 @@ module.exports = function authRoutes(db) {
    * Log in an existing user and create a session record.
    */
   router.post("/login", async (req, res) => {
+    const requestId = req.headers["x-request-id"] || crypto.randomUUID();
+      res.setHeader("X-Request-ID", requestId);
+
+      const logLoginAttempt = ({ success, statusCode, reason }) => {
+        console.log(JSON.stringify({
+          event: "login_attempt",
+          success,
+          statusCode,
+          reason,
+          requestId
+        }));
+      };
+      
     try {
       const email = normalizeEmail(req.body.email);
       const password =
         typeof req.body.password === "string" ? req.body.password : "";
+      
 
       if (!email || !password) {
+        logLoginAttempt({ 
+          success: false, 
+          statusCode: 400, 
+          reason: "missing_credentials"
+        });
+
         return res
           .status(400)
           .json({ message: "Email and password are required" });
       }
 
       if (email.length > MAX_EMAIL_LENGTH || !isValidEmail(email)) {
+        logLoginAttempt({
+          success: false,
+          statusCode: 400,
+          reason: "invalid_email_format"
+        });
+        
         return res.status(400).json({
           message:
             "Email must be valid and end in .com, .gov, .edu, .net, or .org",
@@ -231,6 +258,12 @@ module.exports = function authRoutes(db) {
       }
 
       if (password.length > MAX_PASSWORD_LENGTH) {
+        logLoginAttempt({
+          success: false,
+          statusCode: 400,
+          reason: "invalid_password_length"
+        });
+        
         return res.status(400).json({ message: "Invalid password" });
       }
 
@@ -248,12 +281,24 @@ module.exports = function authRoutes(db) {
       );
 
       if (result.rows.length === 0) {
-        return res.status(401).json({ message: "Invalid email or password" });
+        logLoginAttempt({
+          success: false,
+          statusCode: 401,
+          reason: "user_not_found"
+        });
+        
+        return res.status(401).json({ message: "User not found" });
       }
 
       const user = result.rows[0];
 
       if (user.lock_until && new Date(user.lock_until) > new Date()) {
+        logLoginAttempt({
+          success: false,
+          statusCode: 423,
+          reason: "account_temp_lock"
+        });
+        
         return res
           .status(423)
           .json({ message: "Account is temporarily locked. Try again later." });
@@ -274,7 +319,13 @@ module.exports = function authRoutes(db) {
              WHERE user_id = $2`,
             [newFailedCount, user.user_id]
           );
-
+          
+          logLoginAttempt({
+            success: false,
+            statusCode: 423,
+            reason: "too_many_failed_attmepts"
+          });
+          
           return res
             .status(423)
             .json({ message: "Account locked due to too many failed attempts" });
@@ -288,7 +339,13 @@ module.exports = function authRoutes(db) {
            WHERE user_id = $2`,
           [newFailedCount, user.user_id]
         );
-
+        
+        logLoginAttempt({
+          success: false,
+          statusCode: 401,
+          reason: "invalid_credentials"
+        });
+        
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
@@ -322,6 +379,12 @@ module.exports = function authRoutes(db) {
         maxAge: 2 * 60 * 60 * 1000,
       });
 
+      logLoginAttempt({
+        success: true,
+        statusCode: 200,
+        reason: "login_success"
+      });
+      
       return res.json({
         user: {
           user_id: user.user_id,
@@ -330,7 +393,12 @@ module.exports = function authRoutes(db) {
         },
       });
     } catch (error) {
-      console.error("LOGIN SERVER ERROR:", error);
+      logLoginAttempt({
+        success: false,
+        statusCode: 500,
+        reason: "failed_database_connection"
+      });
+      
       return res.status(500).json({ message: "Server error" });
     }
   });

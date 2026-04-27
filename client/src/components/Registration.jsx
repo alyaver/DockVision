@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import Registration from "../pages/Registration";
 import { useNavigate } from "react-router-dom";
+import Registration from "../pages/Registration";
 
 const API_BASE_URL = "/api/auth"; // updated base URL to match server route changes
 
