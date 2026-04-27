@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import "../NavBar.css";
 
-const API_BASE_URL = "/api";
+const API_BASE_URL = "/api/auth";
 
 const Navigation = () => {
   const location = useLocation();

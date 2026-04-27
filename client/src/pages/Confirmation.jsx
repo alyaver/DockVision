@@ -2,12 +2,11 @@ import Navigation from "../components/Navigation";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import "../confirmationPage.css";
+import { startTestRun } from "../lib/api";
 
 /**
- * Confirmation cleanup notes:
- * - Remove merge-conflict markers and keep one clean component.
- * - Use sessionStorage data from Dashboard when route state is missing.
- * - Make the Confirm button actually call the backend smoke-start endpoint.
+ * Confirmation rehydrates from sessionStorage so a refresh or direct navigation
+ * does not discard the run details selected on the Dashboard.
  */
 
 const CURRENT_RUN_STORAGE_KEY = "dockvision-current-run";
@@ -67,22 +66,19 @@ const Confirmation = () => {
 
     try {
       /**
-       * Temporary backend action:
-       * call the smoke-start endpoint so Confirm does something real.
-       * Later this can be replaced with the actual runner/launcher start endpoint.
+       * Start the run through the shared API helper so this page stays aligned
+       * with backend launch changes, including the Windows guest startup path.
        */
-      const response = await fetch("/api/docker/start-smoke", {
-        method: "POST",
+      const data = await startTestRun({
+        testName,
+        runnerScriptName,
+        configFileName,
+        configContent,
       });
 
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to start test run.");
-      }
-
       writeStoredRun({
-        runId: data.containerId || null,
+        runId: data.runId || null,
+        containerId: data.containerId || null,
         testName,
         runnerScriptName,
         configFileName,
@@ -91,7 +87,8 @@ const Confirmation = () => {
 
       navigate("/running-test", {
         state: {
-          runId: data.containerId || null,
+          runId: data.runId || null,
+          containerId: data.containerId || null,
           testName,
         },
       });

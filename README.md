@@ -37,6 +37,34 @@ The long-term direction is to move from simple smoke-test launching toward a ses
 
 ---
 
+## Isolated Run Storage
+
+VM task exchange now treats `WindowsVm/shared` as a transport root instead of a single global run folder.
+
+Each new run writes its files into:
+
+```text
+WindowsVm/shared/
+  active/current-run.json
+  agent-heartbeat.json
+  runs/<runId>/
+    meta.json
+    task.json
+    result.json
+    logs/task.log
+    screenshots/
+    artifacts/
+```
+
+This prevents stale task files, screenshots, and result JSON from a previous run from being mistaken for the current run.
+
+Cleanup rule:
+- Keep the latest 20 completed or failed runs.
+- Remove completed or failed runs older than 7 days.
+- Apply the cleanup rule whenever a new run starts.
+
+---
+
 ## Tech Stack
 
 ### Frontend

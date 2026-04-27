@@ -11,6 +11,18 @@ const nodemailer = require("nodemailer");
 
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
+const {
+  createRunRecord,
+  attachContainerId,
+  markRunLaunchFailure,
+  readRun,
+  resolveRunFilePath,
+} = require("./lib/runStore");
+const {
+  ensureWindowsVmRunning,
+  getWindowsVmStatus,
+  WINDOWS_VM_CONTAINER_NAME,
+} = require("./lib/windowsVm");
 
 const app = express();
 const PORT = 5000;
@@ -99,27 +111,170 @@ app.get("/api/docker/ping", (req, res) => {
 });
 
 /**
- * Small smoke container launch for backend-to-Docker proof.
+ * Create the run record first so the guest agent has a scoped task folder to
+ * read from, then ensure the Windows VM is available for that run. If the VM
+ * launch fails, we immediately mark the run as failed instead of leaving the
+ * active channel stranded in a queued or running state.
  */
-app.post("/api/docker/start-smoke", (req, res) => {
-  exec(
-    'docker run -d --rm --name atlas-smoke alpine sh -c "sleep 300"',
-    (error, stdout, stderr) => {
-      if (error) {
-        return res.status(500).json({
-          success: false,
-          message: "Failed to start test container",
-          error: stderr || error.message,
-        });
-      }
+async function handleStartRun(req, res) {
+  let createdRun = null;
 
-      return res.json({
-        success: true,
-        message: "Test container started",
-        containerId: stdout.trim(),
+  try {
+    createdRun = await createRunRecord(req.body ?? {});
+  } catch (error) {
+    if (error.code === "RUN_ACTIVE") {
+      return res.status(409).json({
+        success: false,
+        message: error.message,
+        activeRunId: error.activeRunId,
       });
     }
-  );
+
+    console.error("RUN CREATION SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create isolated run",
+    });
+  }
+
+  try {
+    const windowsVm = await ensureWindowsVmRunning();
+    const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
+
+    await attachContainerId(createdRun.runId, containerId);
+    const run = await readRun(createdRun.runId);
+
+    return res.json({
+      success: true,
+      message: "Isolated test run started in the Windows VM guest",
+      runId: createdRun.runId,
+      containerId,
+      windowsVm,
+      run,
+    });
+  } catch (error) {
+    try {
+      await markRunLaunchFailure(
+        createdRun.runId,
+        error.message || "Windows VM failed to start for the requested run."
+      );
+    } catch (markError) {
+      console.error("RUN FAILURE MARK ERROR:", markError);
+    }
+
+    console.error("RUN START SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start isolated test run",
+      error: error.message,
+      runId: createdRun.runId,
+    });
+  }
+}
+
+app.post("/api/runs/start", handleStartRun);
+// Keep the legacy route alive while older client code and saved workflows
+// still refer to the original smoke-start endpoint name.
+app.post("/api/docker/start-smoke", handleStartRun);
+
+/**
+ * Report the current Docker-backed Windows guest status without creating a run.
+ * The dashboard polls this so users can tell "Docker is down" apart from
+ * "Docker is fine, but the Windows guest has not been created yet."
+ */
+app.get("/api/windows-vm/status", async (req, res) => {
+  try {
+    const windowsVm = await getWindowsVmStatus();
+    return res.json({
+      success: windowsVm.available,
+      windowsVm,
+    });
+  } catch (error) {
+    console.error("WINDOWS VM STATUS SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to read Windows VM status",
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * Start or resume the Docker-backed Windows guest without creating a run.
+ * This gives us a manual recovery path when someone wants the VM up before
+ * launching a test or needs to bring it back after deleting the container.
+ */
+app.post("/api/windows-vm/start", async (req, res) => {
+  try {
+    const windowsVm = await ensureWindowsVmRunning();
+    return res.json({
+      success: true,
+      message: "Windows VM service is starting or already running",
+      windowsVm,
+    });
+  } catch (error) {
+    console.error("WINDOWS VM START SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start the Windows VM service",
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * Poll the current state of a single run and return its scoped artifacts/logs.
+ */
+app.get("/api/runs/:runId", async (req, res) => {
+  try {
+    const run = await readRun(req.params.runId);
+
+    if (!run) {
+      return res.status(404).json({
+        success: false,
+        message: "Run not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      run,
+    });
+  } catch (error) {
+    console.error("RUN STATUS SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to read run status",
+    });
+  }
+});
+
+/**
+ * Serve a file from a single run folder. This keeps screenshots and saved
+ * artifacts scoped to the current run instead of reading from shared globals.
+ */
+app.get("/api/runs/:runId/files/*", async (req, res) => {
+  try {
+    const filePath = await resolveRunFilePath(req.params.runId, req.params[0] || "");
+    return res.sendFile(filePath, (sendError) => {
+      if (sendError && !res.headersSent) {
+        res.status(sendError.statusCode || 404).json({
+          success: false,
+          message: "Run file not found",
+        });
+      }
+    });
+  } catch (error) {
+    console.error("RUN FILE SERVER ERROR:", error);
+
+    return res.status(404).json({
+      success: false,
+      message: "Run file not found",
+    });
+  }
 });
 
 /**
@@ -304,7 +459,7 @@ if (typeof authRoutes !== "function") {
  *
  * No second auth server. No split-brain startup path.
  */
-app.use("/api", authRoutes(db));
+app.use("/api/auth", authRoutes(db)); //updated path to /api/auth according to jira task #211
 
 /**
  * Final 404 for unknown API routes.
@@ -340,7 +495,6 @@ async function cleanupExpiredSessions() {
       `DELETE FROM sessions
        WHERE expires_at <= CURRENT_TIMESTAMP`
     );
-    console.log(`Expired sessions removed: ${result.rowCount}`);
   } catch (error) {
     console.error("SESSION CLEANUP ERROR:", error);
   }
