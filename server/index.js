@@ -486,6 +486,23 @@ app.use((err, req, res, next) => {
 /**
  * Start the single backend after all middleware and routes are registered.
  */
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 1000; // 1 minute for testing
+
+async function cleanupExpiredSessions() {
+  try {
+    console.log("cleanup tick");
+    const result = await db.query(
+      `DELETE FROM sessions
+       WHERE expires_at <= CURRENT_TIMESTAMP`
+    );
+  } catch (error) {
+    console.error("SESSION CLEANUP ERROR:", error);
+  }
+}
+
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Backend running on http://localhost:${PORT}`);
+
+  cleanupExpiredSessions();
+  setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL_MS);
 });

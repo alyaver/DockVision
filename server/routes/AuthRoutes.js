@@ -6,6 +6,7 @@ const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
 const MAX_EMAIL_LENGTH = 50;
 const MAX_PASSWORD_LENGTH = 64;
+const SESSION_COOKIE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Normalize name input so the database receives a clean value.
@@ -45,15 +46,20 @@ function isStrongPassword(value) {
 }
 
 /**
- * IMPORTANT:
- * Export a single CommonJS factory function.
- *
- * Why this fixes your crash:
- * - server/index.js is calling authRoutes(db)
- * - That means require("./routes/AuthRoutes") MUST return a function
- * - If the live main-branch file was exporting an object, router, named export,
- *   or a merge-damaged module shape, Node would throw:
- *   "TypeError: authRoutes is not a function"
+ * Keep the browser cookie lifetime aligned with the server-side session window.
+ */
+function setSessionCookie(res, sessionToken) {
+  res.cookie("session_token", sessionToken, {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    maxAge: SESSION_COOKIE_MAX_AGE_MS,
+  });
+}
+
+/**
+ * Build the auth router against the shared database connection used by the
+ * main backend entry point.
  */
 module.exports = function authRoutes(db) {
   if (!db || typeof db.query !== "function") {
@@ -65,7 +71,10 @@ module.exports = function authRoutes(db) {
   const router = express.Router();
 
   /**
-   * Return the currently authenticated user based on the session cookie.
+   * Return the authenticated user for the current session token.
+   *
+   * This endpoint also performs lightweight session maintenance so the browser
+   * cookie and the backing session record expire on the same timeline.
    */
   router.get("/me", async (req, res) => {
     try {
@@ -75,6 +84,31 @@ module.exports = function authRoutes(db) {
         return res.status(401).json({ message: "Not authenticated" });
       }
 
+      // Remove expired rows eagerly so a stale cookie produces a clean 401
+      // instead of appearing authenticated against dead session state.
+      await db.query(
+        `DELETE FROM sessions
+         WHERE session_token = $1
+           AND expires_at <= CURRENT_TIMESTAMP`,
+        [token]
+      );
+
+      // Only reissue the cookie when the backing session record is renewed.
+      // That keeps the browser expiry aligned with the DB expiry window.
+      const sessionExtensionResult = await db.query(
+        `UPDATE sessions
+        SET expires_at = CURRENT_TIMESTAMP + INTERVAL '2 hours'
+        WHERE session_token = $1
+          AND expires_at > CURRENT_TIMESTAMP
+          AND expires_at <= CURRENT_TIMESTAMP + INTERVAL '1 hour'`,
+        [token]
+      );
+
+      if (sessionExtensionResult.rowCount > 0) {
+        setSessionCookie(res, token);
+      }
+
+      // Read the current authenticated user after any cleanup or renewal.
       const result = await db.query(
         `SELECT
            u.user_id,
@@ -99,7 +133,7 @@ module.exports = function authRoutes(db) {
   });
 
   /**
-   * Register a new user and immediately create a session.
+   * Register a new user and immediately establish an authenticated session.
    */
   router.post("/register", async (req, res) => {
     try {
@@ -133,6 +167,9 @@ module.exports = function authRoutes(db) {
         });
       }
 
+      // The strength regex already enforces the minimum length requirement, so
+      // this guard only needs a separate upper bound to keep the rule defined
+      // in one place instead of splitting length checks across two constants.
       if (password.length > MAX_PASSWORD_LENGTH || !isStrongPassword(password)) {
         return res.status(400).json({
           message:
@@ -186,16 +223,7 @@ module.exports = function authRoutes(db) {
         [user.user_id, sessionToken]
       );
 
-      /**
-       * Dev-friendly cookie settings.
-       * Secure=false is intentional for local HTTP development.
-       */
-      res.cookie("session_token", sessionToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 2 * 60 * 60 * 1000,
-      });
+      setSessionCookie(res, sessionToken);
 
       return res.status(201).json({ user });
     } catch (error) {
@@ -209,7 +237,7 @@ module.exports = function authRoutes(db) {
   });
 
   /**
-   * Log in an existing user and create a session record.
+   * Log in an existing user and create a fresh session record.
    */
   router.post("/login", async (req, res) => {
     try {
@@ -247,11 +275,30 @@ module.exports = function authRoutes(db) {
         [email]
       );
 
+      // Keep credential failures uniform so login does not reveal whether the
+      // submitted email exists in the system.
       if (result.rows.length === 0) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
       const user = result.rows[0];
+
+      // Clear expired lock state before we evaluate whether the account is
+      // currently blocked. That prevents old lockouts from persisting forever.
+      if (user.lock_until && new Date(user.lock_until) <= new Date()) {
+        await db.query(
+          `UPDATE users
+          SET
+            failed_login_count = 0,
+            lock_until = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = $1`,
+          [user.user_id]
+        );
+
+        user.failed_login_count = 0;
+        user.lock_until = null;
+      }
 
       if (user.lock_until && new Date(user.lock_until) > new Date()) {
         return res
@@ -315,12 +362,7 @@ module.exports = function authRoutes(db) {
         [user.user_id, sessionToken]
       );
 
-      res.cookie("session_token", sessionToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 2 * 60 * 60 * 1000,
-      });
+      setSessionCookie(res, sessionToken);
 
       return res.json({
         user: {
