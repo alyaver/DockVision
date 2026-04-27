@@ -15,6 +15,9 @@ const authRoutes = require("./routes/AuthRoutes");
 const app = express();
 const PORT = 5000;
 
+const RESET_REQUEST_WINDOW_MINUTES = 15;
+const MAX_UNIQUE_EMAILS_PER_IP = 3;
+
 /**
  * Single backend policy:
  * - one Express app
@@ -194,9 +197,13 @@ app.get("/api/storage/space", async (req, res) => {
  *   /set-new-password?token=...
  */
 app.post("/api/forgot-password", async (req, res) => {
-  const { email } = req.body ?? {};
+  // normalize email 
+  const rawEmail = req.body?.email;
+  const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+  // generic response zero data 
   const genericResponse = () =>
     res.status(200).json({ message: "If that email is registered, a reset link has been sent." });
+
   if (!email) {
     return res.status(400).json({
       message: "Email is required.",
@@ -209,7 +216,47 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 
+  // request header for IP address tracking
+  const ipAddress =
+    req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
+    req.socket.remoteAddress ||
+    "unknown";
+
   try {
+    const rateLimitResult = await db.query(
+      `SELECT COUNT(DISTINCT email)::int AS unique_email_count
+       FROM password_reset_request_attempts
+       WHERE ip_address = $1
+         AND requested_at > CURRENT_TIMESTAMP - INTERVAL '15 minutes'`,
+      [ipAddress]
+    );
+
+    const uniqueEmailCount = rateLimitResult.rows[0].unique_email_count;
+
+    const existingEmailForIpResult = await db.query(
+      `SELECT 1
+       FROM password_reset_request_attempts
+       WHERE ip_address = $1
+         AND email = $2
+         AND requested_at > CURRENT_TIMESTAMP - INTERVAL '15 minutes'
+       LIMIT 1`,
+      [ipAddress, email]
+    );
+
+    const hasAlreadyTriedThisEmail = existingEmailForIpResult.rows.length > 0;
+
+    if (uniqueEmailCount >= MAX_UNIQUE_EMAILS_PER_IP && !hasAlreadyTriedThisEmail) {
+      return res.status(429).json({
+        message: "Please wait a few minutes before trying again.",
+      });
+    }
+
+    await db.query(
+      `INSERT INTO password_reset_request_attempts (email, ip_address)
+       VALUES ($1, $2)`,
+      [email, ipAddress]
+    );
+
     // TODO: Re-enable DB lookup when forgot-password is fully wired.
     // Example:
     // const result = await db.query("SELECT user_id FROM users WHERE email = $1", [email]);
@@ -219,7 +266,7 @@ app.post("/api/forgot-password", async (req, res) => {
 
    const result = await db.query(
       "SELECT user_id FROM users WHERE email = $1",
-      [email.trim().toLowerCase()]
+      [email]
     );
 
     if (result.rows.length === 0) {
@@ -265,22 +312,6 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /**
  * Defensive guard:
