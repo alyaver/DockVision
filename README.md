@@ -119,14 +119,18 @@ Cleanup rule:
 
 
 ### About Page
+<img width="1796" height="1687" alt="About Page" src="https://github.com/user-attachments/assets/1fd97f5a-a853-4499-aadc-6f1e4a0284c8" />
 
 
 ### Dashboard
+<img width="1299" height="1921" alt="Dashboard" src="https://github.com/user-attachments/assets/714ab471-e736-4248-82d6-229b7fc4939b" />
 
 
 ### Running Test Page
- 
+ <img width="876" height="1079" alt="running_test2" src="https://github.com/user-attachments/assets/d071d1f1-0f21-47f4-ada2-b259dbe4a869" />
+
 ### VM Screenshot of a test run
+<img width="1280" height="720" alt="notepadVM" src="https://github.com/user-attachments/assets/8901f3ba-397b-486b-805a-64507f25b437" />
 
 
 
@@ -256,12 +260,12 @@ the backend health check should respond at `http://localhost:5000/api/health`
 
 
 ## What’s Coming
-Sprint 5(31 August - 13 September) - Prepare for testing/”Taskifying” script
-Sprint 6(14 September - 27 September)- “Taskifying” a script for users
-Sprint 7(28 September - 11 October) -  Finalize “Taskifying” a script for users
-Create a GUI layer that allows user to select a series of tasks to be performed, in a specific order. Then it generates the script + config file for the user to run
-Sprint 8(12 October - 25 October) - Improve UI for a better user experience
-Sprint 9(26 October - 9 November) - Project ready for deployment
+- Sprint 5 (31 August - 13 September) - Prepare for testing/”Taskifying” script
+- Sprint 6 (14 September - 27 September)- “Taskifying” a script for users
+- Sprint 7 (28 September - 11 October) -  Finalize “Taskifying” a script for users
+  - Create a GUI layer that allows user to select a series of tasks to be performed, in a specific order. Then it generates the script + config file for the user to run
+- Sprint 8 (12 October - 25 October) - Improve UI for a better user experience
+- Sprint 9 (26 October - 9 November) - Project ready for deployment
 
 
 
