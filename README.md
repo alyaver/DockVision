@@ -113,6 +113,7 @@ Cleanup rule:
 
 ---
 ## ERD
+<img width="1965" height="1468" alt="Project Atlas drawio" src="https://github.com/user-attachments/assets/bafc8bbf-7721-484b-a1de-d84597e4b8ca" />
 
 
 ## Screenshots
