@@ -1,4 +1,4 @@
-# ProjectAtlas
+<img width="1668" height="1771" alt="IMG_2252" src="https://github.com/user-attachments/assets/12a6b253-ae46-408e-861f-abcc4af330e7" />
 
 
 ProjectAtlas is a local web-based launcher for automated test sessions.  
