@@ -1,7 +1,7 @@
 <img width="1668" height="1771" alt="IMG_2252" src="https://github.com/user-attachments/assets/12a6b253-ae46-408e-861f-abcc4af330e7" />
 
 
-ProjectAtlas is a local web-based launcher for automated test sessions.  
+DockVision is a local web-based launcher for automated test sessions.  
 It is being developed as a senior capstone project with a focus on practical test orchestration, container-backed execution, and a future VM-based workflow.
 
 
@@ -14,7 +14,7 @@ The current implementation provides a React frontend, an Express backend, and a 
 ## Overview
 
 
-The goal of ProjectAtlas is to provide a simple interface for starting and monitoring automated test runs without requiring the frontend to interact with Docker or system-level tooling directly.
+The goal of DockVision is to provide a simple interface for starting and monitoring automated test runs without requiring the frontend to interact with Docker or system-level tooling directly.
 
 
 The system is being built around the following architecture:
