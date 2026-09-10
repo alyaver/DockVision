@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 
@@ -21,7 +22,7 @@ return (
 );
 }
 
-function CreateTask({taskDesctipion, tasks, onChangeText, onChangeTask, onSave, onCancel}) {
+function CreateTask({taskDescription, tasks, onChangeText, onChangeTask, onSave, onCancel}) {
     return (
         <div className="create-task-container">
             <input
@@ -70,7 +71,7 @@ export default function CreateATask() {
     }
 
     function saveTask() {
-        if(!taskDesctiption) return;
+        if(!taskDescription) return;
         if(taskDescription.mode === "new") {
             const newTask = { id: nextID, text: taskDescription.text, task: taskDescription.task };
             setDefTask([...defTask, newTask]);
@@ -91,7 +92,7 @@ export default function CreateATask() {
     function handleConfirm(){
         setLocked(true);
         setTaskDescription(null);
-        setConfirmOn
+        setConfirmOn(true);
     }
 
     function handleUnlock(){
@@ -130,10 +131,10 @@ export default function CreateATask() {
                                 taskDescription && taskDescription.mode === "edit" && taskDescription.id === t.id ? (
                                     <CreateTask
                                         key={t.id}
-                                        taskDesctipion={taskDescription}
+                                        taskDescription={taskDescription}
                                         tasks={tasks}
-                                        onChangeText={(v) => setTaskDescription(d)({ ...taskDescription, text:v })}
-                                        onChangeTask={(v) => setTaskDescription(d)({ ...taskDescription, task:v })}
+                                        onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
+                                        onChangeTask={(v) => setTaskDescription({ ...taskDescription, task:v })}
                                         onSave={saveTask}
                                         onCancel={cancelTask} 
                                     />
@@ -153,7 +154,7 @@ export default function CreateATask() {
 
                             {taskDescription && taskDescription.mode === "new" && (
                                 <CreateTask
-                                    taskDesctipion={taskDescription}
+                                    taskDescription={taskDescription}
                                     tasks={tasks}
                                     onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
                                     onChangeTask={(v) => setTaskDescription({ ...taskDescription, task:v })}
@@ -165,7 +166,7 @@ export default function CreateATask() {
                         
                         <div className="footer-panel">
                             {confirmOn ? (
-                                <div className="confirm-dialog"> Confirmed {confirmed}
+                                <div className="confirm-dialog"> Confirmed {String(confirmOn)}
                                 <button onClick={handleUnlock}>UnlockList</button>
                                 </div>
                             ) : (
@@ -178,6 +179,7 @@ export default function CreateATask() {
                          ) : (
                                 <div className="exit-message">
                                     <span>Are you sure you want to exit?</span>
+                                    <button onClick={() => navigate("/Dashboard")} className="exit-button">Yes</button>
                                     <button onClick={() => setExit(false)}>Cancel</button>
                                 </div>
                             )}
