@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 
-
 const Name_Task = "Name your Task Function";
 //const Task = ["Type:", "Click"];
 const Default_Task = [];
@@ -47,6 +46,7 @@ function CreateTask({taskDescription, tasks, onChangeText, onChangeTask, onSave,
 
 
 export default function CreateATask() {
+    const navigate = useNavigate(); 
     const [taskDescription, setTaskDescription] = useState({ text: "", task: "" });
     const [tasks, setTasks] = useState(Task_Options);
     const [newTaskName, setNewTaskName] = useState("");
@@ -102,15 +102,19 @@ export default function CreateATask() {
 
     return (
         <div className="create-task-form">
-          <div className="create-task-header">
-            <button onClick={() => setExit(true)} className="exit-button">Exit</button>
-          </div>
-
-            <div className="create-task-containter">
+            <Navigation />
+            <div className="task-container">
                 {!exit ? (
                     <div className="panel">
+
+                    <div className="create-task-header">
+                                <button onClick={() => navigate("/Dashboard")} className="back-button">Dashboard</button>
+                                <button onClick={() => setExit(true)} className="exit-button">Exit</button>
+                            </div>
+
+
                         <div className="head-panel">
-                            <input value={newTaskName} onChange={(e) => setNewTaskName(e.target.value)}/>
+                            <input value={newTaskName} onChange={(e) => setNewTaskName(e.target.value)} placeholder="Enter task name" />
                         </div>
 
                         <div className="body-panel">
@@ -118,7 +122,7 @@ export default function CreateATask() {
                                 {defTask.length}
                                 {defTask.length === 1 ? " task" : " tasks"}
                             </span>
-                            <button onClick={openAddTask} disabled={locked}>Add Task</button>
+                            <button onClick={openAddTask} disabled={locked} className="add-button">Add Task</button>
                         </div>
                         
                         <div className="task-list">
@@ -144,8 +148,8 @@ export default function CreateATask() {
                                         <span>{t.text}</span> <span>{t.task}</span>
                                         </div>
                                     <div>
-                                    <button onClick={() => opendEditTask(t)} disabled={locked}>Edit</button>
-                                    <button onClick={() => deleteTask(t.id)} disabled={locked}>Delete</button>
+                                    <button onClick={() => opendEditTask(t)} disabled={locked} className="edit-button">Edit</button>
+                                    <button onClick={() => deleteTask(t.id)} disabled={locked} className="delete-button">Delete</button>
                                     </div>
                                     </div>
                                      )
@@ -166,12 +170,12 @@ export default function CreateATask() {
                         
                         <div className="footer-panel">
                             {confirmOn ? (
-                                <div className="confirm-dialog"> Confirmed {String(confirmOn)}
-                                <button onClick={handleUnlock}>UnlockList</button>
+                                <div className="confirm-dialog"> Confirmed 
+                                <button onClick={handleUnlock} className="unlock-button">UnlockList</button>
                                 </div>
                             ) : (
-                                <button onClick={handleConfirm} disabled={locked}>
-                                    {locked ? 'Locked' : 'TaskLocked'}
+                                <button onClick={handleConfirm} disabled={locked} className="confirm-button">
+                                    {locked ? 'Locked' : 'Task Locked'}
                                 </button>
                             )}
                         </div>

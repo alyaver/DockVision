@@ -1,0 +1,179 @@
+.create-task-form{
+    min-height: 100vh;
+    font-family: sans-serif;
+}
+
+.create-task-header{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    background-color: #f5f5f5;
+    border-bottom: 1px solid #ddd;
+}
+
+.back-button, .exit-button{
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+.create-task-container{
+   display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    margin: 8px 0;
+    border: 1px solid #ddd;
+    background-color: transparent;
+    border-radius: 5px; 
+}
+
+.panel{
+    margin-top: 20px;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 5px; 
+    
+
+}
+
+
+.head-panel{
+    padding:10px;
+    border-bottom: 1px solid #ddd;
+    font-size: 1.5em;
+    margin-bottom: 10px;
+    font-weight: bold;
+}
+
+.head-panel input{
+    width: 100%;
+    font-size: 16px;
+    border: none;
+    outline: none;
+
+}
+
+.body-panel{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+
+
+.add-button{
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+
+.task-list{
+    padding: 8px 20px;
+}
+
+.no-tasks-message{
+    text-align: center;
+    color: #888;
+    font-size: 1.2em;
+    padding: 20px;
+}
+
+.task-item{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #ddd;
+}
+.task-item:last-child{
+    border-bottom: none;
+}
+
+.edit-button, .delete-button{
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+
+.task-container{
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 0 20px;
+ 
+}
+
+
+.task-input{
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.task-select{
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.button-container{
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.save-button, .cancel-button{
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+.footer-panel{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    background-color: #f5f5f5;
+    border-top: 1px solid #ddd;
+}
+
+.lock-button, .unlock-button, .confirm-button{
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+.confirm-dialog{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+}
+
+.exit-message{
+    text-align: center;
+    padding: 20px;
+    font-size: 1.2em;
+}
+
