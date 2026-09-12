@@ -559,6 +559,14 @@ function Invoke-PowerShellNotepadTask {
     }
 }
 
+function Invoke-TypeSequenceTask {
+        
+
+
+
+
+
+}
 function Invoke-NotepadAutomationTask {
     param(
         [string]$SharedRoot,

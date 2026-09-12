@@ -192,6 +192,13 @@ app.post("/api/runs/start", handleStartRun);
 // still refer to the original smoke-start endpoint name.
 app.post("/api/docker/start-smoke", handleStartRun);
 
+// placeholder function, will accept the tasks array from the WIP create-a-task page
+async function handleStartRun2(req, res) {
+
+
+
+}
+
 /**
  * Report the current Docker-backed Windows guest status without creating a run.
  * The dashboard polls this so users can tell "Docker is down" apart from
