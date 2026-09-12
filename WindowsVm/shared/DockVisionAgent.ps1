@@ -564,10 +564,11 @@ function Invoke-TypeSequenceTask {
         [hashtable]$RunContext,
         [object]$Task,
         [string]$TaskId,
-        [string]$PythonWarning = ""
     )
 
-    $text = [string](Get-TaskPayloadValue -Task $Task -Name "text" -DefaultValue (Get-DefaultNotepadText -TaskId $TaskId))
+    #steps are to arrive as an ordered array
+    #only 'type' steps are andled here, click and others are skipped for now
+    $steps = Get-TaskPayloadValue -Task $Task -Name "steps" -DefaultValue @()
     $typingDelayMs = [int](Get-TaskPayloadValue -Task $Task -Name "typingDelayMs" -DefaultValue 35)
     $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
@@ -586,15 +587,14 @@ function Invoke-TypeSequenceTask {
     $details = @{
         automationBackend = "powershell-sendkeys"
         taskType = $taskType
-        typedCharacterCount = $text.Length
+        totalStepCount = @($steps).Count
+        typedStepCount = $typedStepCount
+        skippedStepCount = $skippedStepCount
+        typedCharacterCount = $typedCharacterCount
         typingDelayMs = $typingDelayMs
         processId = $process.Id
         saveRequested = $saveFile
         closeRequested = $closeAfter
-    }
-
-    if ($PythonWarning) {
-        $details.pythonWarning = $PythonWarning
     }
 
     if ($captureScreenshot) {
@@ -632,7 +632,7 @@ function Invoke-TypeSequenceTask {
         taskId = $TaskId
         status = "completed"
         finishedUtc = Get-UtcTimestamp
-        message = "Notepad focused and typed through PowerShell UI automation."
+        message = "Notepad focused and typed $typedStepCount of $(@($steps).Count) step(s) through PowerShell UI automation."
         artifacts = $artifacts
         details = $details
     }
