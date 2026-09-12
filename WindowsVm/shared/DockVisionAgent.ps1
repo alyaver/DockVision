@@ -560,12 +560,82 @@ function Invoke-PowerShellNotepadTask {
 }
 
 function Invoke-TypeSequenceTask {
-        
+    param(
+        [hashtable]$RunContext,
+        [object]$Task,
+        [string]$TaskId,
+        [string]$PythonWarning = ""
+    )
 
+    $text = [string](Get-TaskPayloadValue -Task $Task -Name "text" -DefaultValue (Get-DefaultNotepadText -TaskId $TaskId))
+    $typingDelayMs = [int](Get-TaskPayloadValue -Task $Task -Name "typingDelayMs" -DefaultValue 35)
+    $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
+    $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
+    $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
+    $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
 
+    $process = Start-Process "notepad.exe" -PassThru
+    $handle = Wait-ForMainWindow -Process $process
+    Focus-Window -WindowHandle $handle
 
+    Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
+    
+    Start-Sleep -Milliseconds 500
 
+    $artifacts = @{}
+    $details = @{
+        automationBackend = "powershell-sendkeys"
+        taskType = $taskType
+        typedCharacterCount = $text.Length
+        typingDelayMs = $typingDelayMs
+        processId = $process.Id
+        saveRequested = $saveFile
+        closeRequested = $closeAfter
+    }
 
+    if ($PythonWarning) {
+        $details.pythonWarning = $PythonWarning
+    }
+
+    if ($captureScreenshot) {
+        try {
+            $artifacts.screenshot = Capture-ScreenArtifact -RunContext $RunContext -TaskId $TaskId
+        }
+        catch {
+            $details.screenshotWarning = $_.Exception.Message
+        }
+    }
+
+    if ($saveFile) {
+        Ensure-RunLayout -RunContext $RunContext
+        $fileName = [string](Get-TaskPayloadValue -Task $Task -Name "fileName" -DefaultValue "dockvision-notepad-$TaskId.txt")
+        $savePath = Join-Path $RunContext.artifactsRoot $fileName
+
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.SendKeys]::SendWait("^s")
+        Start-Sleep -Milliseconds 800
+        Send-HumanLikeText -Text $savePath -DelayMs 5
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+        Start-Sleep -Milliseconds 800
+        $artifacts.savedFile = ConvertTo-RelativeRunPath -RunContext $RunContext -AbsolutePath $savePath
+        $details.savedFile = $artifacts.savedFile
+    }
+
+    if ($closeAfter) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.SendKeys]::SendWait("%{F4}")
+        $process.WaitForExit(5000) | Out-Null
+        $details.closed = $process.HasExited
+    }
+
+    return @{
+        taskId = $TaskId
+        status = "completed"
+        finishedUtc = Get-UtcTimestamp
+        message = "Notepad focused and typed through PowerShell UI automation."
+        artifacts = $artifacts
+        details = $details
+    }
 }
 function Invoke-NotepadAutomationTask {
     param(
