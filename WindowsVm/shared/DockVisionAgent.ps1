@@ -579,8 +579,23 @@ function Invoke-TypeSequenceTask {
     $handle = Wait-ForMainWindow -Process $process
     Focus-Window -WindowHandle $handle
 
-    Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
-    
+    $typedStepCount = 0
+    $skippedStepCount = 0
+    $typedCharacterCount = 0
+
+    foreach ($step in @($steps)) {
+        $stepType = [string]$step.type
+        if ($stepType -eq "type") {
+            $text = [string]$step.data
+            Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
+            $typedStepCount++
+            $typedCharacterCount += $text.Length
+        }
+        else {
+            $skippedStepCount++
+        }
+    }
+
     Start-Sleep -Milliseconds 500
 
     $artifacts = @{}
