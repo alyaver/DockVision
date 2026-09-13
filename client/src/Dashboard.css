@@ -151,6 +151,19 @@ body, #root {
   opacity: 0.85;
 }
  
+/* TO GENERATE PAGE */
+.nav-to-generate-page {
+  color: gray;
+}
+
+.nav-to-generate-page a {
+  color: blue;
+}
+
+.nav-to-generate-page a:hover {
+  text-decoration: underline;
+}
+
 /* RUN LIST*/
 .run-list {
   list-style: none;
