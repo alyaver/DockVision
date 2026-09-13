@@ -563,7 +563,7 @@ function Invoke-TypeSequenceTask {
     param(
         [hashtable]$RunContext,
         [object]$Task,
-        [string]$TaskId,
+        [string]$TaskId
     )
 
     #steps are to arrive as an ordered array

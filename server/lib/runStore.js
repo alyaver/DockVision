@@ -692,13 +692,21 @@ async function createRunRecord2(options = {}) {
   const createdUtc = nowIso();
   const runPaths = await ensureRunLayout(runId);
 
+  const hasSteps = Array.isArray(options.steps);
+  const taskType = options.taskType || (hasSteps ? "type_sequence" : "notepad_lifecycle");
+  const payload =
+    options.payload ||
+    (hasSteps
+      ? { steps: options.steps }
+      : buildDefaultTaskPayload(runId, options));
+      
   const task = {
     runId,
     taskId,
-    taskType: options.taskType || "notepad_lifecycle",
+    taskType,
     status: "queued",
     createdUtc,
-    payload: options.payload || buildDefaultTaskPayload(runId, options),
+    payload,
   };
 
   const meta = {
