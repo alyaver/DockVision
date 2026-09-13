@@ -1,5 +1,5 @@
 const path = require("path");
-//const SCHEMA_VERSION = "dockvision.plan.v1"; // referenced from runner-contract-demo (task-plan.json)
+const SCHEMA_VERSION = "dockvision.plan.v1"; // referenced from runner-contract-demo (task-plan.json)
 
 class TestScriptError extends Error {
   constructor(message) {
