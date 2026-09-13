@@ -21,6 +21,7 @@ const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const {
   createRunRecord,
+  createRunRecord2,
   attachContainerId,
   markRunLaunchFailure,
   readRun,
@@ -197,7 +198,7 @@ async function handleStartRun2(req, res) {
 let createdRun = null;
 
   try {
-    createdRun = await createRunRecord(req.body ?? {});
+    createdRun = await createRunRecord2(req.body ?? {});
   } catch (error) {
     if (error.code === "RUN_ACTIVE") {
       return res.status(409).json({
@@ -248,6 +249,8 @@ let createdRun = null;
     });
   }
 }
+
+app.post("/api/runs/start2", handleStartRun2);
 
 /**
  * Report the current Docker-backed Windows guest status without creating a run.
