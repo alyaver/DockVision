@@ -559,6 +559,99 @@ function Invoke-PowerShellNotepadTask {
     }
 }
 
+function Invoke-TypeSequenceTask {
+    param(
+        [hashtable]$RunContext,
+        [object]$Task,
+        [string]$TaskId
+    )
+
+    #steps are to arrive as an ordered array
+    #only 'type' steps are andled here, click and others are skipped for now
+    $steps = Get-TaskPayloadValue -Task $Task -Name "steps" -DefaultValue @()
+    $typingDelayMs = [int](Get-TaskPayloadValue -Task $Task -Name "typingDelayMs" -DefaultValue 35)
+    $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
+    $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
+    $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
+    $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
+
+    $process = Start-Process "notepad.exe" -PassThru
+    $handle = Wait-ForMainWindow -Process $process
+    Focus-Window -WindowHandle $handle
+
+    $typedStepCount = 0
+    $skippedStepCount = 0
+    $typedCharacterCount = 0
+
+    foreach ($step in @($steps)) {
+        $stepType = [string]$step.type
+        if ($stepType -eq "type") {
+            $text = [string]$step.data
+            Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
+            $typedStepCount++
+            $typedCharacterCount += $text.Length
+        }
+        else {
+            $skippedStepCount++
+        }
+    }
+
+    Start-Sleep -Milliseconds 500
+
+    $artifacts = @{}
+    $details = @{
+        automationBackend = "powershell-sendkeys"
+        taskType = $taskType
+        totalStepCount = @($steps).Count
+        typedStepCount = $typedStepCount
+        skippedStepCount = $skippedStepCount
+        typedCharacterCount = $typedCharacterCount
+        typingDelayMs = $typingDelayMs
+        processId = $process.Id
+        saveRequested = $saveFile
+        closeRequested = $closeAfter
+    }
+
+    if ($captureScreenshot) {
+        try {
+            $artifacts.screenshot = Capture-ScreenArtifact -RunContext $RunContext -TaskId $TaskId
+        }
+        catch {
+            $details.screenshotWarning = $_.Exception.Message
+        }
+    }
+
+    if ($saveFile) {
+        Ensure-RunLayout -RunContext $RunContext
+        $fileName = [string](Get-TaskPayloadValue -Task $Task -Name "fileName" -DefaultValue "dockvision-notepad-$TaskId.txt")
+        $savePath = Join-Path $RunContext.artifactsRoot $fileName
+
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.SendKeys]::SendWait("^s")
+        Start-Sleep -Milliseconds 800
+        Send-HumanLikeText -Text $savePath -DelayMs 5
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+        Start-Sleep -Milliseconds 800
+        $artifacts.savedFile = ConvertTo-RelativeRunPath -RunContext $RunContext -AbsolutePath $savePath
+        $details.savedFile = $artifacts.savedFile
+    }
+
+    if ($closeAfter) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.SendKeys]::SendWait("%{F4}")
+        $process.WaitForExit(5000) | Out-Null
+        $details.closed = $process.HasExited
+    }
+
+    return @{
+        taskId = $TaskId
+        status = "completed"
+        finishedUtc = Get-UtcTimestamp
+        message = "Notepad focused and typed $typedStepCount of $(@($steps).Count) step(s) through PowerShell UI automation."
+        artifacts = $artifacts
+        details = $details
+    }
+}
 function Invoke-NotepadAutomationTask {
     param(
         [string]$SharedRoot,
@@ -668,6 +761,11 @@ function Handle-Task {
 
             "notepad_lifecycle" {
                 Invoke-NotepadAutomationTask -SharedRoot $SharedRoot -RunContext $runContext -Task $Task -TaskId $taskId
+            }
+
+            "type_sequence" {
+                $typeSequenceResult = Invoke-TypeSequenceTask -RunContext $runContext -Task $Task -TaskId $taskId
+                Write-ResultObject -RunContext $runContext -ResultObject $typeSequenceResult
             }
 
             default {

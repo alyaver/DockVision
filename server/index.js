@@ -21,6 +21,7 @@ const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const {
   createRunRecord,
+  createRunRecord2,
   attachContainerId,
   markRunLaunchFailure,
   readRun,
@@ -191,6 +192,65 @@ app.post("/api/runs/start", handleStartRun);
 // Keep the legacy route alive while older client code and saved workflows
 // still refer to the original smoke-start endpoint name.
 app.post("/api/docker/start-smoke", handleStartRun);
+
+// placeholder function, will accept the tasks array from the WIP create-a-task page
+async function handleStartRun2(req, res) {
+let createdRun = null;
+
+  try {
+    createdRun = await createRunRecord2(req.body ?? {});
+  } catch (error) {
+    if (error.code === "RUN_ACTIVE") {
+      return res.status(409).json({
+        success: false,
+        message: error.message,
+        activeRunId: error.activeRunId,
+      });
+    }
+
+    console.error("RUN CREATION SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create isolated run",
+    });
+  }
+
+  try {
+    const windowsVm = await ensureWindowsVmRunning();
+    const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
+
+    await attachContainerId(createdRun.runId, containerId);
+    const run = await readRun(createdRun.runId);
+
+    return res.json({
+      success: true,
+      message: "Isolated test run started in the Windows VM guest",
+      runId: createdRun.runId,
+      containerId,
+      windowsVm,
+      run,
+    });
+  } catch (error) {
+    try {
+      await markRunLaunchFailure(
+        createdRun.runId,
+        error.message || "Windows VM failed to start for the requested run."
+      );
+    } catch (markError) {
+      console.error("RUN FAILURE MARK ERROR:", markError);
+    }
+
+    console.error("RUN START SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start isolated test run",
+      error: error.message,
+      runId: createdRun.runId,
+    });
+  }
+}
+
+app.post("/api/runs/start2", handleStartRun2);
 
 /**
  * Report the current Docker-backed Windows guest status without creating a run.
