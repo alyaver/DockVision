@@ -5,7 +5,7 @@
 
 .create-task-header{
     display: flex;
-    justify-content: space-between;
+    justify-content: end;
     align-items: center;
     padding: 10px 20px;
     background-color: #f5f5f5;
@@ -148,7 +148,7 @@
 
 .footer-panel{
     display: flex;
-    justify-content: space-between;
+    justify-content: end;
     align-items: center;
     padding: 10px 20px;
     background-color: #f5f5f5;
@@ -168,6 +168,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    color: #00FF00
 
 }
 

@@ -11,12 +11,12 @@ const Task_Options = ["Type:", "Click", "Drag", "Drop"];
 function  TaskSelect({value, tasks, onChange}) {
 return (
   <select value={value} onChange={onChange} className="task-select">
+    <option value="">Select a task</option>
     {tasks.map((c) => (
       <option key={c} value={c}>
         {c}
       </option>
     ))}
-    <option value="">Select a task</option>
   </select>
 );
 }
@@ -58,7 +58,7 @@ export default function CreateATask() {
 
     function openAddTask() {
         if(locked)  return;
-        setTaskDescription({ mode: "new", text: "", task: tasks[0] });
+        setTaskDescription({ mode: "new", text: "", task: "" });
     }
 
     function opendEditTask(t) {
@@ -108,9 +108,13 @@ export default function CreateATask() {
                     <div className="panel">
 
                     <div className="create-task-header">
-                                <button onClick={() => navigate("/Dashboard")} className="back-button">Dashboard</button>
+                                {/*  in case we want to keep dashboard later, delete for now
+
+                                <button onClick={() => navigate("/Dashboard")} className="back-button">Dashboard</button> 
+                                
+                                */}
                                 <button onClick={() => setExit(true)} className="exit-button">Exit</button>
-                            </div>
+                    </div>
 
 
                         <div className="head-panel">
@@ -170,12 +174,12 @@ export default function CreateATask() {
                         
                         <div className="footer-panel">
                             {confirmOn ? (
-                                <div className="confirm-dialog"> Confirmed 
-                                <button onClick={handleUnlock} className="unlock-button">UnlockList</button>
+                                <div className="confirm-dialog"> SAVED
+                                <button onClick={handleUnlock} className="unlock-button">Edit</button>
                                 </div>
                             ) : (
                                 <button onClick={handleConfirm} disabled={locked} className="confirm-button">
-                                    {locked ? 'Locked' : 'Task Locked'}
+                                    {locked ? 'Locked' : 'Save'}
                                 </button>
                             )}
                         </div>
