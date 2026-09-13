@@ -849,6 +849,7 @@ module.exports = {
   SHARED_ROOT,
   buildContainerName,
   createRunRecord,
+  createRunRecord2,
   attachContainerId,
   markRunLaunchFailure,
   readRun,
