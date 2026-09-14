@@ -16,7 +16,7 @@ async function parseJson(response) {
 // Windows guest or can reuse the existing one, so the client only sends the
 // run payload and consumes the normalized response.
 export async function startTestRun(payload = {}) {
-  const response = await fetch(`${API_BASE}/api/runs/start`, {
+  const response = await fetch(`${API_BASE}/api/runs/start2`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
