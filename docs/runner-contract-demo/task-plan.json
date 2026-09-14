@@ -1,0 +1,32 @@
+{
+  "_comment": "DockVision task-plan demo. JSON describes what should happen; runner.ps1 interprets and executes these steps in order.",
+  "schemaVersion": "dockvision.plan.v1",
+  "name": "Basic Notepad TYPE Demo",
+  "targetApp": {
+    "_comment": "Information about the app under test. The current runner only uses step.executable, but these fields show the planned contract direction.",
+    "name": "Notepad",
+    "executable": "notepad.exe",
+    "windowTitleContains": "Notepad"
+  },
+  "settings": {
+    "_comment": "Shared execution settings that the runner can apply while moving through the ordered steps.",
+    "stepDelayMs": 250,
+    "timeoutSeconds": 30
+  },
+  "steps": [
+    {
+      "_comment": "Step 1 opens Notepad against a known demo file so Windows does not restore an unrelated previous tab.",
+      "id": "step-1",
+      "action": "OPEN_APP",
+      "executable": "notepad.exe",
+      "fileName": "notepad-type-demo.txt",
+      "resetFile": true
+    },
+    {
+      "_comment": "Step 2 is the simplest TYPE contract. The runner sends this text to the active window created by OPEN_APP.",
+      "id": "step-2",
+      "action": "TYPE",
+      "text": "This is a DockVision TYPE task from task-plan.json."
+    }
+  ]
+}
