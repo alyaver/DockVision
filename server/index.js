@@ -138,6 +138,14 @@ async function handleStartRun(req, res) {
   try {
     createdRun = await createRunRecord(req.body ?? {});
   } catch (error) {
+    if (error.code === "INVALID_TEST_SCRIPT") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        lineNumber: error.lineNumber,
+      });
+    }
+
     if (error.code === "RUN_ACTIVE") {
       return res.status(409).json({
         success: false,
