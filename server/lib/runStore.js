@@ -1,6 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const { readTestScript } = require("./test-script/readTestScript");
 
 const CLEANUP_POLICY = {
   maxCompletedRuns: 20,
@@ -39,6 +40,18 @@ function buildRunId() {
   return `run-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
 }
 
+function prepareRunnerScript(options) {
+  const content = options.runnerScriptContent;
+  const fileName = path.basename(options.runnerScriptName || "task-plan.json");
+  const plan = readTestScript({fileName, content});
+
+  return {
+    content,
+    fileName,
+    plan,
+  };
+}
+
 function buildContainerName(runId) {
   return `atlas-smoke-${String(runId)
     .toLowerCase()
@@ -51,14 +64,17 @@ function getRunPaths(runId) {
   const logsRoot = path.join(runRoot, "logs");
   const screenshotsRoot = path.join(runRoot, "screenshots");
   const artifactsRoot = path.join(runRoot, "artifacts");
+  const scriptsRoot = path.join(runRoot, "scripts");
 
   return {
     runRoot,
     logsRoot,
     screenshotsRoot,
     artifactsRoot,
+    scriptsRoot,
     metaPath: path.join(runRoot, "meta.json"),
     taskPath: path.join(runRoot, "task.json"),
+    taskPlanPath: path.join(runRoot, "task-plan.json"),
     resultPath: path.join(runRoot, "result.json"),
     taskLogPath: path.join(logsRoot, "task.log"),
   };
@@ -80,6 +96,7 @@ async function ensureRunLayout(runId) {
     fs.mkdir(runPaths.logsRoot, { recursive: true }),
     fs.mkdir(runPaths.screenshotsRoot, { recursive: true }),
     fs.mkdir(runPaths.artifactsRoot, { recursive: true }),
+    fs.mkdir(runPaths.scriptsRoot, { recursive: true }),
   ]);
 
   return runPaths;
@@ -452,6 +469,9 @@ async function readRun(runId) {
     runId,
     taskId: snapshot.task?.taskId || baseMeta.taskId || null,
     testName: baseMeta.testName || "Untitled Test Run",
+    runnerScriptName: baseMeta.runnerScriptName || null,
+    runnerScriptPath: baseMeta.runnerScriptPath || null,
+    taskPlanPath: baseMeta.taskPlanPath || null,
     taskType: baseMeta.taskType || snapshot.task?.taskType || "unknown",
     status: snapshot.status,
     active: isActiveRun,
@@ -477,10 +497,12 @@ async function readRun(runId) {
       sharedRoot: SHARED_ROOT,
       runRoot: runPaths.runRoot,
       taskPath: runPaths.taskPath,
+      taskPlanPath: runPaths.taskPlanPath,
       resultPath: runPaths.resultPath,
       logsRoot: runPaths.logsRoot,
       screenshotsRoot: runPaths.screenshotsRoot,
       artifactsRoot: runPaths.artifactsRoot,
+      scriptsRoot: runPaths.scriptsRoot,
     },
   };
 }
@@ -601,6 +623,8 @@ async function archiveQueuedRun(run) {
 }
 
 async function createRunRecord(options = {}) {
+  const preparedRunner = prepareRunnerScript(options);
+
   await ensureBaseLayout();
   await pruneCompletedRuns();
 
@@ -628,17 +652,20 @@ async function createRunRecord(options = {}) {
   const task = {
     runId,
     taskId,
-    taskType: options.taskType || "notepad_lifecycle",
+    taskType: preparedRunner ? "task_sequence" : options.taskType || "notepad_lifecycle",
     status: "queued",
     createdUtc,
-    payload: options.payload || buildDefaultTaskPayload(runId, options),
+    payload: preparedRunner ? preparedRunner.plan : options.payload || buildDefaultTaskPayload(runId, options),
   };
+
+  const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
 
   const meta = {
     runId,
     taskId,
     testName: options.testName || "Untitled Test Run",
-    runnerScriptName: options.runnerScriptName || null,
+    runnerScriptName: preparedRunner?.fileName || options.runnerScriptName || null, runnerScriptPath,
+    taskPlanPath: preparedRunner ? "task-plan.json" : null,
     configFileName: options.configFileName || null,
     taskType: task.taskType,
     status: "queued",
@@ -650,11 +677,24 @@ async function createRunRecord(options = {}) {
 
   const currentRunPointer = buildCurrentRunPointer(runId, createdUtc);
 
-  await Promise.all([
+  const pendingWrites = [
     writeJson(runPaths.metaPath, meta),
     writeJson(runPaths.taskPath, task),
     writeJson(CURRENT_RUN_POINTER_PATH, currentRunPointer),
-  ]);
+  ];
+
+  if (preparedRunner) {
+    pendingWrites.push(
+      fs.writeFile(
+        path.join(runPaths.scriptsRoot, preparedRunner.fileName),
+        preparedRunner.content,
+        "utf8"
+      ),
+      writeJson(runPaths.taskPlanPath, preparedRunner.plan)
+    );
+  }
+
+  await Promise.all(pendingWrites);
 
   await appendRunLog(runId, "Run created and queued in the active channel.");
 
