@@ -4,9 +4,8 @@ import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 
 const Name_Task = "Name your Task Function";
-//const Task = ["Type:", "Click"];
 const Default_Task = [];
-const Task_Options = ["Type:", "Click", "Drag", "Drop"];
+const Task_Options = ["Type:", "Click"];
 
 function  TaskSelect({value, tasks, onChange}) {
 return (
@@ -21,9 +20,11 @@ return (
 );
 }
 
-function CreateTask({taskDescription, tasks, onChangeText, onChangeTask, onSave, onCancel}) {
+function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel}) {
+    const isClick = taskDescription.task === "Click";
     return (
         <div className="create-task-container">
+            <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
             <input
                 type="text"
                 placeholder="Enter task"
@@ -35,7 +36,19 @@ function CreateTask({taskDescription, tasks, onChangeText, onChangeTask, onSave,
                 }}
                 className="task-input"
             />
-            <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
+            {isClick && (
+                <div className="click-fields">
+                    <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
+                    onChange={(e) => onChangeDetail("x", e.target.value) } />
+                    <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
+                    onChange={(e) => onChangeDetail("y", e.target.value) } />
+                    <input type="number" placeholder="Click count" className="click-count-input" value={taskDescription.details?.count ?? ""}
+                    onChange={(e) => onChangeDetail("count",e.target.value)}/>
+                </div>
+            )}
+
+
+
             <div className="button-container">
                 <button onClick={onSave} className="save-button">Save</button>
                 <button onClick={onCancel} className="cancel-button">Cancel</button>
@@ -63,7 +76,7 @@ export default function CreateATask() {
 
     function opendEditTask(t) {
         if(locked)  return;
-        setTaskDescription({ mode: "edit", text: t.text, task: t.task, id: t.id });
+        setTaskDescription({ mode: "edit", text: t.text, task: t.task, id: t.id, details: t.details || {} });
     }
 
     function cancelTask() {
@@ -73,11 +86,11 @@ export default function CreateATask() {
     function saveTask() {
         if(!taskDescription) return;
         if(taskDescription.mode === "new") {
-            const newTask = { id: nextID, text: taskDescription.text, task: taskDescription.task };
+            const newTask = { id: nextID, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} };
             setDefTask([...defTask, newTask]);
             setNextID(nextID + 1);
         } else if(taskDescription.mode === "edit") {
-            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task } : t));
+            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} } : t));
         }
         setTaskDescription(null);  
     }
@@ -93,11 +106,44 @@ export default function CreateATask() {
         setLocked(true);
         setTaskDescription(null);
         setConfirmOn(true);
+        exportJson();
+        
     }
 
     function handleUnlock(){
         setLocked(false);
         setConfirmOn(null);
+    }
+
+
+
+
+    function updateDetail(key, value) {
+        setDefTask(defTask.map(t => {
+            if (t.details && t.details[key] !== undefined) {
+                return { ...t, details: { ...t.details, [key]: value } };
+
+            }
+            return t;
+        }));
+    }   
+
+    function onChangeDetail(key, value) {
+        setTaskDescription({ ...taskDescription, details: { ...taskDescription.details, [key]: value } });
+    }
+
+
+    function exportJson() {
+        const dataStr = JSON.stringify(defTask, null, 2);
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const taskListName = newTaskName.trim() 
+            ? newTaskName.trim().replace(/[^a-zA-Z0-9]+/gi, "_").toLowerCase() : "task_list";
+        link.href = url;
+        link.download = `${taskListName}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
     }
 
     return (
@@ -139,17 +185,28 @@ export default function CreateATask() {
                                 taskDescription && taskDescription.mode === "edit" && taskDescription.id === t.id ? (
                                     <CreateTask
                                         key={t.id}
-                                        taskDescription={taskDescription}
                                         tasks={tasks}
+                                        taskDescription={taskDescription}
+
                                         onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
                                         onChangeTask={(v) => setTaskDescription({ ...taskDescription, task:v })}
+                                        onChangeDetail={onChangeDetail}
                                         onSave={saveTask}
                                         onCancel={cancelTask} 
                                     />
                                 ) : (
                                     <div key={t.id} className="task-item">
                                         <div>
-                                        <span>{t.text}</span> <span>{t.task}</span>
+                                         <span>{t.task}</span><span>{t.text}</span>
+                                         {t.task === "Click" && t.details && (
+                                            <div>
+                                            <span> (X: {t.details.x})</span>
+                                            <br />
+                                            <span> (Y: {t.details.y})</span>
+                                            <br />
+                                            <span> (Count: {t.details.count})</span>
+                                            </div>
+                                            )}
                                         </div>
                                     <div>
                                     <button onClick={() => opendEditTask(t)} disabled={locked} className="edit-button">Edit</button>
@@ -166,6 +223,7 @@ export default function CreateATask() {
                                     tasks={tasks}
                                     onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
                                     onChangeTask={(v) => setTaskDescription({ ...taskDescription, task:v })}
+                                    onChangeDetail={onChangeDetail}
                                     onSave={saveTask}   
                                     onCancel={cancelTask}
                                 />
