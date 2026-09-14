@@ -1,0 +1,284 @@
+{
+  "_comment": "VM User Test 1: enter 25 unique first/last names while alternating classic Notepad's Font dialog style between Regular and Italic. Classic Notepad is plain text, so the style is an editor-wide display setting, not saved per line.",
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "name": "VM User Test 1 - Alternating Font Dialog Styles",
+  "app": {
+    "name": "notepad",
+    "executable": "notepad.exe",
+    "fileName": "vm-user-test-1-names.txt",
+    "uniqueFilePerRun": true,
+    "resetFile": true,
+    "windowBounds": {
+      "x": 100,
+      "y": 100,
+      "width": 900,
+      "height": 650
+    }
+  },
+  "settings": {
+    "stepDelayMs": 125,
+    "timeoutSeconds": 20,
+    "typingDelayMs": 18
+  },
+  "tasks": [
+    {
+      "id": "focus-editor",
+      "action": "CLICK",
+      "target": "editor",
+      "xPercent": 8,
+      "yPercent": 8,
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "style-01-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-01",
+      "action": "TYPE",
+      "text": "01. Olivia Carter\n"
+    },
+    {
+      "id": "style-02-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-02",
+      "action": "TYPE",
+      "text": "02. Liam Bennett\n"
+    },
+    {
+      "id": "style-03-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-03",
+      "action": "TYPE",
+      "text": "03. Ava Thompson\n"
+    },
+    {
+      "id": "style-04-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-04",
+      "action": "TYPE",
+      "text": "04. Noah Mitchell\n"
+    },
+    {
+      "id": "style-05-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-05",
+      "action": "TYPE",
+      "text": "05. Sophia Ramirez\n"
+    },
+    {
+      "id": "style-06-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-06",
+      "action": "TYPE",
+      "text": "06. Ethan Walker\n"
+    },
+    {
+      "id": "style-07-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-07",
+      "action": "TYPE",
+      "text": "07. Mia Foster\n"
+    },
+    {
+      "id": "style-08-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-08",
+      "action": "TYPE",
+      "text": "08. Lucas Morgan\n"
+    },
+    {
+      "id": "style-09-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-09",
+      "action": "TYPE",
+      "text": "09. Charlotte Hayes\n"
+    },
+    {
+      "id": "style-10-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-10",
+      "action": "TYPE",
+      "text": "10. Benjamin Reed\n"
+    },
+    {
+      "id": "style-11-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-11",
+      "action": "TYPE",
+      "text": "11. Amelia Brooks\n"
+    },
+    {
+      "id": "style-12-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-12",
+      "action": "TYPE",
+      "text": "12. Henry Collins\n"
+    },
+    {
+      "id": "style-13-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-13",
+      "action": "TYPE",
+      "text": "13. Harper Bailey\n"
+    },
+    {
+      "id": "style-14-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-14",
+      "action": "TYPE",
+      "text": "14. Alexander Price\n"
+    },
+    {
+      "id": "style-15-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-15",
+      "action": "TYPE",
+      "text": "15. Evelyn Turner\n"
+    },
+    {
+      "id": "style-16-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-16",
+      "action": "TYPE",
+      "text": "16. Daniel Cooper\n"
+    },
+    {
+      "id": "style-17-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-17",
+      "action": "TYPE",
+      "text": "17. Abigail Murphy\n"
+    },
+    {
+      "id": "style-18-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-18",
+      "action": "TYPE",
+      "text": "18. Samuel Rivera\n"
+    },
+    {
+      "id": "style-19-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-19",
+      "action": "TYPE",
+      "text": "19. Emily Watson\n"
+    },
+    {
+      "id": "style-20-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-20",
+      "action": "TYPE",
+      "text": "20. Joseph Parker\n"
+    },
+    {
+      "id": "style-21-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-21",
+      "action": "TYPE",
+      "text": "21. Ella Simmons\n"
+    },
+    {
+      "id": "style-22-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-22",
+      "action": "TYPE",
+      "text": "22. David Hughes\n"
+    },
+    {
+      "id": "style-23-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-23",
+      "action": "TYPE",
+      "text": "23. Grace Peterson\n"
+    },
+    {
+      "id": "style-24-italic",
+      "action": "SET_FONT_STYLE",
+      "style": "Italic"
+    },
+    {
+      "id": "name-24",
+      "action": "TYPE",
+      "text": "24. Matthew Sanders\n"
+    },
+    {
+      "id": "style-25-regular",
+      "action": "SET_FONT_STYLE",
+      "style": "Regular"
+    },
+    {
+      "id": "name-25",
+      "action": "TYPE",
+      "text": "25. Lily Coleman\n"
+    }
+  ]
+}

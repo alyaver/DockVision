@@ -14,6 +14,7 @@ The current implementation provides a React frontend, an Express backend, and a 
 ## Overview
 
 
+
 The goal of DockVision is to provide a simple interface for starting and monitoring automated test runs without requiring the frontend to interact with Docker or system-level tooling directly.
 
 
@@ -109,6 +110,7 @@ Cleanup rule:
 
 ### Container Layer
 - Docker Desktop
+
 
 
 ---

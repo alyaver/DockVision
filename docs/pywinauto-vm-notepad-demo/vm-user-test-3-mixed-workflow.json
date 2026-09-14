@@ -1,0 +1,153 @@
+{
+  "_comment": "VM User Test 3: a mixed classic Notepad workflow using only controls present in the Windows VM: File/Edit/Format/View/Help, editor typing, and editor right-click.",
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "name": "VM User Test 3 - Classic Notepad Mixed Workflow",
+  "app": {
+    "name": "notepad",
+    "executable": "notepad.exe",
+    "fileName": "vm-user-test-3-mixed-workflow.txt",
+    "uniqueFilePerRun": true,
+    "resetFile": true,
+    "windowBounds": {
+      "x": 100,
+      "y": 100,
+      "width": 900,
+      "height": 650
+    }
+  },
+  "settings": {
+    "stepDelayMs": 225,
+    "timeoutSeconds": 20,
+    "typingDelayMs": 22
+  },
+  "tasks": [
+    {
+      "id": "open-file-menu",
+      "action": "CLICK",
+      "target": "fileMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "show-file-menu",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "close-file-menu",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "focus-editor",
+      "action": "CLICK",
+      "target": "editor",
+      "xPercent": 10,
+      "yPercent": 10,
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "type-header",
+      "action": "TYPE",
+      "text": "DockVision VM classic Notepad workflow\n\n"
+    },
+    {
+      "id": "open-format-menu",
+      "action": "CLICK",
+      "target": "formatMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "show-format-menu",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "close-format-menu",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "type-format-note",
+      "action": "TYPE",
+      "text": "The VM exposes Format as a menu item, not Bold or Italic toolbar buttons.\n"
+    },
+    {
+      "id": "open-edit-menu",
+      "action": "CLICK",
+      "target": "editMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "show-edit-menu",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "close-edit-menu",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "open-view-menu",
+      "action": "CLICK",
+      "target": "viewMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "show-view-menu",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "close-view-menu",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "open-help-menu",
+      "action": "CLICK",
+      "target": "helpMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "show-help-menu",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "close-help-menu",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "open-editor-context-menu",
+      "action": "CLICK",
+      "target": "editor",
+      "xPercent": 75,
+      "yPercent": 60,
+      "button": "right",
+      "clickCount": 1
+    },
+    {
+      "id": "show-context-menu",
+      "action": "WAIT",
+      "delayMs": 900
+    },
+    {
+      "id": "close-context-menu",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "type-summary",
+      "action": "TYPE",
+      "text": "\nClassic VM Notepad menu clicks, typing, and right-click all completed from one task schedule."
+    }
+  ]
+}

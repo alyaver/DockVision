@@ -27,6 +27,7 @@ const RUNTIME_FILE_NAMES = [
   "DockVisionAgent.ps1",
   "agent.py",
   "dockvision_notepad_task.py",
+  "ensure-python-runtime.ps1",
   "install-agent.bat",
 ];
 

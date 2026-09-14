@@ -2,7 +2,7 @@
 """
 DockVision guest-side Notepad proof task.
 
-This is the preferred Python path for the spike when Python and pywinauto are
+This is the preferred Python path for Python and pywinauto are
 available inside the Windows guest. The PowerShell agent falls back to its own
 Windows UI automation if this script or dependency is not available yet.
 """
