@@ -757,6 +757,81 @@ async function createRunRecord(options = {}) {
     paths: runPaths,
   };
 }
+//placeholder for entry point that will accept and ordered steps array from the user when they submit the steps
+async function createRunRecord2(options = {}) {
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const activeRun = await getBlockingActiveRun();
+  if (activeRun) {
+    if (activeRun.status === "queued") {
+      await archiveQueuedRun(activeRun);
+    } else {
+      const error = new Error(
+        `Run '${activeRun.runId}' is still ${activeRun.status}. Wait for it to finish before starting a new one.`
+      );
+      error.code = "RUN_ACTIVE";
+      error.activeRunId = activeRun.runId;
+      throw error;
+    }
+  }
+
+  await clearActiveChannel();
+
+  const runId = buildRunId();
+  const taskId = `${runId}-task`;
+  const createdUtc = nowIso();
+  const runPaths = await ensureRunLayout(runId);
+
+  const hasSteps = Array.isArray(options.steps);
+  const taskType = options.taskType || (hasSteps ? "type_sequence" : "notepad_lifecycle");
+  const payload =
+    options.payload ||
+    (hasSteps
+      ? { steps: options.steps }
+      : buildDefaultTaskPayload(runId, options));
+      
+  const task = {
+    runId,
+    taskId,
+    taskType,
+    status: "queued",
+    createdUtc,
+    payload,
+  };
+
+  const meta = {
+    runId,
+    taskId,
+    testName: options.testName || "Untitled Test Run",
+    runnerScriptName: options.runnerScriptName || null,
+    configFileName: options.configFileName || null,
+    taskType: task.taskType,
+    status: "queued",
+    createdUtc,
+    updatedUtc: createdUtc,
+    containerId: null,
+    cleanupPolicy: describeCleanupPolicy(),
+  };
+
+  const currentRunPointer = buildCurrentRunPointer(runId, createdUtc);
+
+  await Promise.all([
+    writeJson(runPaths.metaPath, meta),
+    writeJson(runPaths.taskPath, task),
+    writeJson(CURRENT_RUN_POINTER_PATH, currentRunPointer),
+  ]);
+
+  await appendRunLog(runId, "Run created and queued in the active channel.");
+
+  return {
+    runId,
+    taskId,
+    meta,
+    task,
+    paths: runPaths,
+  };
+}
 
 async function attachContainerId(runId, containerId) {
   const nextMeta = await updateMetaFile(runId, {
@@ -865,6 +940,7 @@ module.exports = {
   SHARED_ROOT,
   buildContainerName,
   createRunRecord,
+  createRunRecord2,
   attachContainerId,
   markRunLaunchFailure,
   readRun,

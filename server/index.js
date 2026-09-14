@@ -21,6 +21,7 @@ const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const {
   createRunRecord,
+  createRunRecord2,
   attachContainerId,
   markRunLaunchFailure,
   readRun,
@@ -34,6 +35,13 @@ const {
 
 const app = express();
 const PORT = 5000;
+
+// Limit the forgot-password surface in two directions:
+// - many distinct email lookups from one IP (enumeration)
+// - repeated requests for the same email from one IP (spamming)
+const RESET_REQUEST_WINDOW_MINUTES = 15;
+const MAX_UNIQUE_EMAILS_PER_IP = 3;
+const MAX_RESET_REQUESTS_PER_EMAIL_PER_IP = 3;
 
 /**
  * Single backend policy:
@@ -184,6 +192,65 @@ app.post("/api/runs/start", handleStartRun);
 // Keep the legacy route alive while older client code and saved workflows
 // still refer to the original smoke-start endpoint name.
 app.post("/api/docker/start-smoke", handleStartRun);
+
+// placeholder function, will accept the tasks array from the WIP create-a-task page
+async function handleStartRun2(req, res) {
+let createdRun = null;
+
+  try {
+    createdRun = await createRunRecord2(req.body ?? {});
+  } catch (error) {
+    if (error.code === "RUN_ACTIVE") {
+      return res.status(409).json({
+        success: false,
+        message: error.message,
+        activeRunId: error.activeRunId,
+      });
+    }
+
+    console.error("RUN CREATION SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create isolated run",
+    });
+  }
+
+  try {
+    const windowsVm = await ensureWindowsVmRunning();
+    const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
+
+    await attachContainerId(createdRun.runId, containerId);
+    const run = await readRun(createdRun.runId);
+
+    return res.json({
+      success: true,
+      message: "Isolated test run started in the Windows VM guest",
+      runId: createdRun.runId,
+      containerId,
+      windowsVm,
+      run,
+    });
+  } catch (error) {
+    try {
+      await markRunLaunchFailure(
+        createdRun.runId,
+        error.message || "Windows VM failed to start for the requested run."
+      );
+    } catch (markError) {
+      console.error("RUN FAILURE MARK ERROR:", markError);
+    }
+
+    console.error("RUN START SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start isolated test run",
+      error: error.message,
+      runId: createdRun.runId,
+    });
+  }
+}
+
+app.post("/api/runs/start2", handleStartRun2);
 
 /**
  * Report the current Docker-backed Windows guest status without creating a run.
@@ -357,9 +424,13 @@ app.get("/api/storage/space", async (req, res) => {
  *   /set-new-password?token=...
  */
 app.post("/api/forgot-password", async (req, res) => {
-  const { email } = req.body ?? {};
+  // Normalize user input before any lookup or rate-limit accounting so the
+  // same address is treated consistently across requests.
+  const rawEmail = req.body?.email;
+  const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
   const genericResponse = () =>
     res.status(200).json({ message: "If that email is registered, a reset link has been sent." });
+
   if (!email) {
     return res.status(400).json({
       message: "Email is required.",
@@ -372,7 +443,53 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 
+  // Prefer the forwarded IP when present so deployments behind a proxy can
+  // still rate limit by client origin.
+  const ipAddress =
+    req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
+    req.socket.remoteAddress ||
+    "unknown";
+
   try {
+    const rateLimitResult = await db.query(
+      `SELECT COUNT(DISTINCT email)::int AS unique_email_count
+       FROM password_reset_request_attempts
+       WHERE ip_address = $1
+         AND requested_at > CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 minute')`,
+      [ipAddress, RESET_REQUEST_WINDOW_MINUTES]
+    );
+
+    const uniqueEmailCount = rateLimitResult.rows[0].unique_email_count;
+
+    const repeatedEmailResult = await db.query(
+      `SELECT COUNT(*)::int AS request_count
+       FROM password_reset_request_attempts
+       WHERE ip_address = $1
+          AND email = $2
+         AND requested_at > CURRENT_TIMESTAMP - ($3::int * INTERVAL '1 minute')`,
+      [ipAddress, email, RESET_REQUEST_WINDOW_MINUTES]
+    );
+
+    const repeatedEmailCount = repeatedEmailResult.rows[0].request_count;
+
+    if (uniqueEmailCount >= MAX_UNIQUE_EMAILS_PER_IP && repeatedEmailCount === 0) {
+      return res.status(429).json({
+        message: "Please wait a few minutes before trying again.",
+      });
+    }
+
+    if (repeatedEmailCount >= MAX_RESET_REQUESTS_PER_EMAIL_PER_IP) {
+      return res.status(429).json({
+        message: "Please wait a few minutes before trying again.",
+      });
+    }
+
+    await db.query(
+      `INSERT INTO password_reset_request_attempts (email, ip_address)
+       VALUES ($1, $2)`,
+      [email, ipAddress]
+    );
+
     // TODO: Re-enable DB lookup when forgot-password is fully wired.
     // Example:
     // const result = await db.query("SELECT user_id FROM users WHERE email = $1", [email]);
@@ -382,7 +499,7 @@ app.post("/api/forgot-password", async (req, res) => {
 
    const result = await db.query(
       "SELECT user_id FROM users WHERE email = $1",
-      [email.trim().toLowerCase()]
+      [email]
     );
 
     if (result.rows.length === 0) {
@@ -428,22 +545,6 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /**
  * Defensive guard:
