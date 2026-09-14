@@ -56,8 +56,8 @@ function readTestScript({ fileName, content }) {
 
     seenIds.add(step.id); // mark this id as seen
 
-    if (step.action === "TYPE") {
-      if (typeof step.text !== "string" || step.text.length === 0) {
+    if (step.type === "Type") {
+      if (typeof step.data !== "string" || step.data.length === 0) {
         throw new TestScriptError(`TYPE step '${step.id}' requires a nonempty text string.`);
       }
     }

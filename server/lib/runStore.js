@@ -41,8 +41,8 @@ function buildRunId() {
 }
 
 function prepareRunnerScript(options) {
-  const content = options.runnerScriptContent;
-  const fileName = path.basename(options.runnerScriptName || "task-plan.json");
+  const content = options.configContent;
+  const fileName = path.basename(options.configFileName || "task-plan.json");
   const plan = readTestScript({fileName, content});
 
   return {
@@ -717,7 +717,7 @@ async function createRunRecord2(options = {}) {
   const runPaths = await ensureRunLayout(runId);
 
   const hasSteps = Array.isArray(options.steps);
-  const taskType = preparedRunner ? "task_sequence" : options.taskType || (hasSteps ? "type_sequence" : "notepad_lifecycle");
+  const taskType = preparedRunner ? "type_sequence" : options.taskType || (hasSteps ? "type_sequence" : "notepad_lifecycle");
   const payload = 
     preparedRunner ? preparedRunner.plan :
     options.payload ||
