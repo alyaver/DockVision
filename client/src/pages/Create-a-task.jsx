@@ -136,7 +136,8 @@ export default function CreateATask() {
 
 
     function exportJson() {
-        const dataStr = JSON.stringify(defTask, null, 2);
+        const stepsStr = JSON.stringify(defTask, null, 2);
+        const dataStr =`"steps": ${stepsStr}`;
         const blob = new Blob([dataStr], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
