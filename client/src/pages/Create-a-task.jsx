@@ -22,9 +22,11 @@ return (
 
 function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel}) {
     const isClick = taskDescription.task === "Click";
+    const isTyped = taskDescription.task === "Type:";
     return (
         <div className="create-task-container">
             <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
+           {isTyped && (
             <input
                 type="text"
                 placeholder="Enter task"
@@ -36,6 +38,8 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                 }}
                 className="task-input"
             />
+            )}
+
             {isClick && (
                 <div className="click-fields">
                     <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
