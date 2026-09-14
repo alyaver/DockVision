@@ -44,10 +44,20 @@ const Confirmation = () => {
 
   const testName =
     location.state?.testName || storedRun?.testName || "Untitled Test Run";
+  // Prefer route state from Dashboard, then fall back to sessionStorage so a
+  // refresh keeps the selected runner source available for preview and submit.
   const runnerScriptName =
     location.state?.runnerScriptName ||
     storedRun?.runnerScriptName ||
     "No runner script uploaded";
+  const runnerScriptContent =
+    location.state?.runnerScriptContent ||
+    storedRun?.runnerScriptContent ||
+    "No runner script content available";
+  const runnerScriptLanguage =
+    location.state?.runnerScriptLanguage ||
+    storedRun?.runnerScriptLanguage ||
+    "powershell";
   const configFileName =
     location.state?.configFileName ||
     storedRun?.configFileName ||
@@ -67,20 +77,27 @@ const Confirmation = () => {
     try {
       /**
        * Start the run through the shared API helper so this page stays aligned
-       * with backend launch changes, including the Windows guest startup path.
+       * with backend launch changes. The runner content is included so the
+       * backend can persist and execute the selected .py/.ps1 runner.
        */
       const data = await startTestRun({
         testName,
         runnerScriptName,
+        runnerScriptContent,
+        runnerScriptLanguage,
         configFileName,
         configContent,
       });
 
+      // Keep the submitted runner source next to the returned run identifiers
+      // so the Running Test flow survives refreshes during local development.
       writeStoredRun({
         runId: data.runId || null,
         containerId: data.containerId || null,
         testName,
         runnerScriptName,
+        runnerScriptContent,
+        runnerScriptLanguage,
         configFileName,
         configContent,
       });
@@ -112,9 +129,13 @@ const Confirmation = () => {
           </p>
 
           <div className="Card-Content">
-            <DisplayCard title="Runner Script" content={runnerScriptName} />
+            {/* Preview the script body, not just the filename, before launch. */}
             <DisplayCard
-              title={`Config (${configFileName})`}
+              title={`Runner Script (${runnerScriptName})`}
+              content={runnerScriptContent}
+            />
+            <DisplayCard
+              title={`Task Plan (${configFileName})`}
               content={configContent}
             />
           </div>

@@ -9,6 +9,7 @@ mkdir C:\DockVision\agent 2>nul
 
 set "AGENT_SOURCE="
 set "PYTHON_SOURCE="
+set "PYTHON_RUNTIME_SOURCE="
 
 rem Prefer the live shared folder, then fall back to guest-local shared paths
 rem or the OEM image if the host share is not currently available.
@@ -34,6 +35,22 @@ if exist "\\host.lan\Data\dockvision_notepad_task.py" (
 
 if defined PYTHON_SOURCE (
   copy /Y "%PYTHON_SOURCE%" "C:\DockVision\agent\dockvision_notepad_task.py" >nul
+)
+
+if exist "\\host.lan\Data\ensure-python-runtime.ps1" (
+  set "PYTHON_RUNTIME_SOURCE=\\host.lan\Data\ensure-python-runtime.ps1"
+) else if exist "C:\Users\Docker\Desktop\Shared\ensure-python-runtime.ps1" (
+  set "PYTHON_RUNTIME_SOURCE=C:\Users\Docker\Desktop\Shared\ensure-python-runtime.ps1"
+) else if exist "C:\OEM\ensure-python-runtime.ps1" (
+  set "PYTHON_RUNTIME_SOURCE=C:\OEM\ensure-python-runtime.ps1"
+)
+
+if defined PYTHON_RUNTIME_SOURCE (
+  copy /Y "%PYTHON_RUNTIME_SOURCE%" "C:\DockVision\agent\ensure-python-runtime.ps1" >nul
+  powershell -NoProfile -ExecutionPolicy Bypass -File "C:\DockVision\agent\ensure-python-runtime.ps1" -SharedRoot "%~dp0."
+  if errorlevel 1 (
+    echo DockVision Python runtime setup failed. Check agent-install-log.txt for details.
+  )
 )
 
 rem Stop the scheduled task and any already-running agent process so the guest

@@ -16,7 +16,7 @@ if (-not $createdNew) {
 
 # Agent identity and heartbeat settings
 $AgentName = "DockVision Guest Agent"
-$AgentVersion = "0.4.0"
+$AgentVersion = "0.5.2"
 $HeartbeatIntervalSeconds = 15
 
 function Get-UtcTimestamp {
@@ -154,6 +154,33 @@ function ConvertTo-RelativeRunPath {
     return $targetPath.Substring($runRoot.Length).TrimStart('\') -replace '\\', '/'
 }
 
+function Resolve-RunRelativePath {
+    param(
+        [hashtable]$RunContext,
+        [string]$PathValue
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $null
+    }
+
+    $candidate = if ([System.IO.Path]::IsPathRooted($PathValue)) {
+        $PathValue
+    }
+    else {
+        Join-Path $RunContext.runRoot $PathValue
+    }
+
+    $runRoot = [System.IO.Path]::GetFullPath($RunContext.runRoot)
+    $resolvedPath = [System.IO.Path]::GetFullPath($candidate)
+
+    if (-not $resolvedPath.StartsWith($runRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Resolved path is outside the active run folder: $PathValue"
+    }
+
+    return $resolvedPath
+}
+
 function Write-InstallLog {
     param(
         [string]$SharedRoot,
@@ -283,6 +310,24 @@ function Write-ResultObject {
     }
 
     $ResultObject | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 -Path $RunContext.resultPath
+}
+
+function ConvertFrom-RunnerOutputJson {
+    param([string]$OutputText)
+
+    if ([string]::IsNullOrWhiteSpace($OutputText)) {
+        throw "Runner produced no output."
+    }
+
+    $startIndex = $OutputText.IndexOf("{")
+    $endIndex = $OutputText.LastIndexOf("}")
+
+    if ($startIndex -lt 0 -or $endIndex -lt $startIndex) {
+        throw "Runner output did not contain a JSON object. Output: $OutputText"
+    }
+
+    $jsonText = $OutputText.Substring($startIndex, $endIndex - $startIndex + 1)
+    return $jsonText | ConvertFrom-Json
 }
 
 function Get-TaskPayloadValue {
@@ -435,15 +480,170 @@ function Capture-ScreenArtifact {
     }
 }
 
+function Wait-ForFileArtifact {
+    param(
+        [string]$Path,
+        [int]$TimeoutSeconds = 10,
+        [long]$MinimumLength = 1
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path -LiteralPath $Path) {
+            try {
+                $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+                if ($file.Length -ge $MinimumLength) {
+                    return $true
+                }
+            }
+            catch {
+                # Keep polling until the file becomes readable.
+            }
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    return $false
+}
+
+function Wait-ForProcessExit {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [int]$TimeoutSeconds = 5
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            return $true
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    $Process.Refresh()
+    return $Process.HasExited
+}
+
+function Stop-ProcessIfRunning {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [int]$TimeoutSeconds = 5
+    )
+
+    if (-not $Process) {
+        return $true
+    }
+
+    try {
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            return $true
+        }
+    }
+    catch {
+        return $true
+    }
+
+    Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+    return Wait-ForProcessExit -Process $Process -TimeoutSeconds $TimeoutSeconds
+}
+
+function Resolve-PythonExecutable {
+    param(
+        [string]$Command,
+        [string[]]$Arguments = @()
+    )
+
+    try {
+        $output = & $Command @Arguments -c "import sys; print(sys.executable)" 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $output) {
+            return $null
+        }
+
+        $pythonPath = [string](@($output)[0])
+        $pythonPath = $pythonPath.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($pythonPath) -and (Test-Path -LiteralPath $pythonPath)) {
+            return (Resolve-Path -LiteralPath $pythonPath).Path
+        }
+    }
+    catch {
+        return $null
+    }
+
+    return $null
+}
+
 function Find-PythonCommand {
-    foreach ($name in @("python.exe", "python")) {
-        $command = Get-Command $name -ErrorAction SilentlyContinue
-        if ($command) {
-            return $command.Source
+    # Confirm that the candidate can execute Python code instead of only checking
+    # whether a command shim or Windows app alias exists.
+    foreach ($candidate in @(
+        @{ Command = "python.exe"; Arguments = @() },
+        @{ Command = "python"; Arguments = @() },
+        @{ Command = "py.exe"; Arguments = @("-3") },
+        @{ Command = "py"; Arguments = @("-3") }
+    )) {
+        $pythonPath = Resolve-PythonExecutable -Command $candidate.Command -Arguments $candidate.Arguments
+        if ($pythonPath) {
+            return $pythonPath
+        }
+    }
+
+    foreach ($root in @(
+        "C:\DockVision\Python*",
+        "$env:ProgramFiles\Python*",
+        "$env:LocalAppData\Programs\Python\Python*",
+        "C:\Python*"
+    )) {
+        $directories = Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending
+
+        foreach ($directory in $directories) {
+            $pythonPath = Resolve-PythonExecutable -Command (Join-Path $directory.FullName "python.exe")
+            if ($pythonPath) {
+                return $pythonPath
+            }
         }
     }
 
     return $null
+}
+
+function Add-PythonRuntimePaths {
+    param([string]$PythonPath)
+
+    if ([string]::IsNullOrWhiteSpace($PythonPath) -or -not (Test-Path -LiteralPath $PythonPath)) {
+        return
+    }
+
+    $pythonRoot = Split-Path -Parent $PythonPath
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $candidates.Add($pythonRoot)
+    $candidates.Add((Join-Path $pythonRoot "Scripts"))
+
+    try {
+        $sitePackagesOutput = & $PythonPath -c "import site; print(site.getsitepackages()[0])" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $sitePackagesOutput) {
+            $sitePackages = ([string](@($sitePackagesOutput)[0])).Trim()
+            $candidates.Add($sitePackages)
+            $candidates.Add((Join-Path $sitePackages "pywin32_system32"))
+        }
+    }
+    catch {
+        # The run can still continue; failed imports will surface in the runner output.
+    }
+
+    foreach ($part in ($env:Path -split ";")) {
+        if (-not [string]::IsNullOrWhiteSpace($part)) {
+            $candidates.Add($part)
+        }
+    }
+
+    $env:Path = ($candidates |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) } |
+        Select-Object -Unique) -join ";"
 }
 
 function Invoke-PythonNotepadTask {
@@ -462,6 +662,8 @@ function Invoke-PythonNotepadTask {
     if (-not $pythonPath) {
         throw "Python is not available inside the Windows guest."
     }
+
+    Add-PythonRuntimePaths -PythonPath $pythonPath
 
     $payloadFile = Join-Path $env:TEMP "dockvision-$TaskId-payload.json"
     if ($Task.PSObject.Properties.Name -contains "payload" -and $null -ne $Task.payload) {
@@ -482,6 +684,84 @@ function Invoke-PythonNotepadTask {
     return $outputText | ConvertFrom-Json
 }
 
+function Invoke-UploadedScriptRunnerTask {
+    param(
+        [hashtable]$RunContext,
+        [object]$Task,
+        [string]$TaskId
+    )
+
+    $language = [string](Get-TaskPayloadValue -Task $Task -Name "runnerScriptLanguage" -DefaultValue "")
+    $runnerPathValue = [string](Get-TaskPayloadValue -Task $Task -Name "runnerPath" -DefaultValue "")
+    $configPathValue = [string](Get-TaskPayloadValue -Task $Task -Name "configPath" -DefaultValue "")
+
+    if ([string]::IsNullOrWhiteSpace($runnerPathValue)) {
+        throw "script_runner task requires payload.runnerPath."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($configPathValue)) {
+        throw "script_runner task requires payload.configPath."
+    }
+
+    $runnerPath = Resolve-RunRelativePath -RunContext $RunContext -PathValue $runnerPathValue
+    $configPath = Resolve-RunRelativePath -RunContext $RunContext -PathValue $configPathValue
+
+    if (-not (Test-Path -LiteralPath $runnerPath)) {
+        throw "Uploaded runner was not found at $runnerPath"
+    }
+
+    if (-not (Test-Path -LiteralPath $configPath)) {
+        throw "Uploaded task plan was not found at $configPath"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($language)) {
+        if ($runnerPath.ToLowerInvariant().EndsWith(".py")) {
+            $language = "python"
+        }
+        elseif ($runnerPath.ToLowerInvariant().EndsWith(".ps1")) {
+            $language = "powershell"
+        }
+    }
+
+    Write-RunLog -RunContext $RunContext -Message "Executing uploaded $language runner: $runnerPath"
+
+    if ($language -eq "python") {
+        $pythonPath = Find-PythonCommand
+        if (-not $pythonPath) {
+            throw "Python is not available inside the Windows guest."
+        }
+
+        Add-PythonRuntimePaths -PythonPath $pythonPath
+        $output = & $pythonPath $runnerPath --plan $configPath 2>&1
+    }
+    elseif ($language -eq "powershell") {
+        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runnerPath -ConfigPath $configPath 2>&1
+    }
+    else {
+        throw "Unsupported uploaded runner language '$language'."
+    }
+
+    $exitCode = $LASTEXITCODE
+    $outputText = ($output | Out-String).Trim()
+
+    if ($exitCode -ne 0) {
+        throw "Uploaded runner failed with exit code $exitCode. $outputText"
+    }
+
+    try {
+        $result = ConvertFrom-RunnerOutputJson -OutputText $outputText
+    }
+    catch {
+        throw "Uploaded runner completed but did not return valid JSON. Output: $outputText"
+    }
+
+    if ($result.PSObject.Properties.Name -notcontains "taskId") {
+        $result | Add-Member -NotePropertyName "taskId" -NotePropertyValue $TaskId -Force
+    }
+
+    return $result
+}
+
 function Invoke-PowerShellNotepadTask {
     param(
         [hashtable]$RunContext,
@@ -496,20 +776,20 @@ function Invoke-PowerShellNotepadTask {
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
     $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
     $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
+    $savePath = $null
 
-    $process = Start-Process "notepad.exe" -PassThru
-    $handle = Wait-ForMainWindow -Process $process
-    Focus-Window -WindowHandle $handle
-    Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
-    Start-Sleep -Milliseconds 500
+    if ($saveFile) {
+        Ensure-RunLayout -RunContext $RunContext
+        $fileName = [string](Get-TaskPayloadValue -Task $Task -Name "fileName" -DefaultValue "dockvision-notepad-$TaskId.txt")
+        $savePath = Join-Path $RunContext.artifactsRoot $fileName
+    }
 
     $artifacts = @{}
     $details = @{
         automationBackend = "powershell-sendkeys"
         taskType = $taskType
-        typedCharacterCount = $text.Length
         typingDelayMs = $typingDelayMs
-        processId = $process.Id
+        typedCharacterCount = $text.Length
         saveRequested = $saveFile
         closeRequested = $closeAfter
     }
@@ -518,44 +798,81 @@ function Invoke-PowerShellNotepadTask {
         $details.pythonWarning = $PythonWarning
     }
 
-    if ($captureScreenshot) {
+    $process = if ($savePath) {
+        Start-Process "notepad.exe" -ArgumentList $savePath -PassThru
+    }
+    else {
+        Start-Process "notepad.exe" -PassThru
+    }
+
+    $details.processId = $process.Id
+
+    try {
+        $handle = Wait-ForMainWindow -Process $process
+        Focus-Window -WindowHandle $handle
+        Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
+        Start-Sleep -Milliseconds 500
+
+        if ($captureScreenshot) {
+            try {
+                $artifacts.screenshot = Capture-ScreenArtifact -RunContext $RunContext -TaskId $TaskId
+            }
+            catch {
+                $details.screenshotWarning = $_.Exception.Message
+            }
+        }
+
+        if ($saveFile) {
+            Add-Type -AssemblyName System.Windows.Forms
+            Focus-Window -WindowHandle $handle
+            [System.Windows.Forms.SendKeys]::SendWait("^s")
+            if (-not (Wait-ForFileArtifact -Path $savePath -TimeoutSeconds 10)) {
+                throw "Notepad did not save the requested file within 10 seconds: $savePath"
+            }
+
+            $artifacts.savedFile = ConvertTo-RelativeRunPath -RunContext $RunContext -AbsolutePath $savePath
+            $details.savedFile = $artifacts.savedFile
+            $details.saveVerified = $true
+        }
+
+        if ($closeAfter) {
+            Add-Type -AssemblyName System.Windows.Forms
+            Focus-Window -WindowHandle $handle
+            [System.Windows.Forms.SendKeys]::SendWait("%{F4}")
+            if (Wait-ForProcessExit -Process $process -TimeoutSeconds 5) {
+                $details.closed = $true
+                $details.closedGracefully = $true
+                $details.closeMethod = "alt-f4"
+            }
+            else {
+                $details.closed = Stop-ProcessIfRunning -Process $process -TimeoutSeconds 5
+                $details.closedGracefully = $false
+                $details.closeMethod = "force-stop"
+            }
+
+            if (-not $details.closed) {
+                throw "Notepad did not close after the closeAfter request."
+            }
+        }
+
+        return @{
+            taskId = $TaskId
+            status = "completed"
+            finishedUtc = Get-UtcTimestamp
+            message = "Notepad focused and typed through PowerShell UI automation."
+            artifacts = $artifacts
+            details = $details
+        }
+    }
+    catch {
         try {
-            $artifacts.screenshot = Capture-ScreenArtifact -RunContext $RunContext -TaskId $TaskId
+            Stop-ProcessIfRunning -Process $process -TimeoutSeconds 5 | Out-Null
         }
         catch {
-            $details.screenshotWarning = $_.Exception.Message
+            # Preserve the original failure when cleanup also fails.
         }
-    }
 
-    if ($saveFile) {
-        Ensure-RunLayout -RunContext $RunContext
-        $fileName = [string](Get-TaskPayloadValue -Task $Task -Name "fileName" -DefaultValue "dockvision-notepad-$TaskId.txt")
-        $savePath = Join-Path $RunContext.artifactsRoot $fileName
-
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.SendKeys]::SendWait("^s")
-        Start-Sleep -Milliseconds 800
-        Send-HumanLikeText -Text $savePath -DelayMs 5
-        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-        Start-Sleep -Milliseconds 800
-        $artifacts.savedFile = ConvertTo-RelativeRunPath -RunContext $RunContext -AbsolutePath $savePath
-        $details.savedFile = $artifacts.savedFile
-    }
-
-    if ($closeAfter) {
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.SendKeys]::SendWait("%{F4}")
-        $process.WaitForExit(5000) | Out-Null
-        $details.closed = $process.HasExited
-    }
-
-    return @{
-        taskId = $TaskId
-        status = "completed"
-        finishedUtc = Get-UtcTimestamp
-        message = "Notepad focused and typed through PowerShell UI automation."
-        artifacts = $artifacts
-        details = $details
+        throw
     }
 }
 
@@ -761,6 +1078,11 @@ function Handle-Task {
 
             "notepad_lifecycle" {
                 Invoke-NotepadAutomationTask -SharedRoot $SharedRoot -RunContext $runContext -Task $Task -TaskId $taskId
+            }
+
+            "script_runner" {
+                $result = Invoke-UploadedScriptRunnerTask -RunContext $runContext -Task $Task -TaskId $taskId
+                Write-ResultObject -RunContext $runContext -ResultObject $result
             }
 
             "type_sequence" {

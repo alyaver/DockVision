@@ -1,0 +1,280 @@
+{
+  "_comment": "VM User Test 2: click every classic Notepad menu header in order: File, Edit, Format, View, and Help. Repeat the full menu cycle three times.",
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "name": "VM User Test 2 - Full Menu Cycle",
+  "app": {
+    "name": "notepad",
+    "executable": "notepad.exe",
+    "fileName": "vm-user-test-2-menu-cycle.txt",
+    "uniqueFilePerRun": true,
+    "resetFile": true,
+    "windowBounds": {
+      "x": 100,
+      "y": 100,
+      "width": 900,
+      "height": 650
+    }
+  },
+  "settings": {
+    "stepDelayMs": 250,
+    "timeoutSeconds": 20,
+    "typingDelayMs": 25
+  },
+  "tasks": [
+    {
+      "id": "cycle-1-file",
+      "action": "CLICK",
+      "target": "fileMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-1-file-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-1-file-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-1-edit",
+      "action": "CLICK",
+      "target": "editMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-1-edit-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-1-edit-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-1-format",
+      "action": "CLICK",
+      "target": "formatMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-1-format-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-1-format-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-1-view",
+      "action": "CLICK",
+      "target": "viewMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-1-view-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-1-view-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-1-help",
+      "action": "CLICK",
+      "target": "helpMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-1-help-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-1-help-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-2-file",
+      "action": "CLICK",
+      "target": "fileMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-2-file-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-2-file-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-2-edit",
+      "action": "CLICK",
+      "target": "editMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-2-edit-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-2-edit-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-2-format",
+      "action": "CLICK",
+      "target": "formatMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-2-format-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-2-format-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-2-view",
+      "action": "CLICK",
+      "target": "viewMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-2-view-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-2-view-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-2-help",
+      "action": "CLICK",
+      "target": "helpMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-2-help-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-2-help-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-3-file",
+      "action": "CLICK",
+      "target": "fileMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-3-file-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-3-file-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-3-edit",
+      "action": "CLICK",
+      "target": "editMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-3-edit-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-3-edit-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-3-format",
+      "action": "CLICK",
+      "target": "formatMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-3-format-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-3-format-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-3-view",
+      "action": "CLICK",
+      "target": "viewMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-3-view-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-3-view-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    },
+    {
+      "id": "cycle-3-help",
+      "action": "CLICK",
+      "target": "helpMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "cycle-3-help-wait",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "cycle-3-help-close",
+      "action": "KEY",
+      "keys": "{ESC}"
+    }
+  ]
+}
