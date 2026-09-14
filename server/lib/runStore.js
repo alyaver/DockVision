@@ -57,6 +57,9 @@ function getRunPaths(runId) {
     logsRoot,
     screenshotsRoot,
     artifactsRoot,
+    uploadedRunnerPath: path.join(runRoot, "uploaded-runner.py"),
+    uploadedPowerShellRunnerPath: path.join(runRoot, "uploaded-runner.ps1"),
+    uploadedPlanPath: path.join(runRoot, "uploaded-task-plan.json"),
     metaPath: path.join(runRoot, "meta.json"),
     taskPath: path.join(runRoot, "task.json"),
     resultPath: path.join(runRoot, "result.json"),
@@ -151,6 +154,86 @@ function buildDefaultTaskPayload(runId, options = {}) {
     saveFile: true,
     closeAfter: true,
     fileName: `${runId}-notepad-proof.txt`,
+  };
+}
+
+function getRunnerScriptLanguage(options = {}) {
+  const explicitLanguage = String(options.runnerScriptLanguage || "")
+    .trim()
+    .toLowerCase();
+  const runnerName = String(options.runnerScriptName || "").toLowerCase();
+
+  if (explicitLanguage === "python" || runnerName.endsWith(".py")) {
+    return "python";
+  }
+
+  if (explicitLanguage === "powershell" || runnerName.endsWith(".ps1")) {
+    return "powershell";
+  }
+
+  return "";
+}
+
+function hasUploadedScriptRunner(options = {}) {
+  return Boolean(
+    String(options.runnerScriptContent || "").trim() &&
+      String(options.configContent || "").trim()
+  );
+}
+
+function assertValidUploadedScriptRunner(options = {}) {
+  const language = getRunnerScriptLanguage(options);
+  if (!language) {
+    throw new Error("Uploaded runner must be a supported .py or .ps1 script.");
+  }
+
+  if (!String(options.configFileName || "").toLowerCase().endsWith(".json")) {
+    throw new Error("Uploaded task plan must be a .json file.");
+  }
+
+  try {
+    JSON.parse(String(options.configContent || "").replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`Uploaded task plan is not valid JSON: ${error.message}`);
+  }
+
+  return language;
+}
+
+async function writeUploadedScriptRunnerInputs(runPaths, options = {}) {
+  if (!hasUploadedScriptRunner(options)) {
+    return null;
+  }
+
+  const language = assertValidUploadedScriptRunner(options);
+  const runnerPath =
+    language === "powershell"
+      ? runPaths.uploadedPowerShellRunnerPath
+      : runPaths.uploadedRunnerPath;
+
+  await Promise.all([
+    fs.writeFile(runnerPath, String(options.runnerScriptContent || ""), "utf8"),
+    fs.writeFile(runPaths.uploadedPlanPath, String(options.configContent || ""), "utf8"),
+  ]);
+
+  return {
+    language,
+    runnerPath,
+    planPath: runPaths.uploadedPlanPath,
+    runnerRelativePath: path.relative(runPaths.runRoot, runnerPath).replace(/\\/g, "/"),
+    planRelativePath: path
+      .relative(runPaths.runRoot, runPaths.uploadedPlanPath)
+      .replace(/\\/g, "/"),
+  };
+}
+
+function buildUploadedScriptRunnerPayload(uploadedInputs, options = {}) {
+  return {
+    runnerScriptName: options.runnerScriptName || "uploaded runner",
+    runnerScriptLanguage: uploadedInputs.language,
+    runnerPath: uploadedInputs.runnerRelativePath,
+    configFileName: options.configFileName || "uploaded-task-plan.json",
+    configPath: uploadedInputs.planRelativePath,
   };
 }
 
@@ -624,14 +707,21 @@ async function createRunRecord(options = {}) {
   const taskId = `${runId}-task`;
   const createdUtc = nowIso();
   const runPaths = await ensureRunLayout(runId);
+  const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
+  const taskType =
+    options.taskType || (uploadedInputs ? "script_runner" : "notepad_lifecycle");
 
   const task = {
     runId,
     taskId,
-    taskType: options.taskType || "notepad_lifecycle",
+    taskType,
     status: "queued",
     createdUtc,
-    payload: options.payload || buildDefaultTaskPayload(runId, options),
+    payload:
+      options.payload ||
+      (uploadedInputs
+        ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
+        : buildDefaultTaskPayload(runId, options)),
   };
 
   const meta = {
@@ -640,6 +730,7 @@ async function createRunRecord(options = {}) {
     testName: options.testName || "Untitled Test Run",
     runnerScriptName: options.runnerScriptName || null,
     configFileName: options.configFileName || null,
+    runnerScriptLanguage: uploadedInputs?.language || options.runnerScriptLanguage || null,
     taskType: task.taskType,
     status: "queued",
     createdUtc,

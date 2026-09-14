@@ -27,8 +27,11 @@ const RECENT_RUNS = [
   { id: "e", name: "Test Run E", date: "xx/xx/xxxx" },
 ];
 
-const ALLOWED_CONFIG_EXTENSIONS = [".json", ".yml", ".yaml"];
+// Prototype runner policy: this execution path reads a task-plan JSON plus a
+// Python or PowerShell runner into browser state before API handoff.
+const ALLOWED_CONFIG_EXTENSIONS = [".json"];
 const ALLOWED_RUNNER_EXTENSIONS = [".py", ".ps1"];
+const MAX_RUNNER_SCRIPT_SIZE_BYTES = 256 * 1024;
 const CURRENT_RUN_STORAGE_KEY = "dockvision-current-run";
 
 function readStoredRun() {
@@ -66,6 +69,21 @@ function validateTestName(value) {
   return "";
 }
 
+// Convert the accepted runner filename into the language label used by the
+// future backend/agent script_run contract.
+function getRunnerScriptLanguage(fileName) {
+  const normalizedName = fileName.toLowerCase();
+  if (normalizedName.endsWith(".py")) {
+    return "python";
+  }
+
+  if (normalizedName.endsWith(".ps1")) {
+    return "powershell";
+  }
+
+  return "";
+}
+
 const Dashboard = () => {
   const navigate = useNavigate();
 
@@ -73,7 +91,11 @@ const Dashboard = () => {
   const runnerFileInputRef = useRef(null);
 
   const [testName, setTestName] = useState("");
+  // Runner name is display metadata; runner content is the source the backend
+  // will persist into the isolated run folder before the guest agent executes it.
   const [runnerScriptName, setRunnerScriptName] = useState("");
+  const [runnerScriptContent, setRunnerScriptContent] = useState("");
+  const [runnerScriptLanguage, setRunnerScriptLanguage] = useState("");
   const [configFileName, setConfigFileName] = useState("");
   const [notifications, setNotifications] = useState([]);
   const [user, setUser] = useState(null);
@@ -100,6 +122,16 @@ const Dashboard = () => {
 
     if (storedRun?.runnerScriptName) {
       setRunnerScriptName(storedRun.runnerScriptName);
+    }
+
+    // Rehydrate the uploaded runner source so returning from Confirmation does
+    // not reduce the run setup back to filename-only state.
+    if (storedRun?.runnerScriptContent) {
+      setRunnerScriptContent(storedRun.runnerScriptContent);
+    }
+
+    if (storedRun?.runnerScriptLanguage) {
+      setRunnerScriptLanguage(storedRun.runnerScriptLanguage);
     }
 
     if (storedRun?.configFileName) {
@@ -213,7 +245,11 @@ const Dashboard = () => {
 
   function resetRunForm(showNotification = true) {
     setTestName("");
+    // Clear runner fields together; a script name without source content should
+    // never be treated as runnable.
     setRunnerScriptName("");
+    setRunnerScriptContent("");
+    setRunnerScriptLanguage("");
     setConfigFileName("");
     setIsPreparingRun(false);
     clearStoredRun();
@@ -249,6 +285,8 @@ const Dashboard = () => {
     runnerFileInputRef.current?.click();
   }
 
+  // Read the selected .ps1 into memory. This replaces the old filename-only
+  // upload path and creates the payload Confirmation sends to the backend.
   function handleRunnerFileSelected(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -260,27 +298,89 @@ const Dashboard = () => {
 
     if (!isValidRunner) {
       setRunnerScriptName("");
-      writeStoredRun({ runnerScriptName: "" });
+      setRunnerScriptContent("");
+      setRunnerScriptLanguage("");
+      writeStoredRun({
+        runnerScriptName: "",
+        runnerScriptContent: "",
+        runnerScriptLanguage: "",
+      });
 
       pushNotification(
         "error",
         "Invalid runner script",
-        "Please upload a .py or .ps1 runner script."
+        "Please upload a .py or .ps1 runner script for this prototype."
       );
 
       event.target.value = "";
       return;
     }
 
-    setRunnerScriptName(file.name);
-    writeStoredRun({ runnerScriptName: file.name });
+    // Keep the browser/sessionStorage payload bounded until backend upload
+    // limits are formalized as part of the script_run contract.
+    if (file.size > MAX_RUNNER_SCRIPT_SIZE_BYTES) {
+      setRunnerScriptName("");
+      setRunnerScriptContent("");
+      setRunnerScriptLanguage("");
+      writeStoredRun({
+        runnerScriptName: "",
+        runnerScriptContent: "",
+        runnerScriptLanguage: "",
+      });
 
-    pushNotification(
-      "ready",
-      "Runner selected",
-      `${file.name} is ready for the next step.`
-    );
+      pushNotification(
+        "error",
+        "Runner script too large",
+        "Please upload a .py or .ps1 runner script smaller than 256 KB."
+      );
 
+      event.target.value = "";
+      return;
+    }
+
+    // FileReader lets this prototype move the selected script through the
+    // existing page flow without adding a separate upload endpoint yet.
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const content = typeof reader.result === "string" ? reader.result : "";
+      const language = getRunnerScriptLanguage(file.name);
+
+      setRunnerScriptName(file.name);
+      setRunnerScriptContent(content);
+      setRunnerScriptLanguage(language);
+      writeStoredRun({
+        testName,
+        runnerScriptName: file.name,
+        runnerScriptContent: content,
+        runnerScriptLanguage: language,
+      });
+
+      pushNotification(
+        "ready",
+        "Runner selected",
+        `${file.name} was read and is ready for the next step.`
+      );
+    };
+
+    reader.onerror = () => {
+      setRunnerScriptName("");
+      setRunnerScriptContent("");
+      setRunnerScriptLanguage("");
+      writeStoredRun({
+        runnerScriptName: "",
+        runnerScriptContent: "",
+        runnerScriptLanguage: "",
+      });
+
+      pushNotification(
+        "error",
+        "Unable to read runner",
+        "The selected runner script could not be read. Please try again."
+      );
+    };
+
+    reader.readAsText(file);
     event.target.value = "";
   }
 
@@ -300,7 +400,7 @@ const Dashboard = () => {
       pushNotification(
         "error",
         "Invalid config file",
-        `${file.name} is not a supported config file. Please upload .json, .yml, or .yaml.`
+        `${file.name} is not a supported task plan. Please upload a .json file.`
       );
 
       event.target.value = "";
@@ -321,7 +421,7 @@ const Dashboard = () => {
 
       pushNotification(
         "ready",
-        "Config selected",
+        "Task plan selected",
         `${file.name} is ready for the next step.`
       );
     };
@@ -341,12 +441,16 @@ const Dashboard = () => {
     event.target.value = "";
   }
 
+  // Start-run validation now requires both the filename and the readable source
+  // body because the backend needs actual script content to execute later.
   function handleStartRun() {
     const testNameError = validateTestName(testName);
     const runnerError = !runnerScriptName
       ? "Runner Script is required."
+      : !runnerScriptContent
+      ? "Runner Script content could not be read."
       : "";
-    const configError = !configFileName ? "Config File required." : "";
+    const configError = !configFileName ? "Task Plan JSON required." : "";
 
     if (testNameError) {
       pushNotification("error", "Invalid test name", testNameError);
@@ -377,9 +481,13 @@ const Dashboard = () => {
 
     setIsPreparingRun(true);
 
+    // Persist and pass the same runner source to Confirmation so preview and
+    // submit operate on the exact script selected on the Dashboard.
     writeStoredRun({
       testName: testName.trim(),
       runnerScriptName,
+      runnerScriptContent,
+      runnerScriptLanguage,
       configFileName,
       configContent,
     });
@@ -388,6 +496,8 @@ const Dashboard = () => {
       state: {
         testName: testName.trim(),
         runnerScriptName,
+        runnerScriptContent,
+        runnerScriptLanguage,
         configFileName,
         configContent,
       },
@@ -397,8 +507,13 @@ const Dashboard = () => {
   }
 
   const testNameError = validateTestName(testName);
-  const runnerError = !runnerScriptName ? "Runner Script is required." : "";
-  const configError = !configFileName ? "Config File required." : "";
+  // Mirror handleStartRun validation so inline errors match the launch gate.
+  const runnerError = !runnerScriptName
+    ? "Runner Script is required."
+    : !runnerScriptContent
+    ? "Runner Script content could not be read."
+    : "";
+  const configError = !configFileName ? "Task Plan JSON required." : "";
   // Keep the launch gate focused on host prerequisites. The backend is allowed
   // to cold-start the Windows guest during run creation if it is not up yet.
   const isSystemReady =
@@ -467,14 +582,14 @@ const Dashboard = () => {
                 >
                   <UploadIcon />{" "}
                   {configFileName
-                    ? `Replace Config (${configFileName})`
-                    : "Upload Config"}
+                    ? `Replace Task Plan (${configFileName})`
+                    : "Upload Task Plan (.json)"}
                 </button>
 
                 <input
                   ref={configFileInputRef}
                   type="file"
-                  accept=".json,.yml,.yaml"
+                  accept=".json"
                   onChange={handleConfigFileSelected}
                   style={{ display: "none" }}
                 />
