@@ -516,6 +516,8 @@ const Dashboard = () => {
               >
                 <RunIcon /> {isPreparingRun ? "Preparing..." : "Start Test Run"}
               </button>
+
+              <p className="nav-to-generate-page">Don't have a json file and would like to generate one? Generate one <a href="/create-a-task">here</a>.</p>
             </div>
 
             {!readiness.checking && !isSystemReady && (
