@@ -5,7 +5,7 @@ import Navigation from "../components/Navigation";
 
 const Name_Task = "Name your Task Function";
 const Default_Task = [];
-const Task_Options = ["Type:", "Click"];
+const Task_Options = ["TYPE", "CLICK"];
 
 function  TaskSelect({value, tasks, onChange}) {
 return (
@@ -21,8 +21,8 @@ return (
 }
 
 function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel}) {
-    const isClick = taskDescription.task === "Click";
-    const isTyped = taskDescription.task === "Type:";
+    const isClick = taskDescription.task === "CLICK";
+    const isTyped = taskDescription.task === "TYPE";
     return (
         <div className="create-task-container">
             <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
@@ -62,7 +62,7 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
 
 export default function CreateATask() {
     const navigate = useNavigate(); 
-    const [taskDescription, setTaskDescription] = useState({ text: "", task: "" });
+    const [taskDescription, setTaskDescription] = useState({ text: "", action: "" });
     const [tasks, setTasks] = useState(Task_Options);
     const [newTaskName, setNewTaskName] = useState("");
     const [nextID, setNextID] = useState(1);
@@ -73,12 +73,12 @@ export default function CreateATask() {
 
     function openAddTask() {
         if(locked)  return;
-        setTaskDescription({ mode: "new", text: "", task: "" });
+        setTaskDescription({ mode: "new", text: "", action: "" });
     }
 
     function opendEditTask(t) {
         if(locked)  return;
-        setTaskDescription({ mode: "edit", text: t.text, task: t.task, id: t.id, details: t.details || {} });
+        setTaskDescription({ mode: "edit", text: t.text, action: t.task, id: t.id, details: t.details || {} });
     }
 
     function cancelTask() {
@@ -88,11 +88,11 @@ export default function CreateATask() {
     function saveTask() {
         if(!taskDescription) return;
         if(taskDescription.mode === "new") {
-            const newTask = { id: nextID, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} };
+            const newTask = { id: `step-${nextID}`, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} };
             setDefTask([...defTask, newTask]);
             setNextID(nextID + 1);
         } else if(taskDescription.mode === "edit") {
-            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} } : t));
+            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} } : t));
         }
         setTaskDescription(null);  
     }
@@ -179,7 +179,7 @@ export default function CreateATask() {
                         
                         <div className="task-list">
                             {defTask.length === 0 && !taskDescription && (
-                                <div className="no-tasks-message">No tasks available. Click "Add Task" to create one.
+                                <div className="no-tasks-message">No tasks available. CLICK "Add Task" to create one.
                                 </div>
                             )}
 
@@ -200,7 +200,7 @@ export default function CreateATask() {
                                     <div key={t.id} className="task-item">
                                         <div>
                                          <span>{t.task}</span><span>{t.text}</span>
-                                         {t.task === "Click" && t.details && (
+                                         {t.task === "CLICK" && t.details && (
                                             <div>
                                             <span> (X: {t.details.x})</span>
                                             <br />
