@@ -42,8 +42,6 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                     onChange={(e) => onChangeDetail("x", e.target.value) } />
                     <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
                     onChange={(e) => onChangeDetail("y", e.target.value) } />
-                    <input type="number" placeholder="Click count" className="click-count-input" value={taskDescription.details?.count ?? ""}
-                    onChange={(e) => onChangeDetail("count",e.target.value)}/>
                 </div>
             )}
 
@@ -203,8 +201,7 @@ export default function CreateATask() {
                                             <span> (X: {t.details.x})</span>
                                             <br />
                                             <span> (Y: {t.details.y})</span>
-                                            <br />
-                                            <span> (Count: {t.details.count})</span>
+                
                                             </div>
                                             )}
                                         </div>
