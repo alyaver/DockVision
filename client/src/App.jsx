@@ -10,6 +10,7 @@ import Register from "./components/Registration.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import SetNewPassword from "./pages/SetNewPassword.jsx";
 import Login from "./components/LoginContainer.jsx";
+import CreateATask from "./pages/Create-a-task.jsx";
 
 /**
  * Central router.
@@ -36,6 +37,7 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/set-new-password" element={<SetNewPassword />} />
         <Route path="/reset-password" element={<SetNewPassword />} />
+        <Route path="/create-a-task" element={<CreateATask />} />
       </Routes>
     </Router>
   );

@@ -623,6 +623,8 @@ async function archiveQueuedRun(run) {
 }
 
 async function createRunRecord(options = {}) {
+  const preparedRunner = prepareRunnerScript(options);
+
   await ensureBaseLayout();
   await pruneCompletedRuns();
 
@@ -650,17 +652,20 @@ async function createRunRecord(options = {}) {
   const task = {
     runId,
     taskId,
-    taskType: options.taskType || "notepad_lifecycle",
+    taskType: preparedRunner ? "task_sequence" : options.taskType || "notepad_lifecycle",
     status: "queued",
     createdUtc,
-    payload: options.payload || buildDefaultTaskPayload(runId, options),
+    payload: preparedRunner ? preparedRunner.plan : options.payload || buildDefaultTaskPayload(runId, options),
   };
+
+  const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
 
   const meta = {
     runId,
     taskId,
     testName: options.testName || "Untitled Test Run",
-    runnerScriptName: options.runnerScriptName || null,
+    runnerScriptName: preparedRunner?.fileName || options.runnerScriptName || null, runnerScriptPath,
+    taskPlanPath: preparedRunner ? "task-plan.json" : null,
     configFileName: options.configFileName || null,
     taskType: task.taskType,
     status: "queued",
@@ -672,11 +677,24 @@ async function createRunRecord(options = {}) {
 
   const currentRunPointer = buildCurrentRunPointer(runId, createdUtc);
 
-  await Promise.all([
+  const pendingWrites = [
     writeJson(runPaths.metaPath, meta),
     writeJson(runPaths.taskPath, task),
     writeJson(CURRENT_RUN_POINTER_PATH, currentRunPointer),
-  ]);
+  ];
+
+  if (preparedRunner) {
+    pendingWrites.push(
+      fs.writeFile(
+        path.join(runPaths.scriptsRoot, preparedRunner.fileName),
+        preparedRunner.content,
+        "utf8"
+      ),
+      writeJson(runPaths.taskPlanPath, preparedRunner.plan)
+    );
+  }
+
+  await Promise.all(pendingWrites);
 
   await appendRunLog(runId, "Run created and queued in the active channel.");
 
