@@ -3,6 +3,7 @@ import TitlePage from "./pages/TitlePage.jsx";
 import About from "./pages/About.jsx";
 import Contact from "./pages/Contact.jsx";
 import TestPage from "./pages/running-test/TestPage.jsx";
+import LandingPage from "./pages/LandingPage.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Confirmation from "./pages/Confirmation.jsx";
 import ConfigurationSettings from "./pages/ConfigurationSettings.jsx";
@@ -28,6 +29,7 @@ function App() {
         <Route path="/" element={<TitlePage />} />
         <Route path="/about" element={<About />} />
         <Route path="/contact" element={<Contact />} />
+        <Route path="/landingpage" element={<LandingPage />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/confirmation" element={<Confirmation />} />
         <Route path="/configuration-settings" element={<ConfigurationSettings />} />
