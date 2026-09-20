@@ -136,7 +136,17 @@ export default function CreateATask() {
 
 
     function exportJson() {
-        const stepsStr = JSON.stringify(defTask, null, 2);
+        const exportedSteps = defTask.map((t) => {
+            if (t.action === "CLICK") {
+                return {
+                    id: t.id,
+                    action: t.action,
+                    details: { x: Number(t.details?.x), y: Number(t.details?.y) },
+                };
+            }
+            return { id: t.id, action: t.action, text: t.text };
+        });
+        const stepsStr = JSON.stringify(exportedSteps, null, 2);
         const dataStr =`"steps": ${stepsStr}`;
         const blob = new Blob([dataStr], { type: "application/json" });
         const url = URL.createObjectURL(blob);
