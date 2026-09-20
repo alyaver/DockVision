@@ -136,7 +136,7 @@ export default function CreateATask() {
 
 
     function exportJson() {
-        const exportedSteps = defTask.map((t) => {
+        const exportedTasks = defTask.map((t) => {
             if (t.action === "CLICK") {
                 return {
                     id: t.id,
@@ -146,8 +146,24 @@ export default function CreateATask() {
             }
             return { id: t.id, action: t.action, text: t.text };
         });
-        const stepsStr = JSON.stringify(exportedSteps, null, 2);
-        const dataStr =`"steps": ${stepsStr}`;
+        const exportedPlan = {
+            schemaVersion: "dockvision.user-task-plan.v1",
+            name: "Notepad typing test",
+            app: {
+                name: "notepad",
+                executable: "notepad.exe",
+                fileName: "typing-test.txt",
+                uniqueFilePerRun: true,
+                resetFile: true,
+            },
+            settings: {
+                stepDelayMs: 250,
+                typingDelayMs: 25,
+                timeoutSeconds: 20,
+            },
+            tasks: exportedTasks,
+        };
+        const dataStr = JSON.stringify(exportedPlan, null, 2);
         const blob = new Blob([dataStr], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
