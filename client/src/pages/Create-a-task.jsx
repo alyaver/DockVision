@@ -109,6 +109,11 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                             onChange={(e) => onChangeDetail("x", e.target.value) } />
                             <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
                             onChange={(e) => onChangeDetail("y", e.target.value) } />
+                        </>
+                    )}
+
+                    {(isNamedControl || isPointTarget) && (
+                        <>
                             <MouseButtonSelect value={taskDescription.details?.button ?? "left"}
                             onChange={(e) => onChangeDetail("button", e.target.value) } />
                             <input type="number" placeholder="Enter click count" className="click-count-input" min="1" max="2" step="1"
@@ -208,13 +213,29 @@ export default function CreateATask() {
     function exportJson() {
         const exportedTasks = defTask.map((t) => {
             if (t.action === "CLICK") {
+                const targetType = t.details?.targetType;
+                if (targetType === "Named Control") {
+                    return {
+                        id: `click-${t.details?.controlName}`,
+                        action: t.action,
+                        target: t.details?.controlName,
+                        button: t.details?.button ?? "left",
+                        clickCount: Number(t.details?.clickCount ?? 1),
+                    };
+                }
                 return {
-                    id: t.id,
+                    id: "click-position",
                     action: t.action,
-                    details: { x: Number(t.details?.x), y: Number(t.details?.y) },
+                    target: {
+                        type: targetType === "Window Point" ? "windowPoint" : "screenPoint",
+                        x: Number(t.details?.x),
+                        y: Number(t.details?.y),
+                    },
+                    button: t.details?.button ?? "left",
+                    clickCount: Number(t.details?.clickCount ?? 1),
                 };
             }
-            return { id: t.id, action: t.action, text: t.text };
+            return { id: "enter-text", action: t.action, text: t.text };
         });
         const exportedPlan = {
             schemaVersion: "dockvision.user-task-plan.v1",
@@ -296,13 +317,22 @@ export default function CreateATask() {
                                 ) : (
                                     <div key={t.id} className="task-item">
                                         <div>
-                                         <span>{t.task}</span><span>{t.text}</span>
-                                         {t.task === "CLICK" && t.details && (
+                                         <span>{t.action}</span><span>{t.text}</span>
+                                         {t.action === "CLICK" && t.details && (
                                             <div>
-                                            <span> (X: {t.details.x})</span>
+                                            {t.details.targetType === "Named Control" ? (
+                                                <span> (Control: {t.details.controlName})</span>
+                                            ) : (
+                                                <>
+                                                <span> (X: {t.details.x})</span>
+                                                <br />
+                                                <span> (Y: {t.details.y})</span>
+                                                </>
+                                            )}
                                             <br />
-                                            <span> (Y: {t.details.y})</span>
-                
+                                            <span> (Button: {t.details.button ?? "left"})</span>
+                                            <br />
+                                            <span> (Click Count: {t.details.clickCount ?? 1})</span>
                                             </div>
                                             )}
                                         </div>
