@@ -6,6 +6,19 @@ import Navigation from "../components/Navigation";
 const Name_Task = "Name your Task Function";
 const Default_Task = [];
 const Task_Options = ["TYPE", "CLICK"];
+const Target_Type_Options = ["Named Control", "Screen Point", "Window Point"];
+const Named_Control_Options = [
+    { label: "Editor", value: "editor" },
+    { label: "File Menu", value: "fileMenu" },
+    { label: "Edit Menu", value: "editMenu" },
+    { label: "Format Menu", value: "formatMenu" },
+    { label: "View Menu", value: "viewMenu" },
+    { label: "Help Menu", value: "helpMenu" },
+];
+const Mouse_Button_Options = [
+    { label: "Left", value: "left" },
+    { label: "Right", value: "right" },
+];
 
 function  TaskSelect({value, tasks, onChange}) {
 return (
@@ -20,9 +33,50 @@ return (
 );
 }
 
+function TargetTypeSelect({value, onChange}) {
+return (
+  <select value={value} onChange={onChange} className="target-type-select">
+    <option value="">Select a target type</option>
+    {Target_Type_Options.map((c) => (
+      <option key={c} value={c}>
+        {c}
+      </option>
+    ))}
+  </select>
+);
+}
+
+function NamedControlSelect({value, onChange}) {
+return (
+  <select value={value} onChange={onChange} className="control-name-select">
+    <option value="">Select a control</option>
+    {Named_Control_Options.map((c) => (
+      <option key={c.value} value={c.value}>
+        {c.label}
+      </option>
+    ))}
+  </select>
+);
+}
+
+function MouseButtonSelect({value, onChange}) {
+return (
+  <select value={value} onChange={onChange} className="mouse-button-select">
+    {Mouse_Button_Options.map((c) => (
+      <option key={c.value} value={c.value}>
+        {c.label}
+      </option>
+    ))}
+  </select>
+);
+}
+
 function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel}) {
     const isClick = taskDescription.task === "CLICK";
     const isTyped = taskDescription.task === "TYPE";
+    const targetType = taskDescription.details?.targetType ?? "";
+    const isNamedControl = targetType === "Named Control";
+    const isPointTarget = targetType === "Screen Point" || targetType === "Window Point";
     return (
         <div className="create-task-container">
             <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
@@ -42,10 +96,26 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
 
             {isClick && (
                 <div className="click-fields">
-                    <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
-                    onChange={(e) => onChangeDetail("x", e.target.value) } />
-                    <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
-                    onChange={(e) => onChangeDetail("y", e.target.value) } />
+                    <TargetTypeSelect value={targetType} onChange={(e) => onChangeDetail("targetType", e.target.value)} />
+
+                    {isNamedControl && (
+                        <NamedControlSelect value={taskDescription.details?.controlName ?? ""}
+                        onChange={(e) => onChangeDetail("controlName", e.target.value) } />
+                    )}
+
+                    {isPointTarget && (
+                        <>
+                            <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
+                            onChange={(e) => onChangeDetail("x", e.target.value) } />
+                            <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
+                            onChange={(e) => onChangeDetail("y", e.target.value) } />
+                            <MouseButtonSelect value={taskDescription.details?.button ?? "left"}
+                            onChange={(e) => onChangeDetail("button", e.target.value) } />
+                            <input type="number" placeholder="Enter click count" className="click-count-input" min="1" max="2" step="1"
+                            value={taskDescription.details?.clickCount ?? 1}
+                            onChange={(e) => onChangeDetail("clickCount", e.target.value) } />
+                        </>
+                    )}
                 </div>
             )}
 
