@@ -1,180 +1,171 @@
-.create-task-form{
+.create-task-form {
     min-height: 100vh;
-    font-family: sans-serif;
+    font-family: Arial, Helvetica, sans-serif;
+    background-color: #f0f0f0;
+    color: #1a1a1a;
 }
 
-.create-task-header{
+.create-task-form .task-container {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 24px;
+    box-sizing: border-box;
+    font-size: 13px;
+}
+
+.create-task-form .panel {
+    background-color: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.create-task-header,
+.create-task-form .footer-panel {
     display: flex;
-    justify-content: end;
+    justify-content: flex-end;
     align-items: center;
-    padding: 10px 20px;
-    background-color: #f5f5f5;
-    border-bottom: 1px solid #ddd;
+    padding: 14px 18px;
+    background-color: #f9f9f9;
 }
 
-.back-button, .exit-button{
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    cursor: pointer;
-    border-radius: 5px;
+.create-task-header {
+    border-bottom: 1px solid #e0e0e0;
 }
 
-.create-task-container{
-   display: flex;
+.create-task-form .footer-panel {
+    border-top: 1px solid #e0e0e0;
+}
+
+.create-task-form .head-panel,
+.create-task-form .body-panel {
+    padding: 16px 18px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.create-task-form .body-panel {
+    display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 10px;
-    padding: 10px 0;
-    margin: 8px 0;
-    border: 1px solid #ddd;
-    background-color: transparent;
-    border-radius: 5px; 
 }
 
-.panel{
-    margin-top: 20px;
-    padding: 20px;
-    border: 1px solid #ddd;
-    border-radius: 5px; 
-    
-
+.create-task-form .task-container button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    background-color: #1a1a1a;
+    color: #fff;
+    border: 1px solid #1a1a1a;
+    padding: 9px 14px;
+    cursor: pointer;
+    border-radius: 6px;
 }
 
-
-.head-panel{
-    padding:10px;
-    border-bottom: 1px solid #ddd;
-    font-size: 1.5em;
-    margin-bottom: 10px;
-    font-weight: bold;
+.create-task-form .task-container button:hover:not(:disabled) {
+    opacity: 0.85;
 }
 
-.head-panel input{
+.create-task-form .task-container button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.create-task-form .task-container input,
+.create-task-form .task-container select {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 12px;
+    background-color: #f9f9f9;
+    color: #1a1a1a;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+}
+
+.create-task-form .task-container input:focus,
+.create-task-form .task-container select:focus {
+    outline: none;
+    border-color: #1a1a1a;
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+}
+
+.create-task-form .head-panel input {
     width: 100%;
     font-size: 16px;
-    border: none;
-    outline: none;
-
+    font-weight: 600;
 }
 
-.body-panel{
+.create-task-form .task-list {
+    padding: 8px 18px;
+}
+
+.create-task-container {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    padding: 10px;
-    border-bottom: 1px solid #ddd;
+    gap: 10px;
+    padding: 12px;
+    margin: 8px 0;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
 }
 
-
-
-.add-button{
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    cursor: pointer;
-    border-radius: 5px;
+.create-task-form .task-input {
+    flex: 1 1 180px;
 }
 
-
-.task-list{
-    padding: 8px 20px;
-}
-
-.no-tasks-message{
-    text-align: center;
-    color: #888;
-    font-size: 1.2em;
-    padding: 20px;
-}
-
-.task-item{
+.create-task-form .click-fields,
+.create-task-form .button-container,
+.create-task-form .task-item > div:last-child {
     display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.create-task-form .button-container {
+    margin-left: auto;
+}
+
+.create-task-form .task-item {
+    display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 0;
-    border-bottom: 1px solid #ddd;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid #eee;
+    overflow-wrap: anywhere;
 }
-.task-item:last-child{
+
+.create-task-form .task-item:last-child {
     border-bottom: none;
 }
 
-.edit-button, .delete-button{
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    cursor: pointer;
-    border-radius: 5px;
-}
-
-
-.task-container{
-    max-width: 600px;
-    margin: 0 auto;
-    padding: 0 20px;
- 
-}
-
-
-.task-input{
-    flex: 1;
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-}
-
-.task-select{
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-}
-
-.button-container{
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-}
-
-.save-button, .cancel-button{
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    cursor: pointer;
-    border-radius: 5px;
-}
-
-.footer-panel{
-    display: flex;
-    justify-content: end;
-    align-items: center;
-    padding: 10px 20px;
-    background-color: #f5f5f5;
-    border-top: 1px solid #ddd;
-}
-
-.lock-button, .unlock-button, .confirm-button{
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    cursor: pointer;
-    border-radius: 5px;
-}
-
-.confirm-dialog{
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: #00FF00
-
-}
-
-.exit-message{
+.create-task-form .no-tasks-message {
     text-align: center;
-    padding: 20px;
-    font-size: 1.2em;
+    color: #888;
+    line-height: 1.6;
+    padding: 32px 16px;
 }
 
+.create-task-form .confirm-dialog {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #1d7a34;
+}
+
+.create-task-form .exit-message {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    padding: 24px;
+    background-color: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+}
