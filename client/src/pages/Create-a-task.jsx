@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
@@ -116,9 +116,12 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                         <>
                             <MouseButtonSelect value={taskDescription.details?.button ?? "left"}
                             onChange={(e) => onChangeDetail("button", e.target.value) } />
-                            <input type="number" placeholder="Enter click count" className="click-count-input" min="1" max="2" step="1"
+                            <select aria-label="Click count" className="click-count-input"
                             value={taskDescription.details?.clickCount ?? 1}
-                            onChange={(e) => onChangeDetail("clickCount", e.target.value) } />
+                            onChange={(e) => onChangeDetail("clickCount", e.target.value) }>
+                                <option value="1">1 click</option>
+                                <option value="2">2 clicks</option>
+                            </select>
                         </>
                     )}
                 </div>
@@ -140,7 +143,7 @@ export default function CreateATask() {
     const [taskDescription, setTaskDescription] = useState({ text: "", action: "" });
     const [tasks, setTasks] = useState(Task_Options);
     const [newTaskName, setNewTaskName] = useState("");
-    const [nextID, setNextID] = useState(1);
+    const nextIDs = useRef({});
     const [defTask, setDefTask] = useState(Default_Task);
     const [locked, setLocked] = useState(false);
     const [confirmOn, setConfirmOn] = useState(null);
@@ -163,9 +166,15 @@ export default function CreateATask() {
     function saveTask() {
         if(!taskDescription) return;
         if(taskDescription.mode === "new") {
-            const newTask = { id: `step-${nextID}`, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} };
+            const baseID = taskDescription.task === "CLICK"
+                ? taskDescription.details?.targetType === "Named Control"
+                    ? `click-${taskDescription.details?.controlName}`
+                    : "click-position"
+                : "enter-text";
+            const nextID = nextIDs.current[baseID] ?? 1;
+            nextIDs.current[baseID] = nextID + 1;
+            const newTask = { id: `${baseID}-${nextID}`, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} };
             setDefTask([...defTask, newTask]);
-            setNextID(nextID + 1);
         } else if(taskDescription.mode === "edit") {
             setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} } : t));
         }
@@ -216,7 +225,7 @@ export default function CreateATask() {
                 const targetType = t.details?.targetType;
                 if (targetType === "Named Control") {
                     return {
-                        id: `click-${t.details?.controlName}`,
+                        id: t.id,
                         action: t.action,
                         target: t.details?.controlName,
                         button: t.details?.button ?? "left",
@@ -224,7 +233,7 @@ export default function CreateATask() {
                     };
                 }
                 return {
-                    id: "click-position",
+                    id: t.id,
                     action: t.action,
                     target: {
                         type: targetType === "Window Point" ? "windowPoint" : "screenPoint",
@@ -235,7 +244,7 @@ export default function CreateATask() {
                     clickCount: Number(t.details?.clickCount ?? 1),
                 };
             }
-            return { id: "enter-text", action: t.action, text: t.text };
+            return { id: t.id, action: t.action, text: t.text };
         });
         const exportedPlan = {
             schemaVersion: "dockvision.user-task-plan.v1",
