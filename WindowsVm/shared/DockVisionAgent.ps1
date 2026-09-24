@@ -883,10 +883,10 @@ function Invoke-TypeSequenceTask {
         [string]$TaskId
     )
 
-    #steps are to arrive as an ordered array
-    #only 'type' steps are andled here, click and others are skipped for now
-    $steps = Get-TaskPayloadValue -Task $Task -Name "steps" -DefaultValue @()
-    $typingDelayMs = [int](Get-TaskPayloadValue -Task $Task -Name "typingDelayMs" -DefaultValue 35)
+    # Tasks arrive in execution order; CLICK tasks are skipped in this typing-only executor.
+    $steps = Get-TaskPayloadValue -Task $Task -Name "tasks" -DefaultValue @()
+    $settings = Get-TaskPayloadValue -Task $Task -Name "settings" -DefaultValue $null
+    $typingDelayMs = if ($null -ne $settings -and $null -ne $settings.typingDelayMs) { [int]$settings.typingDelayMs } else { 35 }
     $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
     $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
@@ -901,9 +901,9 @@ function Invoke-TypeSequenceTask {
     $typedCharacterCount = 0
 
     foreach ($step in @($steps)) {
-        $stepType = [string]$step.type
-        if ($stepType -eq "type") {
-            $text = [string]$step.data
+        $stepType = [string]$step.action
+        if ($stepType -ceq "TYPE") {
+            $text = [string]$step.text
             Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
             $typedStepCount++
             $typedCharacterCount += $text.Length
