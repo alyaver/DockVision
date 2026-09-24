@@ -148,6 +148,7 @@ export default function CreateATask() {
     const [locked, setLocked] = useState(false);
     const [confirmOn, setConfirmOn] = useState(null);
     const [exit, setExit] = useState(false);
+    const [validationError, setValidationError] = useState("");
 
     function openAddTask() {
         if(locked)  return;
@@ -156,7 +157,7 @@ export default function CreateATask() {
 
     function opendEditTask(t) {
         if(locked)  return;
-        setTaskDescription({ mode: "edit", text: t.text, action: t.task, id: t.id, details: t.details || {} });
+        setTaskDescription({ mode: "edit", text: t.text, task: t.action, id: t.id, details: t.details || {} });
     }
 
     function cancelTask() {
@@ -165,6 +166,30 @@ export default function CreateATask() {
 
     function saveTask() {
         if(!taskDescription) return;
+        if (!Task_Options.includes(taskDescription.task)) {
+            setValidationError("Select TYPE or CLICK before saving the task.");
+            return;
+        }
+        if (taskDescription.task === "CLICK" && !taskDescription.details?.targetType) {
+            setValidationError("Select a target type before saving the CLICK task.");
+            return;
+        }
+        if (taskDescription.task === "CLICK" && taskDescription.details?.targetType === "Named Control" && !taskDescription.details?.controlName) {
+            setValidationError("Select a control before saving the CLICK task.");
+            return;
+        }
+        if (taskDescription.task === "CLICK" && ["Screen Point", "Window Point"].includes(taskDescription.details?.targetType)) {
+            const { x, y } = taskDescription.details;
+            if ([x, y].some((value) => value == null || String(value).trim() === "" || !Number.isFinite(Number(value)))) {
+                setValidationError("Enter a valid number for both X and Y coordinates before saving the CLICK task.");
+                return;
+            }
+        }
+        if (taskDescription.task === "TYPE" && (typeof taskDescription.text !== "string" || taskDescription.text === "")) {
+            setValidationError("Enter text before saving the TYPE task.");
+            return;
+        }
+        setValidationError("");
         if(taskDescription.mode === "new") {
             const baseID = taskDescription.task === "CLICK"
                 ? taskDescription.details?.targetType === "Named Control"
@@ -189,10 +214,10 @@ export default function CreateATask() {
     }
 
     function handleConfirm(){
+        if (!exportJson()) return;
         setLocked(true);
         setTaskDescription(null);
         setConfirmOn(true);
-        exportJson();
         
     }
 
@@ -220,6 +245,15 @@ export default function CreateATask() {
 
 
     function exportJson() {
+        if (defTask.length === 0) {
+            setValidationError("Add at least one task before saving the task plan.");
+            return false;
+        }
+        if (defTask.some((t) => !Task_Options.includes(t.action))) {
+            setValidationError("Every task must have a TYPE or CLICK action before exporting.");
+            return false;
+        }
+        setValidationError("");
         const exportedTasks = defTask.map((t) => {
             if (t.action === "CLICK") {
                 const targetType = t.details?.targetType;
@@ -273,6 +307,7 @@ export default function CreateATask() {
         link.download = `${taskListName}.json`;
         link.click();
         URL.revokeObjectURL(url);
+        return true;
     }
 
     return (
@@ -367,6 +402,9 @@ export default function CreateATask() {
                             )}
                         </div>
                         
+                        {validationError && (
+                            <div role="alert" className="no-tasks-message">{validationError}</div>
+                        )}
                         <div className="footer-panel">
                             {confirmOn ? (
                                 <div className="confirm-dialog"> SAVED
