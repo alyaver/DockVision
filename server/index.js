@@ -138,11 +138,12 @@ async function handleStartRun(req, res) {
   try {
     createdRun = await createRunRecord(req.body ?? {});
   } catch (error) {
-    if (error.code === "INVALID_TEST_SCRIPT") {
+    if (error.code === "INVALID_TASK_PLAN") {
       return res.status(400).json({
         success: false,
         message: error.message,
-        lineNumber: error.lineNumber,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
       });
     }
 
@@ -208,6 +209,15 @@ let createdRun = null;
   try {
     createdRun = await createRunRecord2(req.body ?? {});
   } catch (error) {
+    if (error.code === "INVALID_TASK_PLAN") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
+      });
+    }
+
     if (error.code === "RUN_ACTIVE") {
       return res.status(409).json({
         success: false,
