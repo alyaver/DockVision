@@ -775,7 +775,7 @@ function Invoke-PowerShellNotepadTask {
     $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
     $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
-    $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
+    $taskType = if ($Task.action) { [string]$Task.action } else { "unknown" }
     $savePath = $null
 
     if ($saveFile) {
@@ -885,12 +885,12 @@ function Invoke-TypeSequenceTask {
 
     #steps are to arrive as an ordered array
     #only 'type' steps are andled here, click and others are skipped for now
-    $steps = Get-TaskPayloadValue -Task $Task -Name "steps" -DefaultValue @()
-    $typingDelayMs = [int](Get-TaskPayloadValue -Task $Task -Name "typingDelayMs" -DefaultValue 35)
+    $steps = Get-TaskPayloadValue -Task $Task -Name "tasks" -DefaultValue @()
+    $typingDelayMs = [int](Get-TaskPayloadValue -Task $Task -Name "delayMs" -DefaultValue 35)
     $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
     $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
-    $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
+    $taskType = if ($Task.action) { [string]$Task.action } else { "unknown" }
 
     $process = Start-Process "notepad.exe" -PassThru
     $handle = Wait-ForMainWindow -Process $process
@@ -903,7 +903,7 @@ function Invoke-TypeSequenceTask {
     foreach ($step in @($steps)) {
         $stepType = [string]$step.type
         if ($stepType -eq "type") {
-            $text = [string]$step.data
+            $text = [string]$step.text
             Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
             $typedStepCount++
             $typedCharacterCount += $text.Length
