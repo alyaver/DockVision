@@ -137,6 +137,17 @@ export default function CreateATask() {
         setTaskDescription(null);
     }
 
+    function moveTask(id, direction) {
+        const index = defTask.findIndex((t) => t.id === id);
+        const newIndex = index + direction;
+
+        if (newIndex < 0 || newIndex >= defTask.length) return; // Out of bounds
+
+        const newDefTask = [...defTask];
+        [newDefTask[index], newDefTask[newIndex]] = [newDefTask[newIndex], newDefTask[index]]; // Swap the tasks
+        setDefTask(newDefTask);
+    }
+
     // Validates the task plan before saving
     function planValidation() {
         if (defTask.length === 0) {
@@ -280,7 +291,12 @@ export default function CreateATask() {
                                 ) : (
                                     <div key={t.id} className="task-item">
                                         <div>
-                                         <span>{t.task}</span><span>{t.text}</span>
+                                         <span>{t.task}</span>
+                                         {t.task === "TYPE" && t.text && (
+                                            <div>
+                                            <span>Text: {t.text}</span>
+                                            </div>
+                                            )}
                                          {t.task === "CLICK" && t.details && (
                                             <div>
                                             <span> (X: {t.details.x})</span>
@@ -291,6 +307,8 @@ export default function CreateATask() {
                                             )}
                                         </div>
                                     <div>
+                                    <button onClick={() => moveTask(t.id, -1)} disabled={locked} className="move-up-button">Up</button>
+                                    <button onClick={() => moveTask(t.id, 1)} disabled={locked} className="move-down-button">Down</button>
                                     <button onClick={() => openEditTask(t)} disabled={locked} className="edit-button">Edit</button>
                                     <button onClick={() => deleteTask(t.id)} disabled={locked} className="delete-button">Delete</button>
                                     </div>

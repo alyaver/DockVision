@@ -100,7 +100,7 @@
     border-bottom: none;
 }
 
-.edit-button, .delete-button{
+.edit-button, .delete-button, .move-up-button, .move-down-button{
     background-color: #007bff;
     color: white;
     border: none;
