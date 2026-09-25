@@ -46,7 +46,7 @@ function validateDraftTask(task) {
     }
 
     if (task.task === "CLICK") {
-        if (!task.details || task.details.x === undefined || task.details.y === undefined) {
+        if (!task.details || task.details.x === undefined || task.details.y === undefined || task.details.x === "" || task.details.y === "") {
             errors.details = "X and Y coordinates are required for CLICK task.";
         }
     }
@@ -121,12 +121,16 @@ export default function CreateATask() {
 
     function openAddTask() {
         if(locked)  return;
-        setTaskDescription({ mode: "new", text: "", action: "" });
+        setTaskDescription({ mode: "new", task: "", text: "", details: {}, errors: {} });
     }
 
-    function opendEditTask(t) {
+    function openEditTask(task) {
         if(locked)  return;
-        setTaskDescription({ mode: "edit", text: t.text, action: t.task, id: t.id, details: t.details || {} });
+        setTaskDescription({ mode: "edit", id: task.id, text: task.text, task: task.task, details: task.details || {}, errors: {}, });
+    }
+
+    function changeTaskType(newType) {
+        setTaskDescription({ ...taskDescription, task: newType, text: "", details: newType === "CLICK" ? { x: "", y: "" } : {}, errors: {} });
     }
 
     function cancelTask() {
@@ -158,11 +162,11 @@ export default function CreateATask() {
             return;
         }
         if(taskDescription.mode === "new") {
-            const newTask = { id: `step-${nextID}`, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} };
+            const newTask = { id: `step-${nextID}`, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} };
             setDefTask([...defTask, newTask]);
             setNextID(nextID + 1);
         } else if(taskDescription.mode === "edit") {
-            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} } : t));
+            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} } : t));
         }
         setTaskDescription(null);  
     }
@@ -268,7 +272,7 @@ export default function CreateATask() {
                                         taskDescription={taskDescription}
 
                                         onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
-                                        onChangeTask={(v) => setTaskDescription({ ...taskDescription, task:v })}
+                                        onChangeTask={changeTaskType}
                                         onChangeDetail={onChangeDetail}
                                         onSave={saveTask}
                                         onCancel={cancelTask} 
@@ -287,7 +291,7 @@ export default function CreateATask() {
                                             )}
                                         </div>
                                     <div>
-                                    <button onClick={() => opendEditTask(t)} disabled={locked} className="edit-button">Edit</button>
+                                    <button onClick={() => openEditTask(t)} disabled={locked} className="edit-button">Edit</button>
                                     <button onClick={() => deleteTask(t.id)} disabled={locked} className="delete-button">Delete</button>
                                     </div>
                                     </div>
@@ -300,7 +304,7 @@ export default function CreateATask() {
                                     taskDescription={taskDescription}
                                     tasks={tasks}
                                     onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
-                                    onChangeTask={(v) => setTaskDescription({ ...taskDescription, task:v })}
+                                    onChangeTask={changeTaskType}
                                     onChangeDetail={onChangeDetail}
                                     onSave={saveTask}   
                                     onCancel={cancelTask}
