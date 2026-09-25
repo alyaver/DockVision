@@ -33,6 +33,16 @@ return (
 );
 }
 
+// Drafts survive refresh and navigation within session
+function loadDraftTask(key, value) {
+    try {
+        const savedDraft = sessionStorage.getItem(key);
+        return savedDraft ? JSON.parse(savedDraft) : value;
+    } catch {
+        return value;
+    }
+}
+
 
 function validateDraftTask(task) {
     const errors = {};
@@ -46,14 +56,20 @@ function validateDraftTask(task) {
     }
 
     if (task.task === "CLICK") {
-        if (!task.details || task.details.x === undefined || task.details.y === undefined || task.details.x === "" || task.details.y === "") {
-            errors.details = "X and Y coordinates are required for CLICK task.";
+        if(task.targetType === "named" && !task.target) {
+            errors.target = "Target is required for CLICK task.";
+        }
+
+        if (task.targetType === "coordinates") {
+            if (!task.details || task.details.x === undefined || task.details.y === undefined || task.details.x === "" || task.details.y === "") {
+                errors.details = "X and Y coordinates are required for CLICK task.";
+            }
         }
     }
     return errors;
 }
 
-function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel}) {
+function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel, onChangeTargetType, onChangeTarget}) {
     const isClick = taskDescription.task === "CLICK";
     const isTyped = taskDescription.task === "TYPE";
     return (
@@ -85,13 +101,38 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
 
             {isClick && (
                 <div className="click-fields">
-                    <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
-                    onChange={(e) => onChangeDetail("x", e.target.value) } />
-                    <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
-                    onChange={(e) => onChangeDetail("y", e.target.value) } />
+                    <select  className="target-select" value={taskDescription.targetType || "named"} onChange={(e) => onChangeTargetType(e.target.value)}>
+                        <option value="named">Named Target</option>
+                        <option value="coordinates">Coordinates</option>
+                    </select>
 
-                    {taskDescription.errors?.details && (
-                        <p className="field-error">{taskDescription.errors.details}</p>
+                    {taskDescription.targetType === "named" && (
+                        <>
+                            <select className="target-select" value={taskDescription.target || "editor"} onChange={(e) => onChangeTarget(e.target.value)}>
+                                {Notepad_Targets.map((target) => (
+                                    <option key={target} value={target}>
+                                        {target}
+                                    </option>
+                                ))}
+                            </select>
+
+                            {taskDescription.errors?.details && (
+                                <p className="field-error">{taskDescription.errors.details}</p>
+                            )}
+                        </>
+                    )}
+
+                    {taskDescription.targetType === "coordinates" && (
+                        <>
+                            <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
+                            onChange={(e) => onChangeDetail("x", e.target.value) } />
+                            <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
+                            onChange={(e) => onChangeDetail("y", e.target.value) } />
+
+                            {taskDescription.errors?.details && (
+                                <p className="field-error">{taskDescription.errors.details}</p>
+                            )}
+                        </>
                     )}
                 </div>
             )}
@@ -109,15 +150,20 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
 
 export default function CreateATask() {
     const navigate = useNavigate(); 
+    const savedDraft = loadDraftTask("defTask", {name: "", nextID: 1, tasks: Default_Task});
     const [taskDescription, setTaskDescription] = useState({ text: "", action: "" });
     const [tasks, setTasks] = useState(Task_Options);
-    const [newTaskName, setNewTaskName] = useState("");
-    const [nextID, setNextID] = useState(1);
-    const [defTask, setDefTask] = useState(Default_Task);
+    const [newTaskName, setNewTaskName] = useState(savedDraft.name || "");
+    const [nextID, setNextID] = useState(savedDraft.nextID || 1);
+    const [defTask, setDefTask] = useState(savedDraft.tasks || Default_Task);
     const [locked, setLocked] = useState(false);
     const [confirmOn, setConfirmOn] = useState(null);
     const [exit, setExit] = useState(false);
     const [createTaskError, setCreateTaskError] = useState(null);
+
+    useEffect(() => {
+        sessionStorage.setItem("defTask", JSON.stringify({name: newTaskName, nextID,tasks: defTask}));
+    }, [newTaskName, nextID, defTask]);
 
     function openAddTask() {
         if(locked)  return;
@@ -126,11 +172,19 @@ export default function CreateATask() {
 
     function openEditTask(task) {
         if(locked)  return;
-        setTaskDescription({ mode: "edit", id: task.id, text: task.text, task: task.task, details: task.details || {}, errors: {}, });
+        setTaskDescription({ mode: "edit", id: task.id, text: task.text, task: task.task, targetType: task.targetType || "coordinates", target: task.target || "editor", details: task.details || {}, errors: {}, });
     }
 
     function changeTaskType(newType) {
-        setTaskDescription({ ...taskDescription, task: newType, text: "", details: newType === "CLICK" ? { x: "", y: "" } : {}, errors: {} });
+        setTaskDescription({ ...taskDescription, task: newType, text: "", details: newType === "CLICK" ? { x: "", y: "" } : {}, targetType: newType === "CLICK" ? "named" : "", target: newType === "CLICK" ? "editor" : "", errors: {} });
+    }
+
+    function changeTargetType(targetType) { // // When selecting CLICK task, switch between coordinates and named target types
+        setTaskDescription({ ...taskDescription, targetType: targetType, target: targetType === "named" ? "editor" : "", details: targetType === "coordinates" ? { x: "", y: "" } : {}, errors: {} });
+    }
+
+    function changeTarget(target) { // When selecting CLICK task, switch between coordinates and named target types
+        setTaskDescription({ ...taskDescription, target: target, errors: {} });
     }
 
     function cancelTask() {
@@ -173,11 +227,11 @@ export default function CreateATask() {
             return;
         }
         if(taskDescription.mode === "new") {
-            const newTask = { id: `step-${nextID}`, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} };
+            const newTask = { id: `step-${nextID}`, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {}, targetType: taskDescription.targetType, target: taskDescription.target};
             setDefTask([...defTask, newTask]);
             setNextID(nextID + 1);
         } else if(taskDescription.mode === "edit") {
-            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {} } : t));
+            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {}, targetType: taskDescription.targetType, target: taskDescription.target } : t));
         }
         setTaskDescription(null);  
     }
@@ -284,6 +338,8 @@ export default function CreateATask() {
 
                                         onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
                                         onChangeTask={changeTaskType}
+                                        onChangeTargetType={changeTargetType}
+                                        onChangeTarget={changeTarget}
                                         onChangeDetail={onChangeDetail}
                                         onSave={saveTask}
                                         onCancel={cancelTask} 
@@ -297,9 +353,15 @@ export default function CreateATask() {
                                             <span>Text: {t.text}</span>
                                             </div>
                                             )}
-                                         {t.task === "CLICK" && t.details && (
+
+                                        {t.task === "CLICK" && t.targetType === "named" && (
                                             <div>
-                                            <span> (X: {t.details.x})</span>
+                                            <span>Target: {t.target}</span>
+                                            </div>
+                                        )}
+                                         {t.task === "CLICK" && t.targetType === "coordinates" && (
+                                            <div>
+                                            <span> (X: {t.details?.x})</span>
                                             <br />
                                             <span> (Y: {t.details.y})</span>
                 
@@ -326,6 +388,8 @@ export default function CreateATask() {
                                     onChangeDetail={onChangeDetail}
                                     onSave={saveTask}   
                                     onCancel={cancelTask}
+                                    onChangeTargetType={changeTargetType}
+                                    onChangeTarget={changeTarget}
                                 />
                             )}
                         </div>
