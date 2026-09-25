@@ -1,11 +1,24 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 
-const Name_Task = "Name your Task Function";
 const Default_Task = [];
 const Task_Options = ["TYPE", "CLICK"];
+const Notepad_Targets = [ // List of targets for the notepad referenced from docs/pywinauto-vm-notepad-demo/READNE.md
+    "editor",
+    "fileMenu",
+    "editMenu",
+    "formatMenu",
+    "viewMenu",
+    "helpMenu",
+    "notepad.editor",
+    "notepad.fileMenu",
+    "notepad.editMenu",
+    "notepad.formatMenu",
+    "notepad.viewMenu",
+    "notepad.helpMenu",
+]
 
 function  TaskSelect({value, tasks, onChange}) {
 return (
@@ -20,24 +33,54 @@ return (
 );
 }
 
+
+function validateDraftTask(task) {
+    const errors = {};
+
+    if (!task.task) {
+        errors.task = "Task type is required.";
+    }
+
+    if (task.task === "TYPE" && !task.text) {
+        errors.text = "Text is required for TYPE task.";
+    }
+
+    if (task.task === "CLICK") {
+        if (!task.details || task.details.x === undefined || task.details.y === undefined) {
+            errors.details = "X and Y coordinates are required for CLICK task.";
+        }
+    }
+    return errors;
+}
+
 function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel}) {
     const isClick = taskDescription.task === "CLICK";
     const isTyped = taskDescription.task === "TYPE";
     return (
         <div className="create-task-container">
             <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
+           
+           {taskDescription.errors?.task && (
+             <p className="field-error">{taskDescription.errors.task}</p>
+            )}
+
            {isTyped && (
-            <input
-                type="text"
-                placeholder="Enter task"
-                value={taskDescription.text}
-                onChange={(e) => onChangeText(e.target.value)}
-                onKeyDown={(e) => {
-                    if (e.key === "Enter") onSave();
-                    if (e.key === "Escape") onCancel();
-                }}
-                className="task-input"
-            />
+            <>
+                <input
+                    type="text"
+                    placeholder="Enter task"
+                    value={taskDescription.text}
+                    onChange={(e) => onChangeText(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter") onSave();
+                        if (e.key === "Escape") onCancel();
+                    }}
+                    className="task-input"
+                />
+                    {taskDescription.errors?.text && (
+                        <p className="field-error">{taskDescription.errors.text}</p>
+                    )}
+            </>
             )}
 
             {isClick && (
@@ -46,6 +89,10 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                     onChange={(e) => onChangeDetail("x", e.target.value) } />
                     <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
                     onChange={(e) => onChangeDetail("y", e.target.value) } />
+
+                    {taskDescription.errors?.details && (
+                        <p className="field-error">{taskDescription.errors.details}</p>
+                    )}
                 </div>
             )}
 
@@ -70,6 +117,7 @@ export default function CreateATask() {
     const [locked, setLocked] = useState(false);
     const [confirmOn, setConfirmOn] = useState(null);
     const [exit, setExit] = useState(false);
+    const [createTaskError, setCreateTaskError] = useState(null);
 
     function openAddTask() {
         if(locked)  return;
@@ -85,8 +133,30 @@ export default function CreateATask() {
         setTaskDescription(null);
     }
 
+    // Validates the task plan before saving
+    function planValidation() {
+        if (defTask.length === 0) {
+            setCreateTaskError("You must add at least one task before saving.");
+            return false;
+        }
+ 
+        const countInvalid = defTask.some((task) => {Object.keys(validateDraftTask(task)).length > 0});
+        if (countInvalid) {
+            setCreateTaskError("There are invalid tasks in the plan.");
+            return false;
+        }
+        setCreateTaskError("");
+        return true;
+    }
+
+    // saves a new task or an edited task to the task list
     function saveTask() {
         if(!taskDescription) return;
+        const errors = validateDraftTask(taskDescription);
+        if (Object.keys(errors).length > 0) { // If there are validation errors, set the errors in the taskDescription state and return
+            setTaskDescription({ ...taskDescription, errors });
+            return;
+        }
         if(taskDescription.mode === "new") {
             const newTask = { id: `step-${nextID}`, text: taskDescription.text, action: taskDescription.task, details: taskDescription.details || {} };
             setDefTask([...defTask, newTask]);
@@ -135,7 +205,11 @@ export default function CreateATask() {
     }
 
 
-    function exportJson() {
+    function exportJson() { // Exports the task list to a JSON file
+        if (!planValidation()) {
+            return;
+        }
+
         const stepsStr = JSON.stringify(defTask, null, 2);
         const dataStr =`"steps": ${stepsStr}`;
         const blob = new Blob([dataStr], { type: "application/json" });
@@ -177,6 +251,8 @@ export default function CreateATask() {
                             </span>
                             <button onClick={openAddTask} disabled={locked} className="add-button">Add Task</button>
                         </div>
+
+                        {createTaskError && <div className="error-message">{createTaskError}</div>}
                         
                         <div className="task-list">
                             {defTask.length === 0 && !taskDescription && (
