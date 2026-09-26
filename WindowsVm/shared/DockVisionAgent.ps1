@@ -876,7 +876,7 @@ function Invoke-PowerShellNotepadTask {
     }
 }
 
-function Invoke-TypeSequenceTask {
+function Invoke-TaskSequenceTask {
     param(
         [hashtable]$RunContext,
         [object]$Task,
@@ -1085,14 +1085,14 @@ function Handle-Task {
                 Write-ResultObject -RunContext $runContext -ResultObject $result
             }
 
-            "type_sequence" {
-                $typeSequenceResult = Invoke-TypeSequenceTask -RunContext $runContext -Task $Task -TaskId $taskId
-                Write-ResultObject -RunContext $runContext -ResultObject $typeSequenceResult
+            "task_sequence" {
+                $taskSequenceResult = Invoke-TaskSequenceTask -RunContext $runContext -Task $Task -TaskId $taskId
+                Write-ResultObject -RunContext $runContext -ResultObject $taskSequenceResult
             }
 
             default {
-                # For unrecognized tasks, acknowledge receipt but do not fail.
-                Write-ResultFile -RunContext $runContext -TaskId $taskId -Status "completed" -Message "Prototype agent acknowledged task type '$taskType'."
+                # A routing mismatch must fail instead of reporting unexecuted work as completed.
+                throw "Unsupported task type '$taskType'."
             }
         }
 

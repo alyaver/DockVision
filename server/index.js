@@ -202,7 +202,7 @@ app.post("/api/runs/start", handleStartRun);
 // still refer to the original smoke-start endpoint name.
 app.post("/api/docker/start-smoke", handleStartRun);
 
-// placeholder function, will accept the tasks array from the WIP create-a-task page
+// Forward the uploaded configuration unchanged; the run store validates and parses it.
 async function handleStartRun2(req, res) {
 let createdRun = null;
 

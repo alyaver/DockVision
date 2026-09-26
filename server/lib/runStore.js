@@ -812,7 +812,7 @@ async function createRunRecord(options = {}) {
     paths: runPaths,
   };
 }
-//placeholder for entry point that will accept and ordered steps array from the user when they submit the steps
+// The alternate launch endpoint uses the same parsed task-plan contract.
 async function createRunRecord2(options = {}) {
   const preparedRunner = prepareRunnerScript(options);
 
@@ -841,7 +841,7 @@ async function createRunRecord2(options = {}) {
   const runPaths = await ensureRunLayout(runId);
 
   const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
-  const taskType = uploadedInputs ? "script_runner" : "type_sequence";
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
   const payload = uploadedInputs
     ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
     : preparedRunner.plan;
