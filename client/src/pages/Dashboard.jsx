@@ -520,15 +520,6 @@ const Dashboard = () => {
     readiness.docker && readiness.backend && readiness.storage;
   const isWindowsVmRunning = readiness.windowsVmStatus === "running";
 
-  const testNameError = validateTestName(testName);
-  const runnerError = !runnerScriptName ? "Runner Script is required." : "";
-  const configError = !configFileName ? "Config File required." : "";
-  // Keep the launch gate focused on host prerequisites. The backend is allowed
-  // to cold-start the Windows guest during run creation if it is not up yet.
-  const isSystemReady =
-    readiness.docker && readiness.backend && readiness.storage;
-  const isWindowsVmRunning = readiness.windowsVmStatus === "running";
-
   const displayName = user?.name || user?.fname || "User";
 
   return (
