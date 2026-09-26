@@ -1,7 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
-const { readTestScript } = require("./test-script/readTestScript");
+const { readTestScript, TestScriptError } = require("./test-script/readTestScript");
 
 const CLEANUP_POLICY = {
   maxCompletedRuns: 20,
@@ -41,6 +41,11 @@ function buildRunId() {
 }
 
 function prepareRunnerScript(options) {
+  // Custom runners own their configuration schema. Validate before any run files are written.
+  if (hasUploadedScriptRunner(options)) {
+    assertValidUploadedScriptRunner(options);
+    return null;
+  }
   const content = options.configContent;
   const fileName = path.basename(options.configFileName || "task-plan.json");
   const plan = readTestScript({fileName, content});
@@ -192,26 +197,39 @@ function getRunnerScriptLanguage(options = {}) {
 }
 
 function hasUploadedScriptRunner(options = {}) {
-  return Boolean(
-    String(options.runnerScriptContent || "").trim() &&
-      String(options.configContent || "").trim()
-  );
+  if (options.executionMode !== undefined) {
+    if (!["builtin", "custom"].includes(options.executionMode)) {
+      throw new TestScriptError("executionMode must be builtin or custom.", "executionMode");
+    }
+    return options.executionMode === "custom";
+  }
+  // The current upload UI sends runner fields without executionMode.
+  // Detect incomplete uploads too, so missing content produces a custom validation error.
+  return ["runnerScriptName", "runnerScriptContent", "runnerScriptLanguage"]
+    .some((field) => Boolean(options[field]));
 }
 
 function assertValidUploadedScriptRunner(options = {}) {
   const language = getRunnerScriptLanguage(options);
   if (!language) {
-    throw new Error("Uploaded runner must be a supported .py or .ps1 script.");
+    throw new TestScriptError("Uploaded runner must be a supported .py or .ps1 script.", "runnerScriptName");
+  }
+  if (typeof options.runnerScriptContent !== "string" || !options.runnerScriptContent.trim()) {
+    throw new TestScriptError("Uploaded runner content is required.", "runnerScriptContent");
   }
 
   if (!String(options.configFileName || "").toLowerCase().endsWith(".json")) {
-    throw new Error("Uploaded task plan must be a .json file.");
+    throw new TestScriptError("Uploaded task plan must be a .json file.", "configFileName");
   }
 
+  if (typeof options.configContent !== "string" || !options.configContent.trim()) {
+    throw new TestScriptError("Uploaded configuration content is required.", "configContent");
+  }
+  // Check JSON syntax only. Keep the original string for the runner, including whitespace.
   try {
-    JSON.parse(String(options.configContent || "").replace(/^\uFEFF/, ""));
+    JSON.parse(options.configContent.replace(/^\uFEFF/, ""));
   } catch (error) {
-    throw new Error(`Uploaded task plan is not valid JSON: ${error.message}`);
+    throw new TestScriptError(`Uploaded task plan is not valid JSON: ${error.message}`, "configContent");
   }
 
   return language;
@@ -732,8 +750,7 @@ async function createRunRecord(options = {}) {
   const createdUtc = nowIso();
   const runPaths = await ensureRunLayout(runId);
   const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
-  const taskType =
-    options.taskType || (uploadedInputs ? "script_runner" : "notepad_lifecycle");
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
 
   const task = {
     runId,
@@ -741,15 +758,9 @@ async function createRunRecord(options = {}) {
     taskType,
     status: "queued",
     createdUtc,
-    payload:
-      options.payload ||
-      (uploadedInputs
+    payload: uploadedInputs
         ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
-        : buildDefaultTaskPayload(runId, options)),
-    taskType: preparedRunner ? "task_sequence" : options.taskType || "notepad_lifecycle",
-    status: "queued",
-    createdUtc,
-    payload: preparedRunner ? preparedRunner.plan : options.payload || buildDefaultTaskPayload(runId, options),
+        : preparedRunner.plan,
   };
 
   const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
@@ -829,14 +840,11 @@ async function createRunRecord2(options = {}) {
   const createdUtc = nowIso();
   const runPaths = await ensureRunLayout(runId);
 
-  const hasSteps = Array.isArray(options.steps);
-  const taskType = preparedRunner ? "type_sequence" : options.taskType || (hasSteps ? "type_sequence" : "notepad_lifecycle");
-  const payload = 
-    preparedRunner ? preparedRunner.plan :
-    options.payload ||
-    (hasSteps
-      ? { steps: options.steps }
-      : buildDefaultTaskPayload(runId, options));
+  const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
+  const taskType = uploadedInputs ? "script_runner" : "type_sequence";
+  const payload = uploadedInputs
+    ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
+    : preparedRunner.plan;
       
   const task = {
     runId,
