@@ -1,5 +1,7 @@
 const path = require("path");
 const SCHEMA_VERSION = "dockvision.user-task-plan.v1";
+// Detect supplied fields even when their value is null or otherwise falsy.
+const hasField = (object, field) => Object.prototype.hasOwnProperty.call(object, field);
 const NAMED_TARGETS = new Set(["editor", "fileMenu", "editMenu", "formatMenu", "viewMenu", "helpMenu"]);
 
 class TestScriptError extends Error {
@@ -36,8 +38,15 @@ function readTestScript({ fileName, content }) {
     throw new TestScriptError("Task plan must be a JSON object.");
   }
 
+  // Accept only the current task-plan contract; do not convert other formats.
   if (action.schemaVersion !== SCHEMA_VERSION) {
     throw new TestScriptError(`Task plan must use schemaVersion '${SCHEMA_VERSION}'.`, "schemaVersion");
+  }
+  // Reject alternative field names, including documents that supply both forms.
+  for (const field of ["steps", "targetApp"]) {
+    if (hasField(action, field)) {
+      throw new TestScriptError(`Task plan '${SCHEMA_VERSION}' does not support '${field}'.`, field);
+    }
   }
 
   const app = action.app;
@@ -106,18 +115,35 @@ function readTestScript({ fileName, content }) {
         }
       } else {
         if (!target || typeof target !== "object" || Array.isArray(target)
-            || !["screenPoint", "windowPoint"].includes(target.type)) {
+            || !["namedControl", "screenPoint", "windowPoint"].includes(target.type)) {
           throw new TestScriptError(`CLICK task '${step.id}' requires a named target or a screenPoint/windowPoint target.`, `${taskPath}.target`, step.id);
         }
+        // Explicit named controls use a name and optional percentages; point targets use x/y.
+        const targetFields = target.type === "namedControl"
+          ? ["type", "name", "xPercent", "yPercent"]
+          : ["type", "x", "y"];
         for (const field of Object.keys(target)) {
-          if (!["type", "x", "y"].includes(field)) {
+          if (!targetFields.includes(field)) {
             throw new TestScriptError(`CLICK task '${step.id}' target does not support field '${field}'.`, `${taskPath}.target.${field}`, step.id);
           }
         }
-        for (const coordinate of ["x", "y"]) {
+        // Apply the same supported-control list to string and object target forms.
+        if (target.type === "namedControl" && !NAMED_TARGETS.has(target.name)) {
+          throw new TestScriptError(`CLICK task '${step.id}' requires a supported named control.`, `${taskPath}.target.name`, step.id);
+        }
+        // Only point targets require numeric coordinates.
+        for (const coordinate of target.type === "namedControl" ? [] : ["x", "y"]) {
           if (!Number.isFinite(target[coordinate])) {
             throw new TestScriptError(`CLICK task '${step.id}' requires a finite number for target.${coordinate}.`, `${taskPath}.target.${coordinate}`, step.id);
           }
+        }
+      }
+
+      // Percentages belong inside explicit named-control targets and must be within 0–100.
+      for (const field of ["xPercent", "yPercent"]) {
+        if (typeof target === "object" && target.type === "namedControl" && hasField(target, field)
+            && (!Number.isFinite(target[field]) || target[field] < 0 || target[field] > 100)) {
+          throw new TestScriptError(`CLICK task '${step.id}' target.${field} must be a number from 0 to 100.`, `${taskPath}.target.${field}`, step.id);
         }
       }
 
