@@ -43,6 +43,42 @@ function loadDraftTask(key, value) {
     }
 }
 
+// gets tasks from user input and puts them into a JSON step format
+function taskToSteps(task) {
+    if (task.task === "TYPE") {
+        return {
+            id: task.id,
+            action: "TYPE",
+            text: task.text,
+        };
+    }
+
+    if (task.task === "CLICK" && task.targetType === "named") {
+        return {
+            id: task.id,
+            action: "CLICK",
+            target: task.target,
+            button: "left",
+            clickCount: 1
+        };
+    } 
+
+    if (task.task === "CLICK" && task.targetType === "coordinates") {
+        return {
+            id: task.id,
+            action: "CLICK",
+            target: {
+                type: "screenPoint",
+                x: Number(task.details?.x),
+                y: Number(task.details?.y),
+            },
+            button: "left",
+            clickCount: 1,
+        };
+    }
+    return task
+}
+
 
 function validateDraftTask(task) {
     const errors = {};
@@ -151,7 +187,7 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
 export default function CreateATask() {
     const navigate = useNavigate(); 
     const savedDraft = loadDraftTask("defTask", {name: "", nextID: 1, tasks: Default_Task});
-    const [taskDescription, setTaskDescription] = useState({ text: "", action: "" });
+    const [taskDescription, setTaskDescription] = useState(null);
     const [tasks, setTasks] = useState(Task_Options);
     const [newTaskName, setNewTaskName] = useState(savedDraft.name || "");
     const [nextID, setNextID] = useState(savedDraft.nextID || 1);
@@ -209,7 +245,7 @@ export default function CreateATask() {
             return false;
         }
  
-        const countInvalid = defTask.some((task) => {Object.keys(validateDraftTask(task)).length > 0});
+        const countInvalid = defTask.some((task) => Object.keys(validateDraftTask(task)).length > 0);
         if (countInvalid) {
             setCreateTaskError("There are invalid tasks in the plan.");
             return false;
@@ -256,6 +292,24 @@ export default function CreateATask() {
         setConfirmOn(null);
     }
 
+    // use the current plan made by the user and directly add it into setup in Dashboard
+    function useThisPlan() {
+        if(!planValidation()) return;
+
+        const CURRENT_RUN_STORAGE_KEY = loadDraftTask("dockvision-current-run", {});
+        const taskListName = newTaskName.trim() 
+            ? newTaskName.trim().replace(/[^a-zA-Z0-9]+/gi, "_").toLowerCase() : "task_list";
+
+        sessionStorage.setItem(
+            "dockvision-current-run",
+            JSON.stringify({
+                ...CURRENT_RUN_STORAGE_KEY,
+                configFileName: `${taskListName}.json`,
+                configContent: buildPlan(),
+            })
+        )
+        navigate("/dashboard");
+    }
 
 
 
@@ -273,14 +327,26 @@ export default function CreateATask() {
         setTaskDescription({ ...taskDescription, details: { ...taskDescription.details, [key]: value } });
     }
 
+    function buildPlan() {
+        const plan = {
+            schemaVersion: "dockvision.plan.v1",
+            name: newTaskName.trim() || "Untitled Task Plan",
+            app: {
+                name: "notepad",
+                executable: "notepad.exe",
+            },
+            steps: defTask.map(taskToSteps),
+        }
+
+        return JSON.stringify(plan, null, 2);
+    }
+
 
     function exportJson() { // Exports the task list to a JSON file
         if (!planValidation()) {
             return;
         }
-
-        const stepsStr = JSON.stringify(defTask, null, 2);
-        const dataStr =`"steps": ${stepsStr}`;
+        const dataStr = buildPlan();
         const blob = new Blob([dataStr], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -290,6 +356,17 @@ export default function CreateATask() {
         link.download = `${taskListName}.json`;
         link.click();
         URL.revokeObjectURL(url);
+    }
+
+    function newDraft() { // gives user a blank canvas while not overwriting the active run's identity
+        setNewTaskName("");
+        setNextID(1);
+        setDefTask([]);
+        setTaskDescription(null);
+        setCreateTaskError("");
+        setLocked(false);
+        setConfirmOn(null);
+        sessionStorage.removeItem("defTask");
     }
 
     return (
@@ -395,6 +472,8 @@ export default function CreateATask() {
                         </div>
                         
                         <div className="footer-panel">
+                            <button onClick={newDraft} className="confirm-button">Start new Draft</button>
+                            <button onClick={useThisPlan} disabled={locked} className="confirm-button">Use this Plan</button>
                             {confirmOn ? (
                                 <div className="confirm-dialog"> SAVED
                                 <button onClick={handleUnlock} className="unlock-button">Edit</button>
