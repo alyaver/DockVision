@@ -1,5 +1,6 @@
 const path = require("path");
 const SCHEMA_VERSION = "dockvision.user-task-plan.v1";
+const LEGACY_SCHEMA_VERSION = "dockvision.plan.v1";
 // Detect supplied fields even when their value is null or otherwise falsy.
 const hasField = (object, field) => Object.prototype.hasOwnProperty.call(object, field);
 const NAMED_TARGETS = new Set(["editor", "fileMenu", "editMenu", "formatMenu", "viewMenu", "helpMenu"]);
@@ -38,14 +39,15 @@ function readTestScript({ fileName, content }) {
     throw new TestScriptError("Task plan must be a JSON object.");
   }
 
-  // Accept only the current task-plan contract; do not convert other formats.
-  if (action.schemaVersion !== SCHEMA_VERSION) {
-    throw new TestScriptError(`Task plan must use schemaVersion '${SCHEMA_VERSION}'.`, "schemaVersion");
+  const isLegacy = action.schemaVersion === LEGACY_SCHEMA_VERSION;
+  if (!isLegacy && action.schemaVersion !== SCHEMA_VERSION) {
+    throw new TestScriptError(`Task plan must use schemaVersion '${SCHEMA_VERSION}' or '${LEGACY_SCHEMA_VERSION}'.`, "schemaVersion");
   }
-  // Reject alternative field names, including documents that supply both forms.
-  for (const field of ["steps", "targetApp"]) {
+  const tasksField = isLegacy ? "steps" : "tasks";
+  // Reject mixed envelopes rather than silently choosing one task list.
+  for (const field of [isLegacy ? "tasks" : "steps", "targetApp"]) {
     if (hasField(action, field)) {
-      throw new TestScriptError(`Task plan '${SCHEMA_VERSION}' does not support '${field}'.`, field);
+      throw new TestScriptError(`Task plan '${action.schemaVersion}' does not support '${field}'.`, field);
     }
   }
 
@@ -68,14 +70,14 @@ function readTestScript({ fileName, content }) {
     }
   }
 
-  if (!Array.isArray(action.tasks) || action.tasks.length === 0) {
-    throw new TestScriptError("DOCKVISION action must contain at least one task.", "tasks");
+  if (!Array.isArray(action[tasksField]) || action[tasksField].length === 0) {
+    throw new TestScriptError("DOCKVISION action must contain at least one task.", tasksField);
   }
 
   const seenIds = new Set(); // to track unique step ids
 
-  for (const [index, step] of action.tasks.entries()) {
-    const taskPath = `tasks[${index}]`;
+  for (const [index, step] of action[tasksField].entries()) {
+    const taskPath = `${tasksField}[${index}]`;
     if (!step || typeof step !== "object" || Array.isArray(step)) {
       throw new TestScriptError("Each action step must be a JSON object.", taskPath);
     }
@@ -108,6 +110,9 @@ function readTestScript({ fileName, content }) {
         throw new TestScriptError(`TYPE step '${step.id}' requires a nonempty text string.`, `${taskPath}.text`, step.id);
       }
     } else {
+      if (isLegacy && step.target === "notepad.editor") {
+        step.target = "editor";
+      }
       const target = step.target;
       if (typeof target === "string") {
         if (!NAMED_TARGETS.has(target)) {
@@ -158,6 +163,12 @@ function readTestScript({ fileName, content }) {
     }
   }
 
+  // The run store and guest agent consume one canonical execution format.
+  if (isLegacy) {
+    action.schemaVersion = SCHEMA_VERSION;
+    action.tasks = action.steps;
+    delete action.steps;
+  }
   return action;
 }
 
