@@ -6,7 +6,12 @@ async function parseJson(response) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.error || data.message || "Request failed");
+    const error = new Error(data.message || data.error || "Request failed");
+    error.status = response.status;
+    error.code = data.code;
+    error.activeRunId = data.activeRunId;
+    error.fieldErrors = data.fieldErrors;
+    throw error;
   }
 
   return data; 
@@ -15,16 +20,30 @@ async function parseJson(response) {
 // The backend owns the decision of whether a run needs to cold-start the
 // Windows guest or can reuse the existing one, so the client only sends the
 // run payload and consumes the normalized response.
-export async function startTestRun(payload = {}) {
-  const response = await fetch(`${API_BASE}/api/runs/start2`, {
+export async function startTestRun(payload = {}, { signal, timeoutMs = 30000 } = {}) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  const timer = setTimeout(abort, timeoutMs);
+  try {
+  const response = await fetch(`${API_BASE}/api/runs/start`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+    signal: controller.signal,
   });
 
-  return parseJson(response);
+  return await parseJson(response);
+  } catch (error) {
+    if (signal?.aborted || error.status) throw error;
+    throw new Error("Lost contact with the DockVision backend or the request timed out. Acceptance could not be confirmed. Check the backend and existing run status before retrying; this request will not be automatically resent.");
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
 }
 
 // Expose direct Windows guest controls for readiness views and manual recovery.

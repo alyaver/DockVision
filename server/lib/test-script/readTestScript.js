@@ -1,11 +1,16 @@
 const path = require("path");
-const SCHEMA_VERSION = "dockvision.plan.v1"; // referenced from runner-contract-demo (task-plan.json)
+const SCHEMA_VERSION = "dockvision.user-task-plan.v1";
+const LEGACY_SCHEMA_VERSION = "dockvision.plan.v1";
+// Detect supplied fields even when their value is null or otherwise falsy.
+const hasField = (object, field) => Object.prototype.hasOwnProperty.call(object, field);
+const NAMED_TARGETS = new Set(["editor", "fileMenu", "editMenu", "formatMenu", "viewMenu", "helpMenu"]);
 
 class TestScriptError extends Error {
-  constructor(message) {
+  constructor(message, fieldPath = "configContent", stepId = null) {
     super(message);
     this.name = "TestScriptError";
-    this.code = "INVALID_TEST_SCRIPT";
+    this.code = "INVALID_TASK_PLAN";
+    this.fieldErrors = [{ path: fieldPath, stepId, message }];
   }
 }
 
@@ -16,7 +21,7 @@ class TestScriptError extends Error {
 function readTestScript({ fileName, content }) {
   const extension = path.extname(String(fileName || "")).toLowerCase(); // check if the file extension is valid
   if (extension !== ".json") {
-    throw new TestScriptError("Runner script must use .json extension.");
+    throw new TestScriptError("Runner script must use .json extension.", "configFileName");
   }
 
   if (typeof content !== "string" || content.trim() === "") {   
@@ -30,39 +35,169 @@ function readTestScript({ fileName, content }) {
     throw new TestScriptError("DOCKVISION action contains invalid JSON.");
   }
 
-  // need to confirm if schemaVersion is required and if it should be validated against SCHEMA_VERSION
-  //if (action.schemaVersion !== SCHEMA_VERSION) {
-  //  throw new TestScriptError(`Action must use schemaVersion '${SCHEMA_VERSION}'.`);
-  //}
+  if (!action || typeof action !== "object" || Array.isArray(action)) {
+    throw new TestScriptError("Task plan must be a JSON object.");
+  }
 
-  if (!Array.isArray(action.steps) || action.steps.length === 0) {
-    throw new TestScriptError("DOCKVISION action must contain at least one step.");
+  const isLegacy = action.schemaVersion === LEGACY_SCHEMA_VERSION;
+  if (!isLegacy && action.schemaVersion !== SCHEMA_VERSION) {
+    throw new TestScriptError(`Task plan must use schemaVersion '${SCHEMA_VERSION}' or '${LEGACY_SCHEMA_VERSION}'.`, "schemaVersion");
+  }
+  const tasksField = isLegacy ? "steps" : "tasks";
+  // Reject mixed envelopes rather than silently choosing one task list.
+  for (const field of [isLegacy ? "tasks" : "steps"]) {
+    if (hasField(action, field)) {
+      throw new TestScriptError(`Task plan '${action.schemaVersion}' does not support '${field}'.`, field);
+    }
+  }
+
+  if (hasField(action, "targetApp")) {
+    if (!isLegacy || hasField(action, "app")) {
+      throw new TestScriptError("Do not supply competing app and targetApp forms.", "targetApp");
+    }
+    action.app = typeof action.targetApp === "string"
+      ? { name: action.targetApp, executable: `${action.targetApp}.exe` }
+      : action.targetApp;
+    delete action.targetApp;
+  }
+  const app = action.app;
+  if (!app || typeof app !== "object" || Array.isArray(app)) {
+    throw new TestScriptError("Task plan requires an app object.", "app");
+  }
+  if (typeof app.name !== "string" || app.name.toLowerCase() !== "notepad") {
+    throw new TestScriptError("app.name must identify the supported application 'notepad'.", "app.name");
+  }
+  if (typeof app.executable !== "string" || app.executable.toLowerCase() !== "notepad.exe") {
+    throw new TestScriptError("app.executable must be 'notepad.exe'.", "app.executable");
+  }
+  if (app.fileName !== undefined && (typeof app.fileName !== "string" || !app.fileName.trim())) {
+    throw new TestScriptError("app.fileName must be a nonempty string when supplied.", "app.fileName");
+  }
+  for (const field of ["uniqueFilePerRun", "resetFile"]) {
+    if (app[field] !== undefined && typeof app[field] !== "boolean") {
+      throw new TestScriptError(`app.${field} must be a boolean when supplied.`, `app.${field}`);
+    }
+  }
+
+  if (!Array.isArray(action[tasksField]) || action[tasksField].length === 0) {
+    throw new TestScriptError("DOCKVISION action must contain at least one task.", tasksField);
   }
 
   const seenIds = new Set(); // to track unique step ids
 
-  for (const step of action.steps) {
+  for (const [index, step] of action[tasksField].entries()) {
+    const taskPath = `${tasksField}[${index}]`;
     if (!step || typeof step !== "object" || Array.isArray(step)) {
-      throw new TestScriptError("Each action step must be a JSON object.");
+      throw new TestScriptError("Each action step must be a JSON object.", taskPath);
     }
 
     if (typeof step.id !== "string" || !step.id.trim()) {
-      throw new TestScriptError("Each action step requires an id.");
+      throw new TestScriptError("Each action step requires an id.", `${taskPath}.id`);
     }
 
     if (seenIds.has(step.id)) {
-      throw new TestScriptError(`Action step id '${step.id}' is duplicated.`);
+      throw new TestScriptError(`Action step id '${step.id}' is duplicated.`, `${taskPath}.id`, step.id);
     }
 
     seenIds.add(step.id); // mark this id as seen
 
+    // Supported demo imports place named-control percentages on the task.
+    // Normalize them into an explicit target before checking action fields.
+    if (step.action === "CLICK" && (hasField(step, "xPercent") || hasField(step, "yPercent"))) {
+      if (typeof step.target === "string") step.target = { type: "namedControl", name: step.target };
+      if (!step.target || step.target.type !== "namedControl") {
+        throw new TestScriptError("Percentages require a named-control target.", `${taskPath}.target`, step.id);
+      }
+      for (const field of ["xPercent", "yPercent"]) {
+        if (!hasField(step, field)) continue;
+        if (hasField(step.target, field)) {
+          throw new TestScriptError(`Do not supply competing ${field} values.`, `${taskPath}.${field}`, step.id);
+        }
+        step.target[field] = step[field];
+        delete step[field];
+      }
+    }
+
+    if (step.action !== "TYPE" && step.action !== "CLICK") {
+      throw new TestScriptError(`Task '${step.id}' action must be TYPE or CLICK.`, `${taskPath}.action`, step.id);
+    }
+
+    const allowedFields = step.action === "TYPE"
+      ? ["id", "action", "text"]
+      : ["id", "action", "target", "button", "clickCount"];
+    for (const field of Object.keys(step)) {
+      if (!allowedFields.includes(field)) {
+        throw new TestScriptError(`${step.action} task '${step.id}' does not support field '${field}'.`, `${taskPath}.${field}`, step.id);
+      }
+    }
+
     if (step.action === "TYPE") {
       if (typeof step.text !== "string" || step.text.length === 0) {
-        throw new TestScriptError(`TYPE step '${step.id}' requires a nonempty text string.`);
+        throw new TestScriptError(`TYPE step '${step.id}' requires a nonempty text string.`, `${taskPath}.text`, step.id);
+      }
+    } else {
+      if (typeof step.target === "string" && step.target.startsWith("notepad.") && NAMED_TARGETS.has(step.target.slice(8))) {
+        step.target = step.target.slice(8);
+      } else if (step.target?.type === "namedControl" && typeof step.target.name === "string"
+          && step.target.name.startsWith("notepad.") && NAMED_TARGETS.has(step.target.name.slice(8))) {
+        step.target.name = step.target.name.slice(8);
+      }
+      const target = step.target;
+      if (typeof target === "string") {
+        if (!NAMED_TARGETS.has(target)) {
+          throw new TestScriptError(`CLICK task '${step.id}' requires a supported named target.`, `${taskPath}.target`, step.id);
+        }
+      } else {
+        if (!target || typeof target !== "object" || Array.isArray(target)
+            || !["namedControl", "screenPoint", "windowPoint"].includes(target.type)) {
+          throw new TestScriptError(`CLICK task '${step.id}' requires a named target or a screenPoint/windowPoint target.`, `${taskPath}.target`, step.id);
+        }
+        // Explicit named controls use a name and optional percentages; point targets use x/y.
+        const targetFields = target.type === "namedControl"
+          ? ["type", "name", "xPercent", "yPercent"]
+          : ["type", "x", "y"];
+        for (const field of Object.keys(target)) {
+          if (!targetFields.includes(field)) {
+            throw new TestScriptError(`CLICK task '${step.id}' target does not support field '${field}'.`, `${taskPath}.target.${field}`, step.id);
+          }
+        }
+        // Apply the same supported-control list to string and object target forms.
+        if (target.type === "namedControl" && !NAMED_TARGETS.has(target.name)) {
+          throw new TestScriptError(`CLICK task '${step.id}' requires a supported named control.`, `${taskPath}.target.name`, step.id);
+        }
+        // Only point targets require numeric coordinates.
+        for (const coordinate of target.type === "namedControl" ? [] : ["x", "y"]) {
+          if (!Number.isFinite(target[coordinate])) {
+            throw new TestScriptError(`CLICK task '${step.id}' requires a finite number for target.${coordinate}.`, `${taskPath}.target.${coordinate}`, step.id);
+          }
+        }
+      }
+
+      // Percentages belong inside explicit named-control targets and must be within 0ΓÇô100.
+      for (const field of ["xPercent", "yPercent"]) {
+        if (typeof target === "object" && target.type === "namedControl" && hasField(target, field)
+            && (!Number.isFinite(target[field]) || target[field] < 0 || target[field] > 100)) {
+          throw new TestScriptError(`CLICK task '${step.id}' target.${field} must be a number from 0 to 100.`, `${taskPath}.target.${field}`, step.id);
+        }
+      }
+
+      if (step.button === undefined) step.button = "left";
+      if (step.clickCount === undefined) step.clickCount = 1;
+      if (step.button !== "left" && step.button !== "right") {
+        throw new TestScriptError(`CLICK task '${step.id}' button must be left or right.`, `${taskPath}.button`, step.id);
+      }
+      if (step.clickCount !== 1 && step.clickCount !== 2) {
+        throw new TestScriptError(`CLICK task '${step.id}' clickCount must be 1 or 2.`, `${taskPath}.clickCount`, step.id);
       }
     }
   }
 
+  // The run store and guest agent consume one canonical execution format.
+  if (isLegacy) {
+    action.schemaVersion = SCHEMA_VERSION;
+    action.tasks = action.steps;
+    delete action.steps;
+  }
   return action;
 }
 
