@@ -481,3 +481,11 @@ body, #root {
   transform: none;
 }
 
+/* runner modes */
+
+.runner-modes {
+  display: flex;
+  justify-content: center;
+  gap: 50px;
+  margin: 0 0 20px;
+}
