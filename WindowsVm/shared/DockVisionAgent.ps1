@@ -235,7 +235,6 @@ function Test-RunCancellationRequested {
     )
 
     $cancelPath = Get-CancellationRequestPath -RunContext $RunContext
-    Write-RunLog -RunContext $RunContext -Message "Checking cancellation file: $cancelPath"
 
     if (-not (Test-Path -LiteralPath $cancelPath)) {
         return $false
