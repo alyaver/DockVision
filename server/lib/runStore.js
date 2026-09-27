@@ -16,13 +16,10 @@ const HEARTBEAT_STALE_MIN_MS = 60 * 1000;
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
-const SHARED_ROOT = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "WindowsVm",
-  "shared"
-);
+// DOCKVISION_SHARED_ROOT redirects the store for isolated verification runs
+const SHARED_ROOT = process.env.DOCKVISION_SHARED_ROOT
+  ? path.resolve(process.env.DOCKVISION_SHARED_ROOT)
+  : path.resolve(__dirname, "..", "..", "WindowsVm", "shared");
 const ACTIVE_ROOT = path.join(SHARED_ROOT, "active");
 const RUNS_ROOT = path.join(SHARED_ROOT, "runs");
 const CURRENT_RUN_POINTER_PATH = path.join(ACTIVE_ROOT, "current-run.json");
@@ -1000,6 +997,57 @@ async function pruneCompletedRuns() {
   }
 }
 
+async function listRuns() {
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const currentRunPointer = await readCurrentRunPointer();
+  const activeRunId = currentRunPointer?.runId || null;
+  const entries = await fs.readdir(RUNS_ROOT, { withFileTypes: true });
+  const runs = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const runPaths = getRunPaths(entry.name);
+    const [meta, task, result] = await Promise.all([
+      readJsonIfExists(runPaths.metaPath),
+      readJsonIfExists(runPaths.taskPath),
+      readJsonIfExists(runPaths.resultPath),
+    ]);
+
+    if (!meta && !task && !result) {
+      continue;
+    }
+
+    const status = result?.status || task?.status || meta?.status || "queued";
+
+    runs.push({
+      runId: entry.name,
+      testName: meta?.testName || "Untitled Test Run",
+      taskType: task?.taskType || meta?.taskType || "unknown",
+      status,
+      active: activeRunId === entry.name,
+      createdUtc: meta?.createdUtc || task?.createdUtc || null,
+      startedUtc: meta?.startedUtc || task?.startedUtc || null,
+      finishedUtc: meta?.finishedUtc || result?.finishedUtc || null,
+      updatedUtc: meta?.updatedUtc || null,
+    });
+  }
+
+  runs.sort((left, right) => runSortTimestamp(right) - runSortTimestamp(left));
+
+  return runs;
+}
+
+function runSortTimestamp(run) {
+  const candidate = run.createdUtc || run.finishedUtc || "";
+  const parsed = Date.parse(candidate);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 module.exports = {
   SHARED_ROOT,
   buildContainerName,
@@ -1008,5 +1056,6 @@ module.exports = {
   attachContainerId,
   markRunLaunchFailure,
   readRun,
+  listRuns,
   resolveRunFilePath,
 };

@@ -25,6 +25,7 @@ const {
   attachContainerId,
   markRunLaunchFailure,
   readRun,
+  listRuns,
   resolveRunFilePath,
 } = require("./lib/runStore");
 const {
@@ -303,6 +304,24 @@ app.post("/api/windows-vm/start", async (req, res) => {
       success: false,
       message: "Failed to start the Windows VM service",
       error: error.message,
+    });
+  }
+});
+
+app.get("/api/runs", async (req, res) => {
+  try {
+    const runs = await listRuns();
+
+    return res.json({
+      success: true,
+      runs,
+    });
+  } catch (error) {
+    console.error("RUN LIST SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load run history",
     });
   }
 });
