@@ -66,6 +66,15 @@ const Confirmation = () => {
     location.state?.configContent ||
     storedRun?.configContent ||
     "No config content available";
+    const iterations =Number(location.state?.iterations ?? storedRun?.iterations) || 1;
+    const iterationTimeoutSeconds = 300;
+      //Number( location.state?.iterationTimeoutSeconds ?? storedRun?.iterationTimeoutSeconds) || 300;        //user programamble timeout later on confirmation page 
+
+    const captureIntervalSeconds =
+      Number(
+        location.state?.captureIntervalSeconds ??
+        storedRun?.captureIntervalSeconds
+      ) || 5;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -87,6 +96,9 @@ const Confirmation = () => {
         runnerScriptLanguage,
         configFileName,
         configContent,
+        iterations,
+        iterationTimeoutSeconds,
+        captureIntervalSeconds,
       });
 
       // Keep the submitted runner source next to the returned run identifiers
@@ -100,6 +112,9 @@ const Confirmation = () => {
         runnerScriptLanguage,
         configFileName,
         configContent,
+        iterations,
+        iterationTimeoutSeconds,
+        captureIntervalSeconds,
       });
 
       navigate("/running-test", {

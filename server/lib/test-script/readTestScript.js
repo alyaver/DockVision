@@ -35,13 +35,16 @@ function readTestScript({ fileName, content }) {
   //  throw new TestScriptError(`Action must use schemaVersion '${SCHEMA_VERSION}'.`);
   //}
 
-  if (!Array.isArray(action.steps) || action.steps.length === 0) {
-    throw new TestScriptError("DOCKVISION action must contain at least one step.");
-  }
+ const steps = Array.isArray(action.tasks)
+  ? action.tasks
+  : action.steps;
 
-  const seenIds = new Set(); // to track unique step ids
+  if (!Array.isArray(steps) || steps.length === 0) {
+    throw new TestScriptError("DOCKVISION action must contain at least one task or step.");}
+  
+    const seenIds = new Set(); // to track unique step ids
 
-  for (const step of action.steps) {
+  for (const step of steps) {
     if (!step || typeof step !== "object" || Array.isArray(step)) {
       throw new TestScriptError("Each action step must be a JSON object.");
     }

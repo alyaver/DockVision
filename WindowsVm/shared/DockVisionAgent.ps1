@@ -50,11 +50,12 @@ function Resolve-SharedRoot {
 
 function Ensure-Directory {
     param([string]$Path)
-
     # Make sure the given path exists so the agent can write files there.
-    if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory -Force -Path $Path | Out-Null
-    }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Ensure-Directory received an empty path."}
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        New-Item -ItemType Directory -Force -Path $Path | Out-Null}
 }
 
 function Get-RunContext {
@@ -82,12 +83,17 @@ function Get-RunContext {
 function Ensure-RunLayout {
     param([hashtable]$RunContext)
 
-    foreach ($path in @(
+    $paths = @(
         $RunContext.runRoot,
         $RunContext.logsRoot,
         $RunContext.screenshotsRoot,
         $RunContext.artifactsRoot
-    )) {
+    )
+
+    foreach ($path in $paths) {
+        if ([string]::IsNullOrWhiteSpace([string]$path)) { 
+            throw "Ensure-RunLayout received an empty path. Context: $($RunContext | ConvertTo-Json -Compress)"}
+
         Ensure-Directory -Path $path
     }
 }
@@ -118,12 +124,73 @@ function Resolve-ActiveRunContext {
     param([string]$SharedRoot)
 
     $currentRun = Read-CurrentRunPointer -SharedRoot $SharedRoot
-    if (-not $currentRun -or [string]::IsNullOrWhiteSpace([string]$currentRun.runId)) {
+
+    if (
+        -not $currentRun -or
+        [string]::IsNullOrWhiteSpace([string]$currentRun.runId)
+    ) {
         return $null
     }
 
-    $runContext = Get-RunContext -SharedRoot $SharedRoot -RunId ([string]$currentRun.runId)
+    $runId = [string]$currentRun.runId
+
+    # Start with the normal run-level paths.
+    $runContext = Get-RunContext `
+        -SharedRoot $SharedRoot `
+        -RunId $runId
+
+    #if the active pointer provides channel specific paths,
+    #use those instead. This allows the supervisor to point
+    #the agent at an individual iteration.
+    if ($currentRun.channel) {
+
+        if (-not [string]::IsNullOrWhiteSpace(
+            [string]$currentRun.channel.taskPath
+        )) {
+            $runContext.taskPath = Join-Path `
+                $SharedRoot `
+                ([string]$currentRun.channel.taskPath)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace(
+            [string]$currentRun.channel.resultPath
+        )) {
+            $runContext.resultPath = Join-Path `
+                $SharedRoot `
+                ([string]$currentRun.channel.resultPath)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace(
+            [string]$currentRun.channel.logsDir
+        )) {
+            $runContext.logsRoot = Join-Path `
+                $SharedRoot `
+                ([string]$currentRun.channel.logsDir)
+
+            $runContext.taskLogPath = Join-Path `
+                $runContext.logsRoot `
+                "task.log"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace(
+            [string]$currentRun.channel.screenshotsDir
+        )) {
+            $runContext.screenshotsRoot = Join-Path `
+                $SharedRoot `
+                ([string]$currentRun.channel.screenshotsDir)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace(
+            [string]$currentRun.channel.artifactsDir
+        )) {
+            $runContext.artifactsRoot = Join-Path `
+                $SharedRoot `
+                ([string]$currentRun.channel.artifactsDir)
+        }
+    }
+
     Ensure-RunLayout -RunContext $runContext
+
     return $runContext
 }
 
@@ -152,6 +219,36 @@ function ConvertTo-RelativeRunPath {
     }
 
     return $targetPath.Substring($runRoot.Length).TrimStart('\') -replace '\\', '/'
+}
+
+function Get-CancellationRequestPath {
+    param(
+        [hashtable]$RunContext
+)
+
+    return Join-Path $RunContext.runRoot "cancel-request.json"
+}
+
+function Test-RunCancellationRequested {
+    param(
+        [hashtable]$RunContext
+    )
+
+    $cancelPath = Get-CancellationRequestPath -RunContext $RunContext
+    Write-RunLog -RunContext $RunContext -Message "Checking cancellation file: $cancelPath"
+
+    if (-not (Test-Path -LiteralPath $cancelPath)) {
+        return $false
+    }
+
+    try {
+        $request = Get-Content -LiteralPath $cancelPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        return [string]$request.status -eq "requested"
+    }
+    catch {
+        Write-RunLog -RunContext $RunContext -Message "Cancellation request could not be read: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Resolve-RunRelativePath {
@@ -236,6 +333,11 @@ function Read-TaskFile {
 
     # Read the host-provided task file for the active run channel.
     $runContext = Resolve-ActiveRunContext -SharedRoot $SharedRoot
+	if ($runContext) {
+    Write-InstallLog `
+        -SharedRoot $SharedRoot `
+        -Message "Reading task from: $($runContext.taskPath)"
+	}
     if (-not $runContext -or -not (Test-Path $runContext.taskPath)) {
         return $null
     }
@@ -456,7 +558,8 @@ function Send-HumanLikeText {
 function Capture-ScreenArtifact {
     param(
         [hashtable]$RunContext,
-        [string]$TaskId
+        [string]$TaskId,
+        [string]$FileName = ""
     )
 
     Add-Type -AssemblyName System.Windows.Forms
@@ -467,7 +570,12 @@ function Capture-ScreenArtifact {
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $path = Join-Path $RunContext.screenshotsRoot "notepad-$TaskId.png"
+
+    if ([string]::IsNullOrWhiteSpace($FileName)) {
+        $FileName = "notepad-$TaskId.png"
+    }
+
+    $path = Join-Path $RunContext.screenshotsRoot $FileName
 
     try {
         $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
@@ -723,36 +831,173 @@ function Invoke-UploadedScriptRunnerTask {
         }
     }
 
+    $captureIntervalSeconds = 5
+    $iterationTimeoutSeconds = 60
+
+    if ($Task.PSObject.Properties.Name -contains "settings" -and $null -ne $Task.settings) {
+        if ($Task.settings.PSObject.Properties.Name -contains "captureIntervalSeconds") {
+            $configuredCaptureInterval = [double]$Task.settings.captureIntervalSeconds
+
+            if ($configuredCaptureInterval -gt 0) {
+                $captureIntervalSeconds = $configuredCaptureInterval
+            }
+        }
+
+        if ($Task.settings.PSObject.Properties.Name -contains "iterationTimeoutSeconds") {
+            $configuredTimeout = [double]$Task.settings.iterationTimeoutSeconds
+
+            if ($configuredTimeout -gt 0) {
+                $iterationTimeoutSeconds = $configuredTimeout
+            }
+        }
+    }
+
+    Ensure-RunLayout -RunContext $RunContext
+
+    $stdoutPath = Join-Path $RunContext.logsRoot "$TaskId-stdout.txt"
+    $stderrPath = Join-Path $RunContext.logsRoot "$TaskId-stderr.txt"
+
+    Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+
     Write-RunLog -RunContext $RunContext -Message "Executing uploaded $language runner: $runnerPath"
+    Write-RunLog -RunContext $RunContext -Message "Worker supervision settings: timeout=${iterationTimeoutSeconds}s, capture interval=${captureIntervalSeconds}s."
 
     if ($language -eq "python") {
         $pythonPath = Find-PythonCommand
+
         if (-not $pythonPath) {
             throw "Python is not available inside the Windows guest."
         }
 
         Add-PythonRuntimePaths -PythonPath $pythonPath
-        $output = & $pythonPath $runnerPath --plan $configPath 2>&1
+
+        $process = Start-Process -FilePath $pythonPath -ArgumentList @("`"$runnerPath`"", "--plan", "`"$configPath`"") -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
     }
     elseif ($language -eq "powershell") {
-        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runnerPath -ConfigPath $configPath 2>&1
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$runnerPath`"", "-ConfigPath", "`"$configPath`"") -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
     }
     else {
         throw "Unsupported uploaded runner language '$language'."
     }
 
-    $exitCode = $LASTEXITCODE
-    $outputText = ($output | Out-String).Trim()
+    Write-RunLog -RunContext $RunContext -Message "Worker process started with PID $($process.Id)."
 
-    if ($exitCode -ne 0) {
-        throw "Uploaded runner failed with exit code $exitCode. $outputText"
+    $startedUtc = [DateTime]::UtcNow
+    $nextCaptureUtc = $startedUtc.AddSeconds($captureIntervalSeconds)
+    $timedOut = $false
+
+    while (-not $process.HasExited) {
+        $nowUtc = [DateTime]::UtcNow
+        $elapsedSeconds = ($nowUtc - $startedUtc).TotalSeconds
+
+        if (Test-RunCancellationRequested -RunContext $RunContext) {
+            Write-RunLog -RunContext $RunContext -Message "Cancellation requested. Terminating worker PID $($process.Id)."
+
+            try {
+                & taskkill.exe /PID $process.Id /T /F | Out-Null
+            }
+            catch {
+                Write-RunLog -RunContext $RunContext -Message "Failed to terminate cancelled worker PID $($process.Id): $($_.Exception.Message)"
+        }
+
+    $process.WaitForExit()
+    $process.Refresh()
+
+    Write-RunLog -RunContext $RunContext -Message "Worker PID $($process.Id) termination confirmed."
+
+    $cancelError = New-Object System.Exception "Run was cancelled."
+    $cancelError.Data["code"] = "RUN_CANCELLED"
+    throw $cancelError
+}
+
+        if ($elapsedSeconds -ge $iterationTimeoutSeconds) {
+            $timedOut = $true
+            Write-RunLog -RunContext $RunContext -Message "Worker PID $($process.Id) exceeded iteration timeout of ${iterationTimeoutSeconds}s."
+
+            try {
+                & taskkill.exe /PID $process.Id /T /F | Out-Null
+            }
+            catch {
+                Write-RunLog -RunContext $RunContext -Message "Failed to terminate timed-out worker PID $($process.Id): $($_.Exception.Message)"
+            }
+
+            break
+        }
+
+        if ($nowUtc -ge $nextCaptureUtc) {
+            $captureTimestamp = $nowUtc.ToString("yyyyMMdd-HHmmss-fff")
+            $captureFileName = "$TaskId-$captureTimestamp.png"
+
+            try {
+                $capturePath = Capture-ScreenArtifact -RunContext $RunContext -TaskId $TaskId -FileName $captureFileName
+                Write-RunLog -RunContext $RunContext -Message "Captured periodic screenshot: $capturePath"
+            }
+            catch {
+                Write-RunLog -RunContext $RunContext -Message "Periodic screenshot capture unavailable: $($_.Exception.Message)"
+            }
+
+            $nextCaptureUtc = $nowUtc.AddSeconds($captureIntervalSeconds)
+        }
+
+        Start-Sleep -Milliseconds 250
+        $process.Refresh()
+    }
+
+    $process.WaitForExit()
+    $process.Refresh()
+
+    try {
+        $completionTimestamp = [DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss-fff")
+        $completionFileName = "$TaskId-complete-$completionTimestamp.png"
+        $completionCapturePath = Capture-ScreenArtifact -RunContext $RunContext -TaskId $TaskId -FileName $completionFileName
+        Write-RunLog -RunContext $RunContext -Message "Captured completion screenshot: $completionCapturePath"
+    }
+    catch {
+        Write-RunLog -RunContext $RunContext -Message "Completion screenshot capture unavailable: $($_.Exception.Message)"
+    }
+
+    if ($timedOut) {
+        $timeoutError = New-Object System.Exception "Uploaded runner exceeded iteration timeout of ${iterationTimeoutSeconds}s."
+        $timeoutError.Data["code"] = "RUN_TIMEOUT"
+        throw $timeoutError
+    }
+
+  $exitCode = $process.ExitCode
+    $stdoutText = ""
+    $stderrText = ""
+
+    if (Test-Path -LiteralPath $stdoutPath) {
+        $stdoutRaw = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+
+        if ($null -ne $stdoutRaw) {
+            $stdoutText = $stdoutRaw.Trim()
+        }
+    }
+
+    if (Test-Path -LiteralPath $stderrPath) {
+        $stderrRaw = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+
+        if ($null -ne $stderrRaw) {
+            $stderrText = $stderrRaw.Trim()
+        }
+    }
+
+    if ($null -ne $exitCode -and $exitCode -ne 0) {
+        throw "Uploaded runner failed with exit code $exitCode. $stderrText $stdoutText"
     }
 
     try {
-        $result = ConvertFrom-RunnerOutputJson -OutputText $outputText
+        $result = ConvertFrom-RunnerOutputJson -OutputText $stdoutText
     }
     catch {
-        throw "Uploaded runner completed but did not return valid JSON. Output: $outputText"
+        throw "Uploaded runner completed but did not return valid JSON. Output: $stdoutText"
+    }
+
+    if ($result.PSObject.Properties.Name -contains "status") {
+        if ([string]$result.status -ne "completed") {
+            throw "Uploaded runner reported status '$($result.status)'."
+        }
     }
 
     if ($result.PSObject.Properties.Name -notcontains "taskId") {
@@ -1051,7 +1296,13 @@ function Handle-Task {
     $taskId = if ($Task.taskId) { [string]$Task.taskId } else { "unknown-task" }
     $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
     $runId = if ($Task.runId) { [string]$Task.runId } else { "" }
-    $runContext = if ($runId) { Get-RunContext -SharedRoot $SharedRoot -RunId $runId } else { $null }
+    $runContext = Resolve-ActiveRunContext -SharedRoot $SharedRoot
+        if (-not $runContext -or $runContext.runId -ne $runId) {
+            Write-InstallLog `
+                -SharedRoot $SharedRoot `
+                -Message "Skipping task because the active run context does not match the task run ID."
+            return
+    }
 
     if (-not $runContext) {
         Write-InstallLog -SharedRoot $SharedRoot -Message "Skipping task because no active run context could be resolved."
@@ -1100,15 +1351,20 @@ function Handle-Task {
         Mark-TaskFinished -RunContext $runContext -TaskObject $Task -Status "completed"
     }
     catch {
-        # If task execution fails, report failure and keep the task file updated.
-        Write-InstallLog -SharedRoot $SharedRoot -Message ("Task failed: " + $_.Exception.Message)
-        Write-RunLog -RunContext $runContext -Message ("Task failed: " + $_.Exception.Message)
-        Write-ResultFile -RunContext $runContext -TaskId $taskId -Status "failed" -Message $_.Exception.Message
-        Mark-TaskFinished -RunContext $runContext -TaskObject $Task -Status "failed"
-    }
-    finally {
-        # Return the agent to idle state after handling the task.
-        Write-Heartbeat -SharedRoot $SharedRoot -Status "idle" -TaskName "waiting_for_task"
+        $errorCode = $_.Exception.Data["code"]
+
+        if ($errorCode -eq "RUN_CANCELLED") {
+            Write-InstallLog -SharedRoot $SharedRoot -Message ("Task cancelled: " + $_.Exception.Message)
+            Write-RunLog -RunContext $runContext -Message ("Task cancelled: " + $_.Exception.Message)
+            Write-ResultFile -RunContext $runContext -TaskId $taskId -Status "cancelled" -Message $_.Exception.Message
+            Mark-TaskFinished -RunContext $runContext -TaskObject $Task -Status "cancelled"
+        }
+        else {
+            Write-InstallLog -SharedRoot $SharedRoot -Message ("Task failed: " + $_.Exception.Message)
+            Write-RunLog -RunContext $runContext -Message ("Task failed: " + $_.Exception.Message)
+            Write-ResultFile -RunContext $runContext -TaskId $taskId -Status "failed" -Message $_.Exception.Message
+            Mark-TaskFinished -RunContext $runContext -TaskObject $Task -Status "failed"
+        }
     }
 }
 
@@ -1135,12 +1391,21 @@ while ($true) {
         }
     }
     catch {
-        # Log any loop-level errors but keep the loop alive.
-        try {
-            Write-InstallLog -SharedRoot $sharedRoot -Message ("Agent loop error: " + $_.Exception.Message)
-        }
-        catch {
-        }
+        $errorMessage = $_.Exception.Message
+        $positionMessage = $_.InvocationInfo.PositionMessage
+        $stackTrace = $_.ScriptStackTrace
+
+        Write-InstallLog `
+            -SharedRoot $sharedRoot `
+            -Message "Agent loop error: $errorMessage"
+
+        Write-InstallLog `
+            -SharedRoot $sharedRoot `
+            -Message "Agent loop position: $positionMessage"
+
+        Write-InstallLog `
+            -SharedRoot $sharedRoot `
+            -Message "Agent loop stack: $stackTrace"
     }
 
     Start-Sleep -Seconds $HeartbeatIntervalSeconds
