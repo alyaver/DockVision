@@ -831,7 +831,7 @@ function Invoke-UploadedScriptRunnerTask {
     }
 
     $captureIntervalSeconds = 5
-    $iterationTimeoutSeconds = 300
+    $iterationTimeoutSeconds = 60
 
     if ($Task.PSObject.Properties.Name -contains "settings" -and $null -ne $Task.settings) {
         if ($Task.settings.PSObject.Properties.Name -contains "captureIntervalSeconds") {
