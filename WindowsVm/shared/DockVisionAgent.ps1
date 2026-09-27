@@ -923,6 +923,9 @@ namespace DockVision {
 
     $target = $Step.target
     if ($target -is [string]) { $target = [pscustomobject]@{ type = "namedControl"; name = $target } }
+    if ($target.type -ceq "namedControl" -and [string]$target.name -cmatch '^notepad\.(editor|fileMenu|editMenu|formatMenu|viewMenu|helpMenu)$') {
+        $target = [pscustomobject]@{ type = "namedControl"; name = $Matches[1]; xPercent = $target.xPercent; yPercent = $target.yPercent }
+    }
     $rect = New-Object DockVision.ClickRect
     $windowRect = New-Object DockVision.ClickRect
     if (-not [DockVision.ClickInput]::GetWindowRect($WindowHandle, [ref]$windowRect)) {

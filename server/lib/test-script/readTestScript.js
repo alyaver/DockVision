@@ -110,8 +110,11 @@ function readTestScript({ fileName, content }) {
         throw new TestScriptError(`TYPE step '${step.id}' requires a nonempty text string.`, `${taskPath}.text`, step.id);
       }
     } else {
-      if (isLegacy && step.target === "notepad.editor") {
-        step.target = "editor";
+      if (typeof step.target === "string" && step.target.startsWith("notepad.") && NAMED_TARGETS.has(step.target.slice(8))) {
+        step.target = step.target.slice(8);
+      } else if (step.target?.type === "namedControl" && typeof step.target.name === "string"
+          && step.target.name.startsWith("notepad.") && NAMED_TARGETS.has(step.target.name.slice(8))) {
+        step.target.name = step.target.name.slice(8);
       }
       const target = step.target;
       if (typeof target === "string") {
