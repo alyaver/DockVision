@@ -19,13 +19,6 @@ import { useNavigate } from "react-router-dom";
  * complete run setup into a more global store.
  */
 
-const RECENT_RUNS = [
-  { id: "a", name: "Test Run A", date: "xx/xx/xxxx" },
-  { id: "b", name: "Test Run B", date: "xx/xx/xxxx" },
-  { id: "c", name: "Test Run C", date: "xx/xx/xxxx" },
-  { id: "d", name: "Test Run D", date: "xx/xx/xxxx" },
-  { id: "e", name: "Test Run E", date: "xx/xx/xxxx" },
-];
 
 // Prototype runner policy: this execution path reads a task-plan JSON plus a
 // Python or PowerShell runner into browser state before API handoff.
@@ -84,6 +77,34 @@ function getRunnerScriptLanguage(fileName) {
   return "";
 }
 
+// Format run summary fields for the dashboard history list using backend
+function formatRunLabel(value) {
+  return String(value || "")
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatRunTimestamp(run) {
+  const label = run.finishedUtc
+    ? "Finished"
+    : run.startedUtc
+    ? "Started"
+    : "Created";
+  const value = run.finishedUtc || run.startedUtc || run.createdUtc;
+
+  if (!value) {
+    return "Timestamp unavailable";
+  }
+
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return `${label}: ${value}`;
+  }
+
+  return `${label}: ${parsedDate.toLocaleString()}`;
+}
 const Dashboard = () => {
   const navigate = useNavigate();
 
@@ -100,6 +121,12 @@ const Dashboard = () => {
   const [notifications, setNotifications] = useState([]);
   const [user, setUser] = useState(null);
   const [isPreparingRun, setIsPreparingRun] = useState(false);
+
+  // Explicit loading/error flags so the history card can render all three
+  // required states: loading, empty, and request-failure.
+  const [runs, setRuns] = useState([]);
+  const [runsLoading, setRunsLoading] = useState(true);
+  const [runsError, setRunsError] = useState("");
 
   const [readiness, setReadiness] = useState({
     docker: false,
@@ -139,6 +166,7 @@ const Dashboard = () => {
     }
 
     fetchCurrentUser();
+    loadRuns();
     checkReadiness();
 
     const interval = setInterval(checkReadiness, 5000);
@@ -166,11 +194,38 @@ const Dashboard = () => {
       const data = await response.json();
       setUser(data.user || data);
     } catch {
-      setUser({
-        name: "Leo",
-        email: "leo@leomail.com",
-      });
+      setUser(null);
     }
+  }
+
+  async function loadRuns() {
+    setRunsLoading(true);
+    setRunsError("");
+
+    try {
+      const response = await fetch("/api/runs");
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to load recent runs.");
+      }
+
+      setRuns(Array.isArray(data.runs) ? data.runs : []);
+    } catch (error) {
+      setRuns([]);
+      setRunsError(error.message || "Failed to load recent runs.");
+    } finally {
+      setRunsLoading(false);
+    }
+  }
+
+  function handleOpenRun(run) {
+    navigate("/running-test", {
+      state: {
+        runId: run.runId,
+        testName: run.testName,
+      },
+    });
   }
 
   async function checkReadiness() {
@@ -520,7 +575,7 @@ const Dashboard = () => {
     readiness.docker && readiness.backend && readiness.storage;
   const isWindowsVmRunning = readiness.windowsVmStatus === "running";
 
-  const displayName = user?.name || user?.fname || "User";
+  const displayName = user?.name || user?.fname || "";
 
   return (
     <>
@@ -735,22 +790,62 @@ const Dashboard = () => {
           </div>
 
           <div className="card">
-            <div className="card-header">
+            <div className="card-header card-header--actions">
               <div className="card-title">Recent Test Runs</div>
+              <button
+                className="run-refresh"
+                type="button"
+                onClick={loadRuns}
+                disabled={runsLoading}
+              >
+                {runsLoading ? "Loading..." : "Refresh"}
+              </button>
             </div>
 
-            {RECENT_RUNS.length > 0 ? (
+            {runsLoading && runs.length === 0 ? (
+              <div className="run-list-state">Loading recent runs...</div>
+            ) : runsError ? (
+              <div className="run-list-state run-list-state--error">
+                <p>{runsError}</p>
+                <button className="run-retry" type="button" onClick={loadRuns}>
+                  Retry
+                </button>
+              </div>
+            ) : runs.length > 0 ? (
               <ul className="run-list">
-                {RECENT_RUNS.map((run) => (
-                  <li key={run.id} className="run-item">
+                {runs.map((run) => (
+                  <li key={run.runId} className="run-item">
                     <div className="run-item-left">
-                      <div className="run-dot" />
+                      <div
+                        className={`run-dot run-dot--${String(
+                          run.status || "unknown"
+                        ).toLowerCase()}`}
+                      />
                       <div>
-                        <div className="run-name">{run.name}</div>
-                        <div className="run-date">Last edit: {run.date}</div>
+                        <div className="run-name">{run.testName}</div>
+                        <div className="run-meta">
+                          <span className="run-mode">
+                            {formatRunLabel(run.taskType) || "Unknown"}
+                          </span>
+                          <span
+                            className={`run-status run-status--${String(
+                              run.status || "unknown"
+                            ).toLowerCase()}`}
+                          >
+                            {formatRunLabel(run.status) || "Unknown"}
+                          </span>
+                          {run.active && (
+                            <span className="run-active">Active</span>
+                          )}
+                        </div>
+                        <div className="run-date">{formatRunTimestamp(run)}</div>
                       </div>
                     </div>
-                    <button className="run-open" type="button">
+                    <button
+                      className="run-open"
+                      type="button"
+                      onClick={() => handleOpenRun(run)}
+                    >
                       Open
                     </button>
                   </li>
@@ -763,7 +858,7 @@ const Dashboard = () => {
                 </div>
                 <div className="empty-title">No recent Test Runs</div>
                 <div className="empty-sub">
-                  It&apos;s empty in here…
+                  It&apos;s empty in here&hellip;
                   <br />
                   Start a new test run to see it appear.
                 </div>

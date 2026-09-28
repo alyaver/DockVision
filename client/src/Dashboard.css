@@ -481,3 +481,147 @@ body, #root {
   transform: none;
 }
 
+/* RECENT RUN HISTORY: STATES + BADGES */
+.card-header--actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-refresh {
+  font-family: inherit;
+  font-size: 11px;
+  color: #555555;
+  background: none;
+  border: 1px solid #d0d0d0;
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.run-refresh:hover:not(:disabled) {
+  background-color: #1a1a1a;
+  color: #ffffff;
+  border-color: #1a1a1a;
+}
+
+.run-refresh:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.run-list-state {
+  padding: 24px 20px;
+  font-size: 13px;
+  color: #666666;
+  text-align: center;
+}
+
+.run-list-state--error {
+  color: #c0392b;
+}
+
+.run-list-state--error p {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.run-retry {
+  font-family: inherit;
+  font-size: 12px;
+  color: #ffffff;
+  background-color: #1a1a1a;
+  border: 1px solid #1a1a1a;
+  border-radius: 5px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.run-mode,
+.run-status,
+.run-active {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.run-mode {
+  background-color: #eef1f6;
+  color: #4a5568;
+  border: 1px solid #d9dee7;
+}
+
+.run-status--queued {
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
+}
+
+.run-status--running {
+  background-color: #e7f1ff;
+  color: #1c56b5;
+  border: 1px solid #c3d8f7;
+}
+
+.run-status--completed {
+  background-color: #e6f7ed;
+  color: #1d7a34;
+  border: 1px solid #c7ebd3;
+}
+
+.run-status--failed {
+  background-color: #fde8e6;
+  color: #c0392b;
+  border: 1px solid #f5c6cb;
+}
+
+.run-status--cancelled {
+  background-color: #f1f1f1;
+  color: #666666;
+  border: 1px solid #dddddd;
+}
+
+.run-status--unknown {
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
+}
+
+.run-active {
+  background-color: #1a1a1a;
+  color: #ffffff;
+  border: 1px solid #1a1a1a;
+}
+
+.run-dot--queued {
+  background-color: #e0a800;
+}
+
+.run-dot--running {
+  background-color: #1c56b5;
+}
+
+.run-dot--completed {
+  background-color: #2f9e5f;
+}
+
+.run-dot--failed {
+  background-color: #c0392b;
+}
+
+.run-dot--cancelled {
+  background-color: #999999;
+}
+
