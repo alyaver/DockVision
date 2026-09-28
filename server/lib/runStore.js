@@ -1394,5 +1394,5 @@ module.exports = {
   appendRunLog,
   assertRunStatusTransition,
   readCancellationRequest,
-  requestRunCancellation,
+  requestRunCancellation2,
 };

@@ -29,7 +29,7 @@ const {
   requestRunCancellation,
   listRuns,
   resolveRunFilePath,
-  requestRunCancellation,
+  requestRunCancellation2,
 } = require("./lib/runStore");
 const {
   ensureWindowsVmRunning,
