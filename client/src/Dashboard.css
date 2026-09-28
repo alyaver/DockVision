@@ -625,3 +625,11 @@ body, #root {
   background-color: #999999;
 }
 
+/* runner modes */
+
+.runner-modes {
+  display: flex;
+  justify-content: center;
+  gap: 50px;
+  margin: 0 0 20px;
+}
