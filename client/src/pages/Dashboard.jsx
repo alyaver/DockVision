@@ -121,6 +121,7 @@ const Dashboard = () => {
   const [notifications, setNotifications] = useState([]);
   const [user, setUser] = useState(null);
   const [isPreparingRun, setIsPreparingRun] = useState(false);
+  const [executionMode, setExecutionMode] = useState("custom")
 
   // Explicit loading/error flags so the history card can render all three
   // required states: loading, empty, and request-failure.
@@ -163,6 +164,10 @@ const Dashboard = () => {
 
     if (storedRun?.configFileName) {
       setConfigFileName(storedRun.configFileName);
+    }
+
+    if (storedRun?.executionMode) {
+      setExecutionMode(storedRun.executionMode);
     }
 
     fetchCurrentUser();
@@ -500,11 +505,16 @@ const Dashboard = () => {
   // body because the backend needs actual script content to execute later.
   function handleStartRun() {
     const testNameError = validateTestName(testName);
-    const runnerError = !runnerScriptName
-      ? "Runner Script is required."
-      : !runnerScriptContent
-      ? "Runner Script content could not be read."
-      : "";
+    let runnerError = ""
+      if (executionMode === "custom") {
+        if (!runnerScriptName) {
+          runnerError = "Runner Script is required.";
+        }
+        else if (!runnerScriptContent) {
+          runnerError = "Runner Script content could not be read.";
+        }
+      }
+
     const configError = !configFileName ? "Task Plan JSON required." : "";
 
     if (testNameError) {
@@ -545,6 +555,7 @@ const Dashboard = () => {
       runnerScriptLanguage,
       configFileName,
       configContent,
+      executionMode
     });
 
     navigate("/confirmation", {
@@ -555,19 +566,30 @@ const Dashboard = () => {
         runnerScriptLanguage,
         configFileName,
         configContent,
+        executionMode
       },
     });
 
     setIsPreparingRun(false);
   }
 
+  // update selected mode and remember the mode even after page refresh
+  function handleModeChange(event) {
+    const mode = event.target.value;
+    setExecutionMode(mode);
+    writeStoredRun({ executionMode: mode });
+  }
+
   const testNameError = validateTestName(testName);
-  // Mirror handleStartRun validation so inline errors match the launch gate.
-  const runnerError = !runnerScriptName
-    ? "Runner Script is required."
-    : !runnerScriptContent
-    ? "Runner Script content could not be read."
-    : "";
+  let runnerError = ""
+    if (executionMode === "custom") {
+      if (!runnerScriptName) {
+        runnerError = "Runner Script is required.";
+      }
+      else if (!runnerScriptContent) {
+        runnerError = "Runner Script content could not be read.";
+      }
+  }
   const configError = !configFileName ? "Task Plan JSON required." : "";
   // Keep the launch gate focused on host prerequisites. The backend is allowed
   // to cold-start the Windows guest during run creation if it is not up yet.
@@ -605,31 +627,55 @@ const Dashboard = () => {
               />
               {testNameError && <p className="error-text">{testNameError}</p>}
 
+              <div className="runner-modes">
+                <label>
+                  <input type="radio"
+                        name="mode"
+                        value="custom"
+                        checked={executionMode === "custom"}
+                        onChange={handleModeChange}
+                        /> Custom Runner
+                </label>
+                
+                <label>
+                  <input type="radio"
+                        name="mode"
+                        value="builtin"
+                        checked={executionMode === "builtin"}
+                        onChange={handleModeChange}
+                        /> Built-In Notepad
+                </label>
+              </div>
+
               <div className="form-stack">
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={handleRunnerUploadClick}
-                >
-                  <UploadIcon />{" "}
-                  {runnerScriptName
-                    ? `Replace Runner Script (${runnerScriptName})`
-                    : "Upload Runner Script (.py or .ps1)"}
-                </button>
+                {/* checks the what mode is selected and displays which container based on the mode */}
+                {executionMode === "custom" && (
+                  <div className="runner-upload">
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={handleRunnerUploadClick}
+                    >
+                      <UploadIcon />{" "}
+                      {runnerScriptName
+                        ? `Replace Runner Script (${runnerScriptName})`
+                        : "Upload Runner Script (.py or .ps1)"}
+                    </button>
 
-                <input
-                  ref={runnerFileInputRef}
-                  type="file"
-                  accept=".py,.ps1"
-                  onChange={handleRunnerFileSelected}
-                  style={{ display: "none" }}
-                />
+                    <input
+                      ref={runnerFileInputRef}
+                      type="file"
+                      accept=".py,.ps1"
+                      onChange={handleRunnerFileSelected}
+                      style={{ display: "none" }}
+                    />
 
-                {runnerScriptName && (
-                  <p className="file-name">Selected: {runnerScriptName}</p>
+                    {runnerScriptName && (
+                      <p className="file-name">Selected: {runnerScriptName}</p>
+                    )}
+                    {runnerError && <p className="error-text">{runnerError}</p>}
+                  </div>
                 )}
-                {runnerError && <p className="error-text">{runnerError}</p>}
-
                 <button
                   className="btn"
                   type="button"
