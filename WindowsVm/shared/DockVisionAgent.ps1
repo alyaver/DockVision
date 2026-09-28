@@ -1019,7 +1019,7 @@ function Invoke-PowerShellNotepadTask {
     $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
     $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
-    $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
+    $taskType = if ($Task.action) { [string]$Task.action } else { "unknown" }
     $savePath = $null
 
     if ($saveFile) {
@@ -1246,7 +1246,7 @@ function Invoke-TaskSequenceTask {
     $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
     $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
-    $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
+    $taskType = if ($Task.action) { [string]$Task.action } else { "unknown" }
 
     $process = Start-Process "notepad.exe" -PassThru
     $handle = Wait-ForMainWindow -Process $process -TimeoutSeconds $timeoutSeconds
