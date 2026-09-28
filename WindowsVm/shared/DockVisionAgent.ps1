@@ -1120,41 +1120,157 @@ function Invoke-PowerShellNotepadTask {
     }
 }
 
-function Invoke-TypeSequenceTask {
+function Invoke-NotepadClick {
+    param([IntPtr]$WindowHandle, [object]$Step, [int]$TimeoutSeconds = 20)
+
+    # Keep CLICK interop separate from the existing focus and typing helpers.
+    if (-not ([System.Management.Automation.PSTypeName]"DockVision.ClickInput").Type) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+namespace DockVision {
+    public struct ClickRect { public int Left, Top, Right, Bottom; }
+    public static class ClickInput {
+        [StructLayout(LayoutKind.Sequential)]
+        struct MouseInput {
+            public int dx, dy;
+            public uint mouseData, flags, time;
+            public UIntPtr extraInfo;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        struct Input { public uint type; public MouseInput mouse; }
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetWindowRect(IntPtr window, out ClickRect rect);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetMenu(IntPtr window);
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetMenuItemRect(IntPtr window, IntPtr menu, uint item, out ClickRect rect);
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool SetCursorPos(int x, int y);
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern uint SendInput(uint count, Input[] inputs, int size);
+        public static void Click(int x, int y, bool right) {
+            if (!SetCursorPos(x, y)) throw new InvalidOperationException("Could not position the mouse.");
+            Input down = new Input();
+            down.mouse.flags = right ? 0x0008u : 0x0002u;
+            Input up = new Input();
+            up.mouse.flags = right ? 0x0010u : 0x0004u;
+            if (SendInput(2, new Input[] { down, up }, Marshal.SizeOf(typeof(Input))) != 2)
+                throw new InvalidOperationException("Windows did not accept the mouse click.");
+        }
+    }
+}
+"@
+    }
+
+    $target = $Step.target
+    if ($target -is [string]) { $target = [pscustomobject]@{ type = "namedControl"; name = $target } }
+    if ($target.type -ceq "namedControl" -and [string]$target.name -cmatch '^notepad\.(editor|fileMenu|editMenu|formatMenu|viewMenu|helpMenu)$') {
+        $target = [pscustomobject]@{ type = "namedControl"; name = $Matches[1]; xPercent = $target.xPercent; yPercent = $target.yPercent }
+    }
+    $rect = New-Object DockVision.ClickRect
+    $windowRect = New-Object DockVision.ClickRect
+    if (-not [DockVision.ClickInput]::GetWindowRect($WindowHandle, [ref]$windowRect)) {
+        throw "CLICK task '$($Step.id)': Notepad window is unavailable."
+    }
+
+    if ($target.type -ceq "namedControl") {
+        # Classic Notepad's menu-bar positions are stable and independent of display language.
+        $menuPositions = @{ fileMenu = 0; editMenu = 1; formatMenu = 2; viewMenu = 3; helpMenu = 4 }
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+        do {
+            $found = $false
+            if ($target.name -ceq "editor") {
+                $editor = [DockVision.ClickInput]::FindWindowEx($WindowHandle, [IntPtr]::Zero, "Edit", $null)
+                if ($editor -ne [IntPtr]::Zero) { $found = [DockVision.ClickInput]::GetWindowRect($editor, [ref]$rect) }
+            }
+            elseif ($menuPositions.ContainsKey([string]$target.name)) {
+                $menu = [DockVision.ClickInput]::GetMenu($WindowHandle)
+                if ($menu -ne [IntPtr]::Zero) {
+                    $found = [DockVision.ClickInput]::GetMenuItemRect($WindowHandle, $menu, $menuPositions[$target.name], [ref]$rect)
+                }
+            }
+            else { throw "CLICK task '$($Step.id)': unsupported named target '$($target.name)'." }
+            if ($found -and $rect.Right -gt $rect.Left -and $rect.Bottom -gt $rect.Top) { break }
+            $found = $false
+            Start-Sleep -Milliseconds 100
+        } while ((Get-Date) -lt $deadline)
+        if (-not $found) { throw "CLICK task '$($Step.id)': target '$($target.name)' was not found." }
+
+        $xPercent = if ($null -ne $target.xPercent) { [double]$target.xPercent } else { 50 }
+        $yPercent = if ($null -ne $target.yPercent) { [double]$target.yPercent } else { 50 }
+        # Right/bottom rectangle edges are exclusive; 100% stays inside the control.
+        $x = $rect.Left + [int][Math]::Floor(($rect.Right - $rect.Left - 1) * $xPercent / 100)
+        $y = $rect.Top + [int][Math]::Floor(($rect.Bottom - $rect.Top - 1) * $yPercent / 100)
+    }
+    elseif ($target.type -ceq "windowPoint") {
+        $x = $windowRect.Left + [int][Math]::Truncate([double]$target.x)
+        $y = $windowRect.Top + [int][Math]::Truncate([double]$target.y)
+        if ($x -lt $windowRect.Left -or $x -ge $windowRect.Right -or $y -lt $windowRect.Top -or $y -ge $windowRect.Bottom) {
+            throw "CLICK task '$($Step.id)': target is outside the Notepad window."
+        }
+    }
+    elseif ($target.type -ceq "screenPoint") {
+        $x = [int][Math]::Truncate([double]$target.x)
+        $y = [int][Math]::Truncate([double]$target.y)
+    }
+    else { throw "CLICK task '$($Step.id)': unsupported target type '$($target.type)'." }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    $onScreen = @([System.Windows.Forms.Screen]::AllScreens | Where-Object { $_.Bounds.Contains($x, $y) }).Count -gt 0
+    if (-not $onScreen) { throw "CLICK task '$($Step.id)': target is outside the guest desktop." }
+    $button = if ($null -ne $Step.button) { [string]$Step.button } else { "left" }
+    $count = if ($null -ne $Step.clickCount) { [int]$Step.clickCount } else { 1 }
+    if ($button -cnotin @("left", "right") -or $count -notin @(1, 2)) { throw "CLICK task '$($Step.id)': invalid button or click count." }
+    for ($index = 0; $index -lt $count; $index++) {
+        [DockVision.ClickInput]::Click($x, $y, ($button -ceq "right"))
+        if ($index + 1 -lt $count) { Start-Sleep -Milliseconds 100 }
+    }
+}
+
+function Invoke-TaskSequenceTask {
     param(
         [hashtable]$RunContext,
         [object]$Task,
         [string]$TaskId
     )
 
-    #steps are to arrive as an ordered array
-    #only 'type' steps are andled here, click and others are skipped for now
-    $steps = Get-TaskPayloadValue -Task $Task -Name "steps" -DefaultValue @()
-    $typingDelayMs = [int](Get-TaskPayloadValue -Task $Task -Name "typingDelayMs" -DefaultValue 35)
+    # Execute the parsed tasks in order; TYPE uses the focus left by the preceding CLICK.
+    $steps = Get-TaskPayloadValue -Task $Task -Name "tasks" -DefaultValue @()
+    $settings = Get-TaskPayloadValue -Task $Task -Name "settings" -DefaultValue $null
+    $typingDelayMs = if ($null -ne $settings -and $null -ne $settings.typingDelayMs) { [int]$settings.typingDelayMs } else { 35 }
+    $stepDelayMs = if ($null -ne $settings -and $null -ne $settings.stepDelayMs) { [int]$settings.stepDelayMs } else { 250 }
+    $timeoutSeconds = if ($null -ne $settings -and $null -ne $settings.timeoutSeconds) { [int]$settings.timeoutSeconds } else { 20 }
     $captureScreenshot = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "captureScreenshot" -DefaultValue $true)
     $saveFile = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "saveFile" -DefaultValue $false)
     $closeAfter = ConvertTo-Boolean (Get-TaskPayloadValue -Task $Task -Name "closeAfter" -DefaultValue $false)
     $taskType = if ($Task.taskType) { [string]$Task.taskType } else { "unknown" }
 
     $process = Start-Process "notepad.exe" -PassThru
-    $handle = Wait-ForMainWindow -Process $process
+    $handle = Wait-ForMainWindow -Process $process -TimeoutSeconds $timeoutSeconds
     Focus-Window -WindowHandle $handle
 
     $typedStepCount = 0
-    $skippedStepCount = 0
+    $clickedStepCount = 0
     $typedCharacterCount = 0
 
     foreach ($step in @($steps)) {
-        $stepType = [string]$step.type
-        if ($stepType -eq "type") {
-            $text = [string]$step.data
+        Write-RunLog -RunContext $RunContext -Message "Executing task '$($step.id)' ($($step.action))."
+        $stepType = [string]$step.action
+        if ($stepType -ceq "TYPE") {
+            $text = [string]$step.text
             Send-HumanLikeText -Text $text -DelayMs $typingDelayMs
             $typedStepCount++
             $typedCharacterCount += $text.Length
         }
-        else {
-            $skippedStepCount++
+        elseif ($stepType -ceq "CLICK") {
+            Invoke-NotepadClick -WindowHandle $handle -Step $step -TimeoutSeconds $timeoutSeconds
+            $clickedStepCount++
         }
+        else { throw "Task '$($step.id)' has unsupported action '$stepType'." }
+        if ($stepDelayMs -gt 0) { Start-Sleep -Milliseconds $stepDelayMs }
     }
 
     Start-Sleep -Milliseconds 500
@@ -1165,7 +1281,7 @@ function Invoke-TypeSequenceTask {
         taskType = $taskType
         totalStepCount = @($steps).Count
         typedStepCount = $typedStepCount
-        skippedStepCount = $skippedStepCount
+        clickedStepCount = $clickedStepCount
         typedCharacterCount = $typedCharacterCount
         typingDelayMs = $typingDelayMs
         processId = $process.Id
@@ -1208,7 +1324,7 @@ function Invoke-TypeSequenceTask {
         taskId = $TaskId
         status = "completed"
         finishedUtc = Get-UtcTimestamp
-        message = "Notepad focused and typed $typedStepCount of $(@($steps).Count) step(s) through PowerShell UI automation."
+        message = "Completed $typedStepCount TYPE and $clickedStepCount CLICK task(s) through PowerShell UI automation."
         artifacts = $artifacts
         details = $details
     }
@@ -1335,14 +1451,14 @@ function Handle-Task {
                 Write-ResultObject -RunContext $runContext -ResultObject $result
             }
 
-            "type_sequence" {
-                $typeSequenceResult = Invoke-TypeSequenceTask -RunContext $runContext -Task $Task -TaskId $taskId
-                Write-ResultObject -RunContext $runContext -ResultObject $typeSequenceResult
+            "task_sequence" {
+                $taskSequenceResult = Invoke-TaskSequenceTask -RunContext $runContext -Task $Task -TaskId $taskId
+                Write-ResultObject -RunContext $runContext -ResultObject $taskSequenceResult
             }
 
             default {
-                # For unrecognized tasks, acknowledge receipt but do not fail.
-                Write-ResultFile -RunContext $runContext -TaskId $taskId -Status "completed" -Message "Prototype agent acknowledged task type '$taskType'."
+                # A routing mismatch must fail instead of reporting unexecuted work as completed.
+                throw "Unsupported task type '$taskType'."
             }
         }
 

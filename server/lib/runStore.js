@@ -1,7 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
-const { readTestScript } = require("./test-script/readTestScript");
+const { readTestScript, TestScriptError } = require("./test-script/readTestScript");
 
 const CLEANUP_POLICY = {
   maxCompletedRuns: 20,
@@ -118,6 +118,8 @@ async function requestRunCancellation(runId) {
 }
 
 function normalizeRunSettings(options = {}) {                                   //iterations helper
+  // Current clients send runOptions; retain top-level fields for older callers.
+  options = options.runOptions ?? options;
   const iterations = Number(options.iterations);
   const iterationTimeoutSeconds =
     Number(options.iterationTimeoutSeconds);
@@ -134,7 +136,7 @@ function normalizeRunSettings(options = {}) {                                   
       Number.isFinite(iterationTimeoutSeconds) &&
       iterationTimeoutSeconds > 0
         ? iterationTimeoutSeconds
-        : 60,
+        : 300,
 
     captureIntervalSeconds:
       Number.isFinite(captureIntervalSeconds) &&
@@ -144,13 +146,10 @@ function normalizeRunSettings(options = {}) {                                   
   };
 }
 
-const SHARED_ROOT = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "WindowsVm",
-  "shared"
-);
+// DOCKVISION_SHARED_ROOT redirects the store for isolated verification runs
+const SHARED_ROOT = process.env.DOCKVISION_SHARED_ROOT
+  ? path.resolve(process.env.DOCKVISION_SHARED_ROOT)
+  : path.resolve(__dirname, "..", "..", "WindowsVm", "shared");
 const ACTIVE_ROOT = path.join(SHARED_ROOT, "active");
 const RUNS_ROOT = path.join(SHARED_ROOT, "runs");
 const CURRENT_RUN_POINTER_PATH = path.join(ACTIVE_ROOT, "current-run.json");
@@ -169,6 +168,11 @@ function buildRunId() {
 }
 
 function prepareRunnerScript(options) {
+  // Custom runners own their configuration schema. Validate before any run files are written.
+  if (hasUploadedScriptRunner(options)) {
+    assertValidUploadedScriptRunner(options);
+    return null;
+  }
   const content = options.configContent;
   const fileName = path.basename(options.configFileName || "task-plan.json");
   const plan = readTestScript({fileName, content});
@@ -384,26 +388,39 @@ function getRunnerScriptLanguage(options = {}) {
 }
 
 function hasUploadedScriptRunner(options = {}) {
-  return Boolean(
-    String(options.runnerScriptContent || "").trim() &&
-      String(options.configContent || "").trim()
-  );
+  if (options.executionMode !== undefined) {
+    if (!["builtin", "custom"].includes(options.executionMode)) {
+      throw new TestScriptError("executionMode must be builtin or custom.", "executionMode");
+    }
+    return options.executionMode === "custom";
+  }
+  // The current upload UI sends runner fields without executionMode.
+  // Detect incomplete uploads too, so missing content produces a custom validation error.
+  return ["runnerScriptName", "runnerScriptContent", "runnerScriptLanguage"]
+    .some((field) => Boolean(options[field]));
 }
 
 function assertValidUploadedScriptRunner(options = {}) {
   const language = getRunnerScriptLanguage(options);
   if (!language) {
-    throw new Error("Uploaded runner must be a supported .py or .ps1 script.");
+    throw new TestScriptError("Uploaded runner must be a supported .py or .ps1 script.", "runnerScriptName");
+  }
+  if (typeof options.runnerScriptContent !== "string" || !options.runnerScriptContent.trim()) {
+    throw new TestScriptError("Uploaded runner content is required.", "runnerScriptContent");
   }
 
   if (!String(options.configFileName || "").toLowerCase().endsWith(".json")) {
-    throw new Error("Uploaded task plan must be a .json file.");
+    throw new TestScriptError("Uploaded task plan must be a .json file.", "configFileName");
   }
 
+  if (typeof options.configContent !== "string" || !options.configContent.trim()) {
+    throw new TestScriptError("Uploaded configuration content is required.", "configContent");
+  }
+  // Check JSON syntax only. Keep the original string for the runner, including whitespace.
   try {
-    JSON.parse(String(options.configContent || "").replace(/^\uFEFF/, ""));
+    JSON.parse(options.configContent.replace(/^\uFEFF/, ""));
   } catch (error) {
-    throw new Error(`Uploaded task plan is not valid JSON: ${error.message}`);
+    throw new TestScriptError(`Uploaded task plan is not valid JSON: ${error.message}`, "configContent");
   }
 
   return language;
@@ -999,8 +1016,7 @@ async function createRunRecord(options = {}) {
   const createdUtc = nowIso();
   const runPaths = await ensureRunLayout(runId);
   const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
-  const taskType =
-    options.taskType || (uploadedInputs ? "script_runner" : "notepad_lifecycle");
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
 
   const task = {
     runId,
@@ -1008,15 +1024,9 @@ async function createRunRecord(options = {}) {
     taskType,
     status: "queued",
     createdUtc,
-    payload:
-      options.payload ||
-      (uploadedInputs
+    payload: uploadedInputs
         ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
-        : buildDefaultTaskPayload(runId, options)),
-    taskType: preparedRunner ? "task_sequence" : options.taskType || "notepad_lifecycle",
-    status: "queued",
-    createdUtc,
-    payload: preparedRunner ? preparedRunner.plan : options.payload || buildDefaultTaskPayload(runId, options),
+        : preparedRunner.plan,
   };
 
   const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
@@ -1068,7 +1078,7 @@ async function createRunRecord(options = {}) {
     paths: runPaths,
   };
 }
-//placeholder for entry point that will accept and ordered steps array from the user when they submit the steps
+// The alternate launch endpoint uses the same parsed task-plan contract.
 async function createRunRecord2(options = {}) {
   const preparedRunner = prepareRunnerScript(options);
 
@@ -1097,32 +1107,13 @@ async function createRunRecord2(options = {}) {
   const runPaths = await ensureRunLayout(runId);
   const settings = normalizeRunSettings(options);                                                   //normalize iteration, timeout, and screenshot-capture settings for this run
   const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
-  
 
-  const hasSteps = Array.isArray(options.steps);
 
-let taskType;
-let payload;
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
+  const payload = uploadedInputs
+    ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
+    : preparedRunner.plan;
 
-if (uploadedInputs) {
-  taskType = "script_runner";
-  payload = buildUploadedScriptRunnerPayload(uploadedInputs, options);
-} else if (preparedRunner) {
-  taskType = "type_sequence";
-  payload = preparedRunner.plan;
-} else if (options.payload) {
-  taskType = options.taskType || "notepad_lifecycle";
-  payload = options.payload;
-} else if (hasSteps) {
-  taskType = "type_sequence";
-  payload = {
-    steps: options.steps,
-  };
-} else {
-  taskType = options.taskType || "notepad_lifecycle";
-  payload = buildDefaultTaskPayload(runId, options);
-}
-      
   const task = {
     runId,
     taskId,
@@ -1130,6 +1121,7 @@ if (uploadedInputs) {
     status: "queued",
     createdUtc,
     settings,
+    runOptions: settings,
     payload,
   };
 
@@ -1145,6 +1137,7 @@ if (uploadedInputs) {
     configFileName: options.configFileName || null,
     taskType: task.taskType,
     settings,
+    runOptions: settings,
     iterationState: {
       total: settings.iterations,
       current: 0,
@@ -1293,6 +1286,57 @@ async function pruneCompletedRuns() {
   }
 }
 
+async function listRuns() {
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const currentRunPointer = await readCurrentRunPointer();
+  const activeRunId = currentRunPointer?.runId || null;
+  const entries = await fs.readdir(RUNS_ROOT, { withFileTypes: true });
+  const runs = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const runPaths = getRunPaths(entry.name);
+    const [meta, task, result] = await Promise.all([
+      readJsonIfExists(runPaths.metaPath),
+      readJsonIfExists(runPaths.taskPath),
+      readJsonIfExists(runPaths.resultPath),
+    ]);
+
+    if (!meta && !task && !result) {
+      continue;
+    }
+
+    const status = result?.status || task?.status || meta?.status || "queued";
+
+    runs.push({
+      runId: entry.name,
+      testName: meta?.testName || "Untitled Test Run",
+      taskType: task?.taskType || meta?.taskType || "unknown",
+      status,
+      active: activeRunId === entry.name,
+      createdUtc: meta?.createdUtc || task?.createdUtc || null,
+      startedUtc: meta?.startedUtc || task?.startedUtc || null,
+      finishedUtc: meta?.finishedUtc || result?.finishedUtc || null,
+      updatedUtc: meta?.updatedUtc || null,
+    });
+  }
+
+  runs.sort((left, right) => runSortTimestamp(right) - runSortTimestamp(left));
+
+  return runs;
+}
+
+function runSortTimestamp(run) {
+  const candidate = run.createdUtc || run.finishedUtc || "";
+  const parsed = Date.parse(candidate);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 module.exports = {
   SHARED_ROOT,
   buildContainerName,
@@ -1301,6 +1345,7 @@ module.exports = {
   attachContainerId,
   markRunLaunchFailure,
   readRun,
+  listRuns,
   resolveRunFilePath,
   getIterationPaths,                       //for run supervisior
   buildIterationRunPointer,

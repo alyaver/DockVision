@@ -9,7 +9,7 @@ const {
   writeCurrentRunPointer,
 } = require("./runStore");
 
-function sleep(ms) {                                                    //helpful for iterations and file managment 
+function sleep(ms) {                                                    //helpful for iterations and file managment
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -26,6 +26,7 @@ function buildIterationTask(run, iterationNumber) {
     createdUtc: new Date().toISOString(),
 
     settings: run.settings,
+    runOptions: run.task?.runOptions || run.settings,
     payload: run.task.payload,
   };
 }
@@ -62,6 +63,7 @@ async function superviseRun(runId) {
   }
 
   const settings =
+    run.task?.runOptions ||
     run.task?.settings ||
     run.settings ||
     {};

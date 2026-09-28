@@ -1,124 +1,121 @@
 import { useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Navigation from "../components/Navigation";
 import "../ConfigurationSettings.css";
 
 const CURRENT_RUN_STORAGE_KEY = "dockvision-current-run";
 
+// get current run from sessionStorage
+function readStoredRun() {
+  try {
+    const rawValue = sessionStorage.getItem(CURRENT_RUN_STORAGE_KEY);
+    return rawValue ? JSON.parse(rawValue) : null;
+  } catch {
+    return null;
+  }
+}
+
+// add new values to the saved run details
+function writeStoredRun(nextValues) {
+  const existingRun = readStoredRun() ?? {};
+  const updatedRun = { ...existingRun, ...nextValues };
+  sessionStorage.setItem(CURRENT_RUN_STORAGE_KEY, JSON.stringify(updatedRun));
+}
+
 function ConfigurationSettings() {
   const navigate = useNavigate();
 
-  const [captureFrequency, setCaptureFrequency] =
-    useState("Every 5 sec");
+  const [captureFrequency, setCaptureFrequency] = useState("Every 5 sec");
+  const [iterations, setIterations] = useState("");
+  const [error, setError] = useState("");
 
-  const [iterations, setIterations] =
-    useState("");
+  // restores saved run details if page is left due to navigation or refreshed
+  useEffect(() => {
+    const storedRun = readStoredRun();
+    const savedOptions = storedRun?.runOptions;
 
-  const [error, setError] =
-    useState("");
+    if (savedOptions) {
+      // need to match the saved seconds to the correct label
+      const labelBySeconds = {
+        5: "Every 5 sec",
+        10: "Every 10 sec",
+        30: "Every 30 sec",
+        60: "Every 1 min",
+      };
 
-  function getCaptureIntervalSeconds(value) {
-    switch (value) {
-      case "Every 10 sec":
-        return 10;
+      const savedLabel = labelBySeconds[savedOptions.captureIntervalSeconds];
 
-      case "Every 30 sec":
-        return 30;
+      if (savedLabel) {
+        setCaptureFrequency(savedLabel);
+      }
 
-      case "Every 1 min":
-        return 60;
-
-      case "Every 5 sec":
-      default:
-        return 5;
+      if (savedOptions.iterations != null) {
+        setIterations(savedOptions.iterations);
+      }
     }
-  }
-
-  function readStoredRun() {
-    try {
-      const rawValue =
-        sessionStorage.getItem(
-          CURRENT_RUN_STORAGE_KEY
-        );
-
-      return rawValue
-        ? JSON.parse(rawValue)
-        : {};
-    } catch {
-      return {};
-    }
-  }
-
-  function writeStoredSettings({
-    iterations,
-    captureIntervalSeconds,
-  }) {
-    const existingRun = readStoredRun();
-
-    sessionStorage.setItem(
-      CURRENT_RUN_STORAGE_KEY,
-      JSON.stringify({
-        ...existingRun,
-        iterations,
-        captureIntervalSeconds,
-      })
-    );
-  }
+  }, []);
 
   const handleSubmit = () => {
-    const parsedIterations =
-      Number(iterations);
+    const parsedIterations = Number(iterations);
 
     if (
       !Number.isInteger(parsedIterations) ||
       parsedIterations < 1 ||
       parsedIterations > 30
     ) {
-      setError(
-        "Please enter an integer between 1 and 30."
-      );
-
+      setError("Please enter an integer between 1 and 30.");
       return;
     }
 
     setError("");
 
-    const captureIntervalSeconds =
-      getCaptureIntervalSeconds(
-        captureFrequency
-      );
+    // display label to interval in seconds
+    const secondsByLabel = {
+      "Every 5 sec": 5,
+      "Every 10 sec": 10,
+      "Every 30 sec": 30,
+      "Every 1 min": 60,
+    };
 
-    writeStoredSettings({
-      iterations: parsedIterations,
-      captureIntervalSeconds,
+    // each display label should be converted to seconds, 1min -> 60secs
+    const toSeconds = secondsByLabel[captureFrequency];
+
+    console.log("Selected interval: ", toSeconds)
+    console.log("Selected iterations ", parsedIterations)
+
+    console.log("iterations", typeof parsedIterations)
+
+    writeStoredRun({
+      runOptions: {
+        iterations: parsedIterations,
+        captureIntervalSeconds: toSeconds,
+        iterationTimeoutSeconds: 300,
+      },
     });
 
-    navigate("/dashboard");
+    navigate("/dashboard", {
+      state: {
+        captureIntervalSeconds: toSeconds,
+        iterations: parsedIterations,
+      },
+    });
   };
 
   return (
     <>
+      {}
       <Navigation />
 
       <main className="page">
         <section className="card">
-          <h1 className="title">
-            Configuration Settings
-          </h1>
+          <h1 className="title">Configuration Settings</h1>
 
           <div className="form-row">
-            <label htmlFor="capture-frequency">
-              Capture Screenshots
-            </label>
-
+            <label htmlFor="capture-frequency">Capture Screenshots</label>
             <select
               id="capture-frequency"
               value={captureFrequency}
-              onChange={(event) =>
-                setCaptureFrequency(
-                  event.target.value
-                )
-              }
+              onChange={(e) => setCaptureFrequency(e.target.value)}
             >
               <option>Every 5 sec</option>
               <option>Every 10 sec</option>
@@ -128,10 +125,7 @@ function ConfigurationSettings() {
           </div>
 
           <div className="text-input">
-            <label htmlFor="text-box-count">
-              Number of Iterations
-            </label>
-
+            <label htmlFor="text-box-count">Number of Iterations</label>
             <input
               id="text-box-count"
               type="number"
@@ -139,20 +133,12 @@ function ConfigurationSettings() {
               max="30"
               step="1"
               value={iterations}
-              onChange={(event) =>
-                setIterations(
-                  event.target.value
-                )
-              }
+              onChange={(e) => setIterations(e.target.value)}
               placeholder="1-30"
             />
           </div>
 
-          {error && (
-            <p className="error">
-              {error}
-            </p>
-          )}
+          {error && <p className="error">{error}</p>}
 
           <button
             type="button"

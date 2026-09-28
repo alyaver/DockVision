@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import "../confirmationPage.css";
 import { startTestRun } from "../lib/api";
+import { config } from "dotenv";
 
 /**
  * Confirmation rehydrates from sessionStorage so a refresh or direct navigation
@@ -42,6 +43,22 @@ const Confirmation = () => {
   const navigate = useNavigate();
   const storedRun = readStoredRun();
 
+  // Remembers which mode user picked (custom runner or built in notepad)
+  const executionMode =
+    location.state?.executionMode ?? // Use the mode sent by dashboard
+    storedRun?.executionMode ?? // if dashboard did not send a mode check storedRun (sessionStorage)
+    "custom"; // if nothing was picked, then default to custom runner
+
+  // read settings saved by configuration settings
+  const savedOptions = storedRun?.runOptions;
+
+  // use the saved settings, if no settings were saved use handbook default
+  const runOptions = {
+    iterations: savedOptions?.iterations ?? 1,
+    captureIntervalSeconds: savedOptions?.captureIntervalSeconds ?? 5,
+    iterationTimeoutSeconds: savedOptions?.iterationTimeoutSeconds ?? 300,
+  }
+
   const testName =
     location.state?.testName || storedRun?.testName || "Untitled Test Run";
   // Prefer route state from Dashboard, then fall back to sessionStorage so a
@@ -66,15 +83,6 @@ const Confirmation = () => {
     location.state?.configContent ||
     storedRun?.configContent ||
     "No config content available";
-    const iterations =Number(location.state?.iterations ?? storedRun?.iterations) || 1;
-    const iterationTimeoutSeconds = 300;
-      //Number( location.state?.iterationTimeoutSeconds ?? storedRun?.iterationTimeoutSeconds) || 300;        //user programamble timeout later on confirmation page 
-
-    const captureIntervalSeconds =
-      Number(
-        location.state?.captureIntervalSeconds ??
-        storedRun?.captureIntervalSeconds
-      ) || 5;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -89,17 +97,25 @@ const Confirmation = () => {
        * with backend launch changes. The runner content is included so the
        * backend can persist and execute the selected .py/.ps1 runner.
        */
-      const data = await startTestRun({
+
+      // information needed by both custom runner and built in notepad
+      const request = {
+        executionMode,
         testName,
-        runnerScriptName,
-        runnerScriptContent,
-        runnerScriptLanguage,
         configFileName,
         configContent,
-        iterations,
-        iterationTimeoutSeconds,
-        captureIntervalSeconds,
-      });
+        runOptions,
+      };
+
+      // includes the uploaded runner if Custom Runner was selected
+      if (executionMode === "custom") {
+        request.runnerScriptName = runnerScriptName;
+        request.runnerScriptContent = runnerScriptContent;
+        request.runnerScriptLanguage = runnerScriptLanguage;
+      }
+
+      // sends collected info to backend and stores its response in data
+      const data = await startTestRun(request);
 
       // Keep the submitted runner source next to the returned run identifiers
       // so the Running Test flow survives refreshes during local development.
@@ -112,9 +128,8 @@ const Confirmation = () => {
         runnerScriptLanguage,
         configFileName,
         configContent,
-        iterations,
-        iterationTimeoutSeconds,
-        captureIntervalSeconds,
+        executionMode,
+        runOptions,
       });
 
       navigate("/running-test", {
@@ -143,12 +158,41 @@ const Confirmation = () => {
             <strong>Test Run Name:</strong> {testName}
           </p>
 
+          {/* Shows the user which mode they selected */}
+          <p>
+            <strong>Execution Mode: </strong>
+            {executionMode === "builtin" ? "Built-in Notepad" : "Custom Runner"}
+          </p>
+
+          {/* Shows the users saved settings, uses default values for missing settings */}
+          <div className="run-settings">
+            <p>
+              <strong>Iterations: </strong>
+              {runOptions.iterations}
+            </p>
+
+            <p>
+              <strong>Screenshot interval: </strong>
+              {runOptions.captureIntervalSeconds} second(s)
+            </p>
+
+            <p>
+              <strong>Timeout per iteration: </strong>
+              {runOptions.iterationTimeoutSeconds} seconds
+            </p>
+          </div>
+
           <div className="Card-Content">
             {/* Preview the script body, not just the filename, before launch. */}
-            <DisplayCard
-              title={`Runner Script (${runnerScriptName})`}
-              content={runnerScriptContent}
-            />
+
+            {/* only used for Custom Runner (uploaded runner script) */}
+            {executionMode === "custom" && (
+              <DisplayCard
+                title={`Runner Script (${runnerScriptName})`}
+                content={runnerScriptContent}
+              />
+            )}
+
             <DisplayCard
               title={`Task Plan (${configFileName})`}
               content={configContent}
