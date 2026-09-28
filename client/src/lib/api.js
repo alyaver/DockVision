@@ -27,6 +27,40 @@ export async function startTestRun(payload = {}) {
   return parseJson(response);
 }
 
+export async function getRun(runId) {
+  const response = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}`);
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = data?.message || data?.error || "Failed to load run status.";
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+export async function cancelRun(runId) {
+  const response = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(
+      data?.message || data?.error || "Failed to request cancellation."
+    );
+    error.status = response.status;
+    throw error;
+  }
+
+  return data;
+}
+
 // Expose direct Windows guest controls for readiness views and manual recovery.
 export async function startWindowsVm() {
   const response = await fetch(`${API_BASE}/api/windows-vm/start`, {

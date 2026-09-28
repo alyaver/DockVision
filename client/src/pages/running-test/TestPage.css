@@ -145,6 +145,32 @@
   word-break: break-word;
 }
 
+.TestPage__progressDetails {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.TestPage__progressDetails div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f5f8fb;
+}
+
+.TestPage__progressDetails dt {
+  color: #5f7691;
+  font-weight: 700;
+}
+
+.TestPage__progressDetails dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .TestPage__note {
   margin-top: 18px;
   padding: 16px;

@@ -132,9 +132,11 @@ const Confirmation = () => {
         runOptions,
       });
 
-      navigate("/running-test", {
+      const runId = data.runId || data.run?.runId || null;
+
+      navigate(`/running-test/${runId}`, {
         state: {
-          runId: data.runId || null,
+          runId,
           containerId: data.containerId || null,
           testName,
         },
