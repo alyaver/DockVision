@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
+import { serializeTaskPlan } from "../lib/serializeTaskPlan.mjs";
 
 const Default_Task = [];
 const Task_Options = ["TYPE", "CLICK"];
@@ -42,43 +43,6 @@ function loadDraftTask(key, value) {
         return value;
     }
 }
-
-// gets tasks from user input and puts them into a JSON step format
-function taskToSteps(task) {
-    if (task.task === "TYPE") {
-        return {
-            id: task.id,
-            action: "TYPE",
-            text: task.text,
-        };
-    }
-
-    if (task.task === "CLICK" && task.targetType === "named") {
-        return {
-            id: task.id,
-            action: "CLICK",
-            target: task.target,
-            button: "left",
-            clickCount: 1
-        };
-    } 
-
-    if (task.task === "CLICK" && task.targetType === "coordinates") {
-        return {
-            id: task.id,
-            action: "CLICK",
-            target: {
-                type: "screenPoint",
-                x: Number(task.details?.x),
-                y: Number(task.details?.y),
-            },
-            button: "left",
-            clickCount: 1,
-        };
-    }
-    return task
-}
-
 
 function validateDraftTask(task) {
     const errors = {};
@@ -328,19 +292,8 @@ export default function CreateATask() {
     }
 
     function buildPlan() {
-        const plan = {
-            schemaVersion: "dockvision.plan.v1",
-            name: newTaskName.trim() || "Untitled Task Plan",
-            app: {
-                name: "notepad",
-                executable: "notepad.exe",
-            },
-            steps: defTask.map(taskToSteps),
-        }
-
-        return JSON.stringify(plan, null, 2);
+        return serializeTaskPlan(newTaskName, defTask);
     }
-
 
     function exportJson() { // Exports the task list to a JSON file
         if (!planValidation()) {

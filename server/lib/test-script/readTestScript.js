@@ -44,29 +44,35 @@ function readTestScript({ fileName, content }) {
     throw new TestScriptError(`Task plan must use schemaVersion '${SCHEMA_VERSION}' or '${LEGACY_SCHEMA_VERSION}'.`, "schemaVersion");
   }
   const tasksField = isLegacy ? "steps" : "tasks";
+  for (const [canonical, legacy] of [["tasks", "steps"], ["app", "targetApp"]]) {
+    if (hasField(action, canonical) && hasField(action, legacy)) {
+      throw new TestScriptError(`Task plan cannot contain both '${canonical}' and '${legacy}'.`, legacy);
+    }
+  }
   // Reject mixed envelopes rather than silently choosing one task list.
-  for (const field of [isLegacy ? "tasks" : "steps", "targetApp"]) {
+  for (const field of isLegacy ? ["tasks"] : ["steps", "targetApp"]) {
     if (hasField(action, field)) {
       throw new TestScriptError(`Task plan '${action.schemaVersion}' does not support '${field}'.`, field);
     }
   }
 
-  const app = action.app;
+  const appField = isLegacy && hasField(action, "targetApp") ? "targetApp" : "app";
+  const app = action[appField];
   if (!app || typeof app !== "object" || Array.isArray(app)) {
-    throw new TestScriptError("Task plan requires an app object.", "app");
+    throw new TestScriptError(`Task plan requires an ${appField} object.`, appField);
   }
   if (typeof app.name !== "string" || app.name.toLowerCase() !== "notepad") {
-    throw new TestScriptError("app.name must identify the supported application 'notepad'.", "app.name");
+    throw new TestScriptError(`${appField}.name must identify the supported application 'notepad'.`, `${appField}.name`);
   }
   if (typeof app.executable !== "string" || app.executable.toLowerCase() !== "notepad.exe") {
-    throw new TestScriptError("app.executable must be 'notepad.exe'.", "app.executable");
+    throw new TestScriptError(`${appField}.executable must be 'notepad.exe'.`, `${appField}.executable`);
   }
   if (app.fileName !== undefined && (typeof app.fileName !== "string" || !app.fileName.trim())) {
-    throw new TestScriptError("app.fileName must be a nonempty string when supplied.", "app.fileName");
+    throw new TestScriptError(`${appField}.fileName must be a nonempty string when supplied.`, `${appField}.fileName`);
   }
   for (const field of ["uniqueFilePerRun", "resetFile"]) {
     if (app[field] !== undefined && typeof app[field] !== "boolean") {
-      throw new TestScriptError(`app.${field} must be a boolean when supplied.`, `app.${field}`);
+      throw new TestScriptError(`${appField}.${field} must be a boolean when supplied.`, `${appField}.${field}`);
     }
   }
 
@@ -98,7 +104,7 @@ function readTestScript({ fileName, content }) {
 
     const allowedFields = step.action === "TYPE"
       ? ["id", "action", "text"]
-      : ["id", "action", "target", "button", "clickCount"];
+      : ["id", "action", "target", "button", "clickCount", "xPercent", "yPercent"];
     for (const field of Object.keys(step)) {
       if (!allowedFields.includes(field)) {
         throw new TestScriptError(`${step.action} task '${step.id}' does not support field '${field}'.`, `${taskPath}.${field}`, step.id);
@@ -115,6 +121,28 @@ function readTestScript({ fileName, content }) {
       } else if (step.target?.type === "namedControl" && typeof step.target.name === "string"
           && step.target.name.startsWith("notepad.") && NAMED_TARGETS.has(step.target.name.slice(8))) {
         step.target.name = step.target.name.slice(8);
+      }
+      // Older demos place named-control percentages on the task itself.
+      // Normalize both supported envelopes to an explicit namedControl target.
+      for (const field of ["xPercent", "yPercent"]) {
+        if (!hasField(step, field)) continue;
+        const namedTarget = typeof step.target === "string"
+          ? NAMED_TARGETS.has(step.target)
+          : step.target?.type === "namedControl";
+        if (!namedTarget) {
+          throw new TestScriptError(`CLICK task '${step.id}' ${field} requires a named-control target.`, `${taskPath}.${field}`, step.id);
+        }
+        if (!Number.isFinite(step[field]) || step[field] < 0 || step[field] > 100) {
+          throw new TestScriptError(`CLICK task '${step.id}' ${field} must be a number from 0 to 100.`, `${taskPath}.${field}`, step.id);
+        }
+        if (typeof step.target === "string") {
+          step.target = { type: "namedControl", name: step.target };
+        }
+        if (hasField(step.target, field) && step.target[field] !== step[field]) {
+          throw new TestScriptError(`CLICK task '${step.id}' has conflicting ${field} values.`, `${taskPath}.${field}`, step.id);
+        }
+        step.target[field] = step[field];
+        delete step[field];
       }
       const target = step.target;
       if (typeof target === "string") {
@@ -171,6 +199,8 @@ function readTestScript({ fileName, content }) {
     action.schemaVersion = SCHEMA_VERSION;
     action.tasks = action.steps;
     delete action.steps;
+    action.app = app;
+    delete action.targetApp;
   }
   return action;
 }
