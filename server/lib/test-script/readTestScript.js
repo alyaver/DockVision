@@ -98,6 +98,23 @@ function readTestScript({ fileName, content }) {
 
     seenIds.add(step.id); // mark this id as seen
 
+    // Supported demo imports place named-control percentages on the task.
+    // Normalize them into an explicit target before checking action fields.
+    if (step.action === "CLICK" && (hasField(step, "xPercent") || hasField(step, "yPercent"))) {
+      if (typeof step.target === "string") step.target = { type: "namedControl", name: step.target };
+      if (!step.target || step.target.type !== "namedControl") {
+        throw new TestScriptError("Percentages require a named-control target.", `${taskPath}.target`, step.id);
+      }
+      for (const field of ["xPercent", "yPercent"]) {
+        if (!hasField(step, field)) continue;
+        if (hasField(step.target, field)) {
+          throw new TestScriptError(`Do not supply competing ${field} values.`, `${taskPath}.${field}`, step.id);
+        }
+        step.target[field] = step[field];
+        delete step[field];
+      }
+    }
+
     if (step.action !== "TYPE" && step.action !== "CLICK") {
       throw new TestScriptError(`Task '${step.id}' action must be TYPE or CLICK.`, `${taskPath}.action`, step.id);
     }

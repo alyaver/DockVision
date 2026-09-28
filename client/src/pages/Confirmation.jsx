@@ -1,8 +1,9 @@
 import Navigation from "../components/Navigation";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "../confirmationPage.css";
 import { startTestRun } from "../lib/api";
+import { launchWhenReady } from "../lib/launchWhenReady.mjs";
 import { config } from "dotenv";
 
 /**
@@ -86,8 +87,14 @@ const Confirmation = () => {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [progressMessage, setProgressMessage] = useState("");
+  const pending = useRef(null);
+  useEffect(() => () => pending.current?.abort(), []);
 
   async function handleConfirm() {
+    if (pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
     setIsSubmitting(true);
     setErrorMessage("");
 
@@ -114,8 +121,11 @@ const Confirmation = () => {
         request.runnerScriptLanguage = runnerScriptLanguage;
       }
 
-      // sends collected info to backend and stores its response in data
-      const data = await startTestRun(request);
+      const data = await launchWhenReady(request, {
+        launch: startTestRun,
+        onProgress: setProgressMessage,
+        signal: controller.signal,
+      });
 
       // Keep the submitted runner source next to the returned run identifiers
       // so the Running Test flow survives refreshes during local development.
@@ -142,9 +152,13 @@ const Confirmation = () => {
         },
       });
     } catch (error) {
-      setErrorMessage(error.message || "Failed to start test run.");
+      if (!controller.signal.aborted) setErrorMessage(error.message || "Failed to start test run.");
     } finally {
-      setIsSubmitting(false);
+      pending.current = null;
+      if (!controller.signal.aborted) {
+        setIsSubmitting(false);
+        setProgressMessage("");
+      }
     }
   }
 
@@ -201,19 +215,22 @@ const Confirmation = () => {
             />
           </div>
 
-          {errorMessage && <p style={{ color: "red" }}>{errorMessage}</p>}
+          {progressMessage && <p role="status" aria-live="polite">{progressMessage}</p>}
+          {errorMessage && <p role="alert" style={{ color: "red" }}>{errorMessage}</p>}
 
           <div className="Button-Group">
-            <Link to="/dashboard">
-              <button className="Button Return">Return</button>
-            </Link>
+            {isSubmitting ? (
+              <button className="Button Return" disabled>Preparing run…</button>
+            ) : (
+              <Link to="/dashboard"><button className="Button Return">Return</button></Link>
+            )}
 
             <button
               className="Button Confirm"
               onClick={handleConfirm}
               disabled={isSubmitting}
             >
-              {isSubmitting ? "Starting..." : "Confirm"}
+              {isSubmitting ? "Waiting for readiness…" : errorMessage ? "Retry" : "Confirm"}
             </button>
           </div>
         </div>

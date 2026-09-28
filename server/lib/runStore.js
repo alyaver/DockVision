@@ -8,11 +8,6 @@ const CLEANUP_POLICY = {
   maxAgeDays: 7,
 };
 
-// Treat a run as abandoned only after several missed heartbeats and a minimum
-// amount of host-observed inactivity. The extra floor protects us from noisy
-// file-share timing while still letting the next run recover automatically.
-const HEARTBEAT_STALE_MISSED_INTERVALS = 3;
-const HEARTBEAT_STALE_MIN_MS = 60 * 1000;
 
 const TERMINAL_STATUSES = new Set([                                         //start of lifecycle definitions
   "completed",
@@ -481,11 +476,6 @@ function buildCurrentRunPointer(runId, createdUtc) {
 async function readCurrentRunPointer() {
   await ensureBaseLayout();
   return readJsonIfExists(CURRENT_RUN_POINTER_PATH);
-}
-
-async function clearActiveChannel() {
-  await ensureBaseLayout();
-  await fs.rm(CURRENT_RUN_POINTER_PATH, { force: true });
 }
 
 function deriveRunStatus(meta, task, result, heartbeat, isActiveRun) {
@@ -1377,14 +1367,11 @@ function runSortTimestamp(run) {
 module.exports = {
   SHARED_ROOT,
   buildContainerName,
-  createRunRecord,
-  createRunRecord2,
-  attachContainerId,
-  markRunLaunchFailure,
   readRun,
   requestRunCancellation,
   listRuns,
   resolveRunFilePath,
+  pruneCompletedRuns,
   getIterationPaths,                       //for run supervisior
   buildIterationRunPointer,
   writeCurrentRunPointer,

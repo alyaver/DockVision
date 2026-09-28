@@ -20,11 +20,8 @@ const { superviseRun } = require("./lib/runSupervisior");
 
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
+const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
 const {
-  createRunRecord,
-  createRunRecord2,
-  attachContainerId,
-  markRunLaunchFailure,
   readRun,
   requestRunCancellation,
   listRuns,
@@ -34,7 +31,6 @@ const {
 const {
   ensureWindowsVmRunning,
   getWindowsVmStatus,
-  WINDOWS_VM_CONTAINER_NAME,
 } = require("./lib/windowsVm");
 
 const app = express();
@@ -63,6 +59,7 @@ app.use(
   })
 );
 
+app.use(createRunLaunchRouter());
 app.use(express.json());
 app.use(cookieParser());
 
