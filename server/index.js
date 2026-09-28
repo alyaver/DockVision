@@ -16,6 +16,7 @@ const checkDiskSpace = require("check-disk-space").default;
 const path = require("path");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const { superviseRun } = require("./lib/runSupervisior");
 
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
@@ -28,6 +29,7 @@ const {
   requestRunCancellation,
   listRuns,
   resolveRunFilePath,
+  requestRunCancellation,
 } = require("./lib/runStore");
 const {
   ensureWindowsVmRunning,
@@ -240,6 +242,7 @@ let createdRun = null;
     const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
 
     await attachContainerId(createdRun.runId, containerId);
+    superviseRun(createdRun.runId).catch((error) => { console.error("RUN SUPERVISOR ERROR:", error); });
     const run = await readRun(createdRun.runId);
 
     return res.json({
@@ -271,6 +274,36 @@ let createdRun = null;
 }
 
 app.post("/api/runs/start2", handleStartRun2);
+
+app.post("/api/runs/:runId/cancel", async (req, res) => {
+  try {
+    const run = await requestRunCancellation(req.params.runId);
+
+    if (!run) {
+      return res.status(404).json({
+        success: false,
+        message: "Run not found.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message:
+        run.status === "cancelling"
+          ? "Cancellation requested."
+          : `Run is already ${run.status}.`,
+      run,
+    });
+  } catch (error) {
+    console.error("RUN CANCELLATION ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to request run cancellation.",
+      error: error.message,
+    });
+  }
+});
 
 /**
  * Report the current Docker-backed Windows guest status without creating a run.
@@ -365,9 +398,9 @@ app.get("/api/runs/:runId", async (req, res) => {
   }
 });
 
-app.post("/api/runs/:runId/cancel", async (req, res) => {
+app.post("/api/runs/:runId/cancel2", async (req, res) => {
   try {
-    const cancellation = await requestRunCancellation(req.params.runId);
+    const cancellation = await requestRunCancellation2(req.params.runId);
 
     if (!cancellation) {
       return res.status(404).json({
