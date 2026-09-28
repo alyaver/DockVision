@@ -1,6 +1,8 @@
 .create-task-form{
     min-height: 100vh;
     font-family: sans-serif;
+    background-color: #f0f0f0;
+    color: #1a1a1a;
 }
 
 .create-task-header{
@@ -35,8 +37,9 @@
 .panel{
     margin-top: 20px;
     padding: 20px;
-    border: 1px solid #ddd;
-    border-radius: 5px; 
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    background-color: #fff;
     
 
 }
@@ -100,7 +103,7 @@
     border-bottom: none;
 }
 
-.edit-button, .delete-button{
+.edit-button, .delete-button, .move-up-button, .move-down-button{
     background-color: #007bff;
     color: white;
     border: none;
@@ -111,9 +114,9 @@
 
 
 .task-container{
-    max-width: 600px;
+    max-width: 820px;
     margin: 0 auto;
-    padding: 0 20px;
+    padding: 0 20px 24px;
  
 }
 
@@ -168,7 +171,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    color: #00FF00
+    color: #237a43;
 
 }
 
@@ -176,5 +179,37 @@
     text-align: center;
     padding: 20px;
     font-size: 1.2em;
+}
+
+.create-task-form .task-container button {
+    background-color: #1a1a1a;
+    border-radius: 6px;
+    font-family: inherit;
+    transition: opacity 0.15s;
+}
+
+.create-task-form .task-container button:hover:not(:disabled) { opacity: 0.85; }
+.create-task-form .task-container button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.create-task-form .task-container input,
+.create-task-form .task-container select {
+    box-sizing: border-box;
+    min-width: 0;
+    padding: 8px 12px;
+    font: inherit;
+    color: #1a1a1a;
+    background-color: #f9f9f9;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+}
+
+.create-task-form .task-container :is(input, select, button):focus-visible {
+    outline: 2px solid #1a1a1a;
+    outline-offset: 2px;
+}
+
+.create-task-form :is(.create-task-container, .task-item, .footer-panel) {
+    flex-wrap: wrap;
+    gap: 10px;
 }
 

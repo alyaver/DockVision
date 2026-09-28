@@ -25,6 +25,7 @@ const {
   attachContainerId,
   markRunLaunchFailure,
   readRun,
+  listRuns,
   resolveRunFilePath,
 } = require("./lib/runStore");
 const {
@@ -138,11 +139,12 @@ async function handleStartRun(req, res) {
   try {
     createdRun = await createRunRecord(req.body ?? {});
   } catch (error) {
-    if (error.code === "INVALID_TEST_SCRIPT") {
+    if (error.code === "INVALID_TASK_PLAN") {
       return res.status(400).json({
         success: false,
         message: error.message,
-        lineNumber: error.lineNumber,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
       });
     }
 
@@ -201,13 +203,22 @@ app.post("/api/runs/start", handleStartRun);
 // still refer to the original smoke-start endpoint name.
 app.post("/api/docker/start-smoke", handleStartRun);
 
-// placeholder function, will accept the tasks array from the WIP create-a-task page
+// Forward the uploaded configuration unchanged; the run store validates and parses it.
 async function handleStartRun2(req, res) {
 let createdRun = null;
 
   try {
     createdRun = await createRunRecord2(req.body ?? {});
   } catch (error) {
+    if (error.code === "INVALID_TASK_PLAN") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
+      });
+    }
+
     if (error.code === "RUN_ACTIVE") {
       return res.status(409).json({
         success: false,
@@ -303,6 +314,24 @@ app.post("/api/windows-vm/start", async (req, res) => {
       success: false,
       message: "Failed to start the Windows VM service",
       error: error.message,
+    });
+  }
+});
+
+app.get("/api/runs", async (req, res) => {
+  try {
+    const runs = await listRuns();
+
+    return res.json({
+      success: true,
+      runs,
+    });
+  } catch (error) {
+    console.error("RUN LIST SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load run history",
     });
   }
 });
