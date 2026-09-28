@@ -284,6 +284,10 @@ function deriveRunStatus(meta, task, result, heartbeat, isActiveRun) {
     return result.status;
   }
 
+  if (meta?.status === "cancelling" || task?.status === "cancelling") {
+    return "cancelling";
+  }
+
   if (task?.status) {
     return task.status;
   }
@@ -428,6 +432,39 @@ async function updateMetaFile(runId, patch) {
 
   await writeJson(runPaths.metaPath, nextMeta);
   return nextMeta;
+}
+
+async function requestRunCancellation(runId) {
+  const run = await readRun(runId);
+
+  if (!run) {
+    return null;
+  }
+
+  if (isTerminalStatus(run.status)) {
+    return { run, terminal: true };
+  }
+
+  const runPaths = getRunPaths(runId);
+  const requestedUtc = nowIso();
+
+  // The guest agent watches this run-scoped marker while executing.
+  await writeJson(path.join(runPaths.runRoot, "cancel.json"), {
+    runId,
+    requestedUtc,
+  });
+
+  await updateMetaFile(runId, {
+    status: "cancelling",
+    updatedUtc: requestedUtc,
+  });
+
+  const updatedRun = await readRun(runId);
+
+  return {
+    run: updatedRun,
+    terminal: isTerminalStatus(updatedRun?.status),
+  };
 }
 
 async function writeTaskFile(runId, task) {
@@ -1008,5 +1045,7 @@ module.exports = {
   attachContainerId,
   markRunLaunchFailure,
   readRun,
+  updateMetaFile,
+  requestRunCancellation,
   resolveRunFilePath,
 };

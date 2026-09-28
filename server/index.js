@@ -25,6 +25,7 @@ const {
   attachContainerId,
   markRunLaunchFailure,
   readRun,
+  requestRunCancellation,
   resolveRunFilePath,
 } = require("./lib/runStore");
 const {
@@ -334,6 +335,39 @@ app.get("/api/runs/:runId", async (req, res) => {
     });
   }
 });
+
+app.post("/api/runs/:runId/cancel", async (req, res) => {
+  try {
+    const cancellation = await requestRunCancellation(req.params.runId);
+
+    if (!cancellation) {
+      return res.status(404).json({
+        success: false,
+        message: "Run not found",
+      })
+    }
+    const { run, terminal } = cancellation;
+    
+    if (terminal) {
+      return res.status(200).json({
+        success: true,
+        run,
+      });
+    }
+
+    return res.status(202).json({
+      success: true,
+      run: cancellingRun,
+    })
+  } catch (error) {
+    console.error("RUN CANCELATION SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to request run cancellation",
+    });
+  }
+})
 
 /**
  * Serve a file from a single run folder. This keeps screenshots and saved
