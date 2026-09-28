@@ -44,7 +44,7 @@ function ConfigurationSettings() {
       };
 
       const savedLabel = labelBySeconds[savedOptions.captureIntervalSeconds];
-      
+
       if (savedLabel) {
         setCaptureFrequency(savedLabel);
       }

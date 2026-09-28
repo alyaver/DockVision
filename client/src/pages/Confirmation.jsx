@@ -48,11 +48,11 @@ const Confirmation = () => {
     location.state?.executionMode ?? // Use the mode sent by dashboard
     storedRun?.executionMode ?? // if dashboard did not send a mode check storedRun (sessionStorage)
     "custom"; // if nothing was picked, then default to custom runner
-  
+
   // read settings saved by configuration settings
   const savedOptions = storedRun?.runOptions;
 
-  // use the saved settings, if no settings were saved use handbook default 
+  // use the saved settings, if no settings were saved use handbook default
   const runOptions = {
     iterations: savedOptions?.iterations ?? 1,
     captureIntervalSeconds: savedOptions?.captureIntervalSeconds ?? 5,
@@ -170,7 +170,7 @@ const Confirmation = () => {
               <strong>Iterations: </strong>
               {runOptions.iterations}
             </p>
-            
+
             <p>
               <strong>Screenshot interval: </strong>
               {runOptions.captureIntervalSeconds} second(s)
@@ -184,7 +184,7 @@ const Confirmation = () => {
 
           <div className="Card-Content">
             {/* Preview the script body, not just the filename, before launch. */}
-            
+
             {/* only used for Custom Runner (uploaded runner script) */}
             {executionMode === "custom" && (
               <DisplayCard
