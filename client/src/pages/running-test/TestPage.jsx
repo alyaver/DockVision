@@ -98,6 +98,27 @@ function getResultMessage(run) {
   return "";
 }
 
+function LogPanel({ title, lines, emptyMessage }) {
+  return (
+    <section className="TestPage__panel">
+      <div className="TestPage__panelHeader">
+        <h2>{title}</h2>
+        <span>{lines.length} entries</span>
+      </div>
+
+      <div className="TestPage__logBox">
+        {lines.length > 0 ? (
+          lines.map((line, index) => (
+            <p key={`${title}-${index}`}>{line}</p>
+          ))
+        ) : (
+          <p className="TestPage__muted">{emptyMessage}</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function TestPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -279,9 +300,23 @@ function TestPage() {
   const screenshotArtifact = run?.artifacts?.screenshot || null;
   const artifactEntries = Object.entries(run?.artifacts || {});
   const logLines = run?.logs?.task || [];
-  const stdoutLogs = run?.logs?.stdout || [];
-  const stderrLogs = run?.logs?.stderr || [];
+  const taskLogs = Array.isArray(run?.logs?.task) ? run.logs.task : [];
+  const stdoutLogs = Array.isArray(run?.logs?.stdout) ? run.logs.stdout : [];
+  const stderrLogs = Array.isArray(run?.logs?.stderr) ? run.logs.stderr : [];
   const finalResultMessage = getResultMessage(run);
+
+  const progress = run?.progress ?? {};
+  const isBuiltinExecution = run?.executionMode === "builtin";
+
+  const iterationLabel =
+    progress.currentIteration != null && progress.totalIterations != null
+      ? `${progress.currentIteration} / ${progress.totalIterations}`
+      : "Unknown";
+
+  const currentStepLabel =
+    progress.currentStepNumber != null && progress.totalSteps != null
+      ? `${progress.currentStepNumber} / ${progress.totalSteps}`
+      : "Unknown";
 
   const elapsedTime = run?.startedUtc
     ? formatElapsedTime(run.startedUtc, run.finishedUtc || undefined)
@@ -374,6 +409,41 @@ function TestPage() {
                 </div>
               )}
             </section>
+            
+            <section className="TestPage__panel">
+              <h2>Progress</h2>
+
+              <dl className="TestPage__progressDetails">
+                <div>
+                  <dt>Iteration</dt>
+                  <dd>{iterationLabel}</dd>
+                </div>
+
+                <div>
+                  <dt>Completed Iterations</dt>
+                  <dd>{progress.completedIterations ?? "Unknown"}</dd>
+                </div>
+
+                <div>
+                  <dt>Current Step</dt>
+                  <dd>
+                    {isBuiltinExecution || progress.currentStepNumber != null
+                      ? currentStepLabel
+                      : "Unknown"}
+                  </dd>
+                </div>
+
+                <div>
+                  <dt>Completed Steps in This Iteration</dt>
+                  <dd>{progress.completedSteps ?? "Unknown"}</dd>
+                </div>
+
+                <div>
+                  <dt>Current Step ID</dt>
+                  <dd>{progress.currentStepId ?? "Unknown"}</dd>
+                </div>
+              </dl>
+            </section>
 
             <section className="TestPage__panel">
               <h2>Scoped Paths</h2>
@@ -405,20 +475,23 @@ function TestPage() {
               </div>
             </section>
 
-            <section className="TestPage__panel TestPage__panel--wide">
-              <div className="TestPage__panelHeader">
-                <h2>Run Log</h2>
-                <span>{logLines.length} entries</span>
-              </div>
+            <LogPanel
+              title="Task Log"
+              lines={taskLogs}
+              emptyMessage="No task log entries yet."
+            />
 
-              <div className="TestPage__logBox">
-                {logLines.length ? (
-                  logLines.map((line) => <p key={line}>{line}</p>)
-                ) : (
-                  <p>No run-specific log entries yet.</p>
-                )}
-              </div>
-            </section>
+            <LogPanel
+              title="Stdout"
+              lines={stdoutLogs}
+              emptyMessage="No stdout output was returned."
+            />
+            
+            <LogPanel
+              title="Stderr"
+              lines={stderrLogs}
+              emptyMessage="No stderr output was returned."
+            />
 
             <section className="TestPage__panel">
               <div className="TestPage__panelHeader">
