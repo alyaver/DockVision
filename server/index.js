@@ -138,11 +138,12 @@ async function handleStartRun(req, res) {
   try {
     createdRun = await createRunRecord(req.body ?? {});
   } catch (error) {
-    if (error.code === "INVALID_TEST_SCRIPT") {
+    if (error.code === "INVALID_TASK_PLAN") {
       return res.status(400).json({
         success: false,
         message: error.message,
-        lineNumber: error.lineNumber,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
       });
     }
 
@@ -201,13 +202,22 @@ app.post("/api/runs/start", handleStartRun);
 // still refer to the original smoke-start endpoint name.
 app.post("/api/docker/start-smoke", handleStartRun);
 
-// placeholder function, will accept the tasks array from the WIP create-a-task page
+// Forward the uploaded configuration unchanged; the run store validates and parses it.
 async function handleStartRun2(req, res) {
 let createdRun = null;
 
   try {
     createdRun = await createRunRecord2(req.body ?? {});
   } catch (error) {
+    if (error.code === "INVALID_TASK_PLAN") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
+      });
+    }
+
     if (error.code === "RUN_ACTIVE") {
       return res.status(409).json({
         success: false,
