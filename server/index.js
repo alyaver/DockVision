@@ -16,13 +16,17 @@ const checkDiskSpace = require("check-disk-space").default;
 const path = require("path");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const { superviseRun } = require("./lib/runSupervisior");
 
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
 const {
   readRun,
+  requestRunCancellation,
+  listRuns,
   resolveRunFilePath,
+  requestRunCancellation2,
 } = require("./lib/runStore");
 const {
   ensureWindowsVmRunning,
@@ -122,6 +126,182 @@ app.get("/api/docker/ping", (req, res) => {
     });
   });
 });
+
+/**
+ * Create the run record first so the guest agent has a scoped task folder to
+ * read from, then ensure the Windows VM is available for that run. If the VM
+ * launch fails, we immediately mark the run as failed instead of leaving the
+ * active channel stranded in a queued or running state.
+ */
+async function handleStartRun(req, res) {
+  let createdRun = null;
+
+  try {
+    createdRun = await createRunRecord(req.body ?? {});
+  } catch (error) {
+    if (error.code === "INVALID_TASK_PLAN") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
+      });
+    }
+
+    if (error.code === "RUN_ACTIVE") {
+      return res.status(409).json({
+        success: false,
+        message: error.message,
+        activeRunId: error.activeRunId,
+      });
+    }
+
+    console.error("RUN CREATION SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create isolated run",
+    });
+  }
+
+  try {
+    const windowsVm = await ensureWindowsVmRunning();
+    const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
+
+    await attachContainerId(createdRun.runId, containerId);
+    const run = await readRun(createdRun.runId);
+
+    return res.json({
+      success: true,
+      message: "Isolated test run started in the Windows VM guest",
+      runId: createdRun.runId,
+      containerId,
+      windowsVm,
+      run,
+    });
+  } catch (error) {
+    try {
+      await markRunLaunchFailure(
+        createdRun.runId,
+        error.message || "Windows VM failed to start for the requested run."
+      );
+    } catch (markError) {
+      console.error("RUN FAILURE MARK ERROR:", markError);
+    }
+
+    console.error("RUN START SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start isolated test run",
+      error: error.message,
+      runId: createdRun.runId,
+    });
+  }
+}
+
+app.post("/api/runs/start", handleStartRun);
+// Keep the legacy route alive while older client code and saved workflows
+// still refer to the original smoke-start endpoint name.
+app.post("/api/docker/start-smoke", handleStartRun);
+
+// Forward the uploaded configuration unchanged; the run store validates and parses it.
+async function handleStartRun2(req, res) {
+let createdRun = null;
+
+  try {
+    createdRun = await createRunRecord2(req.body ?? {});
+  } catch (error) {
+    if (error.code === "INVALID_TASK_PLAN") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        code: error.code,
+        fieldErrors: error.fieldErrors,
+      });
+    }
+
+    if (error.code === "RUN_ACTIVE") {
+      return res.status(409).json({
+        success: false,
+        message: error.message,
+        activeRunId: error.activeRunId,
+      });
+    }
+
+    console.error("RUN CREATION SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create isolated run",
+    });
+  }
+
+  try {
+    const windowsVm = await ensureWindowsVmRunning();
+    const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
+
+    await attachContainerId(createdRun.runId, containerId);
+    superviseRun(createdRun.runId).catch((error) => { console.error("RUN SUPERVISOR ERROR:", error); });
+    const run = await readRun(createdRun.runId);
+
+    return res.json({
+      success: true,
+      message: "Isolated test run started in the Windows VM guest",
+      runId: createdRun.runId,
+      containerId,
+      windowsVm,
+      run,
+    });
+  } catch (error) {
+    try {
+      await markRunLaunchFailure(
+        createdRun.runId,
+        error.message || "Windows VM failed to start for the requested run."
+      );
+    } catch (markError) {
+      console.error("RUN FAILURE MARK ERROR:", markError);
+    }
+
+    console.error("RUN START SERVER ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start isolated test run",
+      error: error.message,
+      runId: createdRun.runId,
+    });
+  }
+}
+
+app.post("/api/runs/start2", handleStartRun2);
+
+app.post("/api/runs/:runId/cancel", async (req, res) => {
+  try {
+    const run = await requestRunCancellation(req.params.runId);
+
+    if (!run) {
+      return res.status(404).json({
+        success: false,
+        message: "Run not found.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message:
+        run.status === "cancelling"
+          ? "Cancellation requested."
+          : `Run is already ${run.status}.`,
+      run,
+    });
+  } catch (error) {
+    console.error("RUN CANCELLATION ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to request run cancellation.",
+      error: error.message,
+    });
+  }
+});
+
 /**
  * Report the current Docker-backed Windows guest status without creating a run.
  * The dashboard polls this so users can tell "Docker is down" apart from
@@ -169,6 +349,24 @@ app.post("/api/windows-vm/start", async (req, res) => {
   }
 });
 
+app.get("/api/runs", async (req, res) => {
+  try {
+    const runs = await listRuns();
+
+    return res.json({
+      success: true,
+      runs,
+    });
+  } catch (error) {
+    console.error("RUN LIST SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load run history",
+    });
+  }
+});
+
 /**
  * Poll the current state of a single run and return its scoped artifacts/logs.
  */
@@ -196,6 +394,39 @@ app.get("/api/runs/:runId", async (req, res) => {
     });
   }
 });
+
+app.post("/api/runs/:runId/cancel2", async (req, res) => {
+  try {
+    const cancellation = await requestRunCancellation2(req.params.runId);
+
+    if (!cancellation) {
+      return res.status(404).json({
+        success: false,
+        message: "Run not found",
+      })
+    }
+    const { run, terminal } = cancellation;
+    
+    if (terminal) {
+      return res.status(200).json({
+        success: true,
+        run,
+      });
+    }
+
+    return res.status(202).json({
+      success: true,
+      run: cancellingRun,
+    })
+  } catch (error) {
+    console.error("RUN CANCELATION SERVER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to request run cancellation",
+    });
+  }
+})
 
 /**
  * Serve a file from a single run folder. This keeps screenshots and saved

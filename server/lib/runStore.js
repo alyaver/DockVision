@@ -1,7 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
-const { readTestScript } = require("./test-script/readTestScript");
+const { readTestScript, TestScriptError } = require("./test-script/readTestScript");
 
 const CLEANUP_POLICY = {
   maxCompletedRuns: 20,
@@ -9,15 +9,142 @@ const CLEANUP_POLICY = {
 };
 
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set([                                         //start of lifecycle definitions
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
-const SHARED_ROOT = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "WindowsVm",
-  "shared"
-);
+const RUN_STATUSES = new Set([
+  "queued",
+  "running",
+  "cancelling",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+const RUN_TRANSITIONS = {
+  queued: new Set([
+    "running",
+    "cancelled",
+    "failed",
+  ]),
+
+  running: new Set([
+    "cancelling",
+    "completed",
+    "failed",
+  ]),
+
+  cancelling: new Set([
+    "cancelled",
+    "failed",
+  ]),
+
+  completed: new Set(),
+  failed: new Set(),
+  cancelled: new Set(),
+};                                                                                //end of lifecycle definition
+
+function canTransitionRunStatus(currentStatus, nextStatus) {                      //validate transition from state to state
+  const current = String(currentStatus || "").toLowerCase();
+  const next = String(nextStatus || "").toLowerCase();
+
+  if (!RUN_STATUSES.has(current)) {
+    return false;
+  }
+
+  if (!RUN_STATUSES.has(next)) {
+    return false;
+  }
+
+  if (current === next) {
+    return true;
+  }
+
+  return RUN_TRANSITIONS[current]?.has(next) || false;
+}
+
+function assertRunStatusTransition(currentStatus, nextStatus) {
+  if (!canTransitionRunStatus(currentStatus, nextStatus)) {
+    const error = new Error(
+      `Invalid run status transition: '${currentStatus}' -> '${nextStatus}'.`
+    );
+
+    error.code = "INVALID_RUN_TRANSITION";
+    throw error;
+  }
+}
+
+async function readCancellationRequest(runId) {
+  const runPaths = getRunPaths(runId);
+  return readJsonIfExists(runPaths.cancelRequestPath);
+}
+
+async function requestRunCancellation(runId) {
+  const run = await readRun(runId);
+
+  if (!run) {
+    return null;
+  }
+
+  if (["completed", "failed", "cancelled"].includes(String(run.status || "").toLowerCase())) {
+    return run;
+  }
+
+  const runPaths = getRunPaths(runId);
+  const requestedUtc = nowIso();
+
+  await writeJson(runPaths.cancelRequestPath, {
+    runId,
+    requestedUtc,
+    status: "requested",
+  });
+
+  await updateMetaFile(runId, {
+    status: "cancelling",
+    cancelRequestedUtc: requestedUtc,
+  });
+
+  await appendRunLog(runId, "Cancellation requested.");
+
+  return readRun(runId);
+}
+
+function normalizeRunSettings(options = {}) {                                   //iterations helper
+  // Current clients send runOptions; retain top-level fields for older callers.
+  options = options.runOptions ?? options;
+  const iterations = Number(options.iterations);
+  const iterationTimeoutSeconds =
+    Number(options.iterationTimeoutSeconds);
+  const captureIntervalSeconds =
+    Number(options.captureIntervalSeconds);
+
+  return {
+    iterations:
+      Number.isInteger(iterations) && iterations > 0
+        ? iterations
+        : 1,
+
+    iterationTimeoutSeconds:
+      Number.isFinite(iterationTimeoutSeconds) &&
+      iterationTimeoutSeconds > 0
+        ? iterationTimeoutSeconds
+        : 300,
+
+    captureIntervalSeconds:
+      Number.isFinite(captureIntervalSeconds) &&
+      captureIntervalSeconds > 0
+        ? captureIntervalSeconds
+        : 5,
+  };
+}
+
+// DOCKVISION_SHARED_ROOT redirects the store for isolated verification runs
+const SHARED_ROOT = process.env.DOCKVISION_SHARED_ROOT
+  ? path.resolve(process.env.DOCKVISION_SHARED_ROOT)
+  : path.resolve(__dirname, "..", "..", "WindowsVm", "shared");
 const ACTIVE_ROOT = path.join(SHARED_ROOT, "active");
 const RUNS_ROOT = path.join(SHARED_ROOT, "runs");
 const CURRENT_RUN_POINTER_PATH = path.join(ACTIVE_ROOT, "current-run.json");
@@ -29,6 +156,27 @@ function nowIso() {
 
 function isTerminalStatus(status) {
   return TERMINAL_STATUSES.has(String(status || "").toLowerCase());
+}
+
+function buildRunId() {
+  return `run-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+}
+
+function prepareRunnerScript(options) {
+  // Custom runners own their configuration schema. Validate before any run files are written.
+  if (hasUploadedScriptRunner(options)) {
+    assertValidUploadedScriptRunner(options);
+    return null;
+  }
+  const content = options.configContent;
+  const fileName = path.basename(options.configFileName || "task-plan.json");
+  const plan = readTestScript({fileName, content});
+
+  return {
+    content,
+    fileName,
+    plan,
+  };
 }
 
 function buildContainerName(runId) {
@@ -44,20 +192,24 @@ function getRunPaths(runId) {
   const screenshotsRoot = path.join(runRoot, "screenshots");
   const artifactsRoot = path.join(runRoot, "artifacts");
   const scriptsRoot = path.join(runRoot, "scripts");
+  const iterationsRoot = path.join(runRoot, "iterations");
 
   return {
     runRoot,
     logsRoot,
     screenshotsRoot,
     artifactsRoot,
+    scriptsRoot,
+    iterationsRoot,
+
     uploadedRunnerPath: path.join(runRoot, "uploaded-runner.py"),
     uploadedPowerShellRunnerPath: path.join(runRoot, "uploaded-runner.ps1"),
     uploadedPlanPath: path.join(runRoot, "uploaded-task-plan.json"),
-    scriptsRoot,
     metaPath: path.join(runRoot, "meta.json"),
     taskPath: path.join(runRoot, "task.json"),
     taskPlanPath: path.join(runRoot, "task-plan.json"),
     resultPath: path.join(runRoot, "result.json"),
+    cancelRequestPath: path.join(runRoot, "cancel-request.json"),
     taskLogPath: path.join(logsRoot, "task.log"),
   };
 }
@@ -79,9 +231,69 @@ async function ensureRunLayout(runId) {
     fs.mkdir(runPaths.screenshotsRoot, { recursive: true }),
     fs.mkdir(runPaths.artifactsRoot, { recursive: true }),
     fs.mkdir(runPaths.scriptsRoot, { recursive: true }),
+    fs.mkdir(runPaths.iterationsRoot, { recursive: true }),
   ]);
 
   return runPaths;
+}
+
+function getIterationPaths(runId, iterationNumber) {                                                        //creates paths for itteration data
+  const runPaths = getRunPaths(runId);
+
+  const iterationRoot = path.join(
+    runPaths.iterationsRoot,
+    String(iterationNumber)
+  );
+
+  return {
+    iterationRoot,
+    taskPath: path.join(iterationRoot, "task.json"),
+    resultPath: path.join(iterationRoot, "result.json"),
+    logsRoot: path.join(iterationRoot, "logs"),
+    screenshotsRoot: path.join(iterationRoot, "screenshots"),
+    artifactsRoot: path.join(iterationRoot, "artifacts"),
+  };
+}
+
+async function ensureIterationLayout(runId, iterationNumber) {
+  const paths = getIterationPaths(runId, iterationNumber);
+
+  await Promise.all([
+    fs.mkdir(paths.iterationRoot, { recursive: true }),
+    fs.mkdir(paths.logsRoot, { recursive: true }),
+    fs.mkdir(paths.screenshotsRoot, { recursive: true }),
+    fs.mkdir(paths.artifactsRoot, { recursive: true }),
+  ]);
+
+  return paths;
+}
+
+function buildIterationRunPointer(
+  runId,
+  createdUtc,
+  iterationNumber,
+  iterationPaths
+) {
+  return {
+    runId,
+    iterationNumber,
+    createdUtc,
+    updatedUtc: nowIso(),
+
+    channel: {
+      taskPath: `runs/${runId}/iterations/${iterationNumber}/task.json`,
+      resultPath: `runs/${runId}/iterations/${iterationNumber}/result.json`,
+      logsDir: `runs/${runId}/iterations/${iterationNumber}/logs`,
+      screenshotsDir: `runs/${runId}/iterations/${iterationNumber}/screenshots`,
+      artifactsDir: `runs/${runId}/iterations/${iterationNumber}/artifacts`,
+    },
+  };
+}
+
+async function writeCurrentRunPointer(pointer) {
+  await ensureBaseLayout();
+  await writeJson(CURRENT_RUN_POINTER_PATH, pointer);
+  return pointer;
 }
 
 async function readJsonIfExists(filePath) {
@@ -132,14 +344,155 @@ function describeCleanupPolicy() {
   return `Retain the latest ${CLEANUP_POLICY.maxCompletedRuns} completed or failed runs for up to ${CLEANUP_POLICY.maxAgeDays} days. Delete anything older or beyond that cap when a new run starts.`;
 }
 
+function buildDefaultTaskPayload(runId, options = {}) {
+  const testName = options.testName || "Untitled Test Run";
+  const runnerScriptName = options.runnerScriptName || "No runner script uploaded";
+  const configFileName = options.configFileName || "No config uploaded";
+
+  return {
+    text: [
+      "DockVision isolated run proof",
+      `Run ID: ${runId}`,
+      `Test Run Name: ${testName}`,
+      `Runner Script: ${runnerScriptName}`,
+      `Config File: ${configFileName}`,
+      `Queued UTC: ${nowIso()}`,
+    ].join("\r\n"),
+    captureScreenshot: true,
+    saveFile: true,
+    closeAfter: true,
+    fileName: `${runId}-notepad-proof.txt`,
+  };
+}
+
+function getRunnerScriptLanguage(options = {}) {
+  const explicitLanguage = String(options.runnerScriptLanguage || "")
+    .trim()
+    .toLowerCase();
+  const runnerName = String(options.runnerScriptName || "").toLowerCase();
+
+  if (explicitLanguage === "python" || runnerName.endsWith(".py")) {
+    return "python";
+  }
+
+  if (explicitLanguage === "powershell" || runnerName.endsWith(".ps1")) {
+    return "powershell";
+  }
+
+  return "";
+}
+
+function hasUploadedScriptRunner(options = {}) {
+  if (options.executionMode !== undefined) {
+    if (!["builtin", "custom"].includes(options.executionMode)) {
+      throw new TestScriptError("executionMode must be builtin or custom.", "executionMode");
+    }
+    return options.executionMode === "custom";
+  }
+  // The current upload UI sends runner fields without executionMode.
+  // Detect incomplete uploads too, so missing content produces a custom validation error.
+  return ["runnerScriptName", "runnerScriptContent", "runnerScriptLanguage"]
+    .some((field) => Boolean(options[field]));
+}
+
+function assertValidUploadedScriptRunner(options = {}) {
+  const language = getRunnerScriptLanguage(options);
+  if (!language) {
+    throw new TestScriptError("Uploaded runner must be a supported .py or .ps1 script.", "runnerScriptName");
+  }
+  if (typeof options.runnerScriptContent !== "string" || !options.runnerScriptContent.trim()) {
+    throw new TestScriptError("Uploaded runner content is required.", "runnerScriptContent");
+  }
+
+  if (!String(options.configFileName || "").toLowerCase().endsWith(".json")) {
+    throw new TestScriptError("Uploaded task plan must be a .json file.", "configFileName");
+  }
+
+  if (typeof options.configContent !== "string" || !options.configContent.trim()) {
+    throw new TestScriptError("Uploaded configuration content is required.", "configContent");
+  }
+  // Check JSON syntax only. Keep the original string for the runner, including whitespace.
+  try {
+    JSON.parse(options.configContent.replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new TestScriptError(`Uploaded task plan is not valid JSON: ${error.message}`, "configContent");
+  }
+
+  return language;
+}
+
+async function writeUploadedScriptRunnerInputs(runPaths, options = {}) {
+  if (!hasUploadedScriptRunner(options)) {
+    return null;
+  }
+
+  const language = assertValidUploadedScriptRunner(options);
+  const runnerPath =
+    language === "powershell"
+      ? runPaths.uploadedPowerShellRunnerPath
+      : runPaths.uploadedRunnerPath;
+
+  await Promise.all([
+    fs.writeFile(runnerPath, String(options.runnerScriptContent || ""), "utf8"),
+    fs.writeFile(runPaths.uploadedPlanPath, String(options.configContent || ""), "utf8"),
+  ]);
+
+  return {
+    language,
+    runnerPath,
+    planPath: runPaths.uploadedPlanPath,
+    runnerRelativePath: path.relative(runPaths.runRoot, runnerPath).replace(/\\/g, "/"),
+    planRelativePath: path
+      .relative(runPaths.runRoot, runPaths.uploadedPlanPath)
+      .replace(/\\/g, "/"),
+  };
+}
+
+function buildUploadedScriptRunnerPayload(uploadedInputs, options = {}) {
+  return {
+    runnerScriptName: options.runnerScriptName || "uploaded runner",
+    runnerScriptLanguage: uploadedInputs.language,
+    runnerPath: uploadedInputs.runnerRelativePath,
+    configFileName: options.configFileName || "uploaded-task-plan.json",
+    configPath: uploadedInputs.planRelativePath,
+  };
+}
+
+function buildCurrentRunPointer(runId, createdUtc) {
+  return {
+    runId,
+    createdUtc,
+    updatedUtc: createdUtc,
+    channel: {
+      taskPath: `runs/${runId}/task.json`,
+      resultPath: `runs/${runId}/result.json`,
+      logsDir: `runs/${runId}/logs`,
+      screenshotsDir: `runs/${runId}/screenshots`,
+      artifactsDir: `runs/${runId}/artifacts`,
+    },
+  };
+}
+
 async function readCurrentRunPointer() {
   await ensureBaseLayout();
   return readJsonIfExists(CURRENT_RUN_POINTER_PATH);
 }
 
 function deriveRunStatus(meta, task, result, heartbeat, isActiveRun) {
+  if (result?.status && isTerminalStatus(result.status)) {
+    return result.status;
+  }
+
+  if (String(meta?.status || "").toLowerCase() === "cancelling") {
+    return "cancelling";
+  }
+
   if (result?.status) {
     return result.status;
+  }
+
+  if (meta?.status === "cancelling" || task?.status === "cancelling") {
+    return "cancelling";
   }
 
   if (task?.status) {
@@ -153,6 +506,134 @@ function deriveRunStatus(meta, task, result, heartbeat, isActiveRun) {
   return meta?.status || "queued";
 }
 
+function getHeartbeatGraceMs(heartbeat) {
+  const intervalSeconds = Number(heartbeat?.agent?.intervalSeconds);
+  const intervalMs =
+    Number.isFinite(intervalSeconds) && intervalSeconds > 0
+      ? intervalSeconds * 1000
+      : 0;
+
+  return Math.max(
+    HEARTBEAT_STALE_MIN_MS,
+    intervalMs * HEARTBEAT_STALE_MISSED_INTERVALS
+  );
+}
+
+async function readFileMtimeMs(filePath) {
+  if (!filePath) {
+    return null;
+  }
+
+  try {
+    const fileStats = await fs.stat(filePath);
+    return fileStats.mtimeMs;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function getHeartbeatHealth(run) {
+  const heartbeat = run?.heartbeat || null;
+  return {
+    runId: String(heartbeat?.agent?.runId || ""),
+    status: String(heartbeat?.agent?.status || "").toLowerCase(),
+    timestampUtc: heartbeat?.machine?.timestampUtc || null,
+  };
+}
+
+async function getObservedRunHealth(run) {
+  // Use host-side file modification times instead of trusting guest-written
+  // timestamps. Host and guest clocks can drift, which is exactly what caused
+  // the earlier false "still running" state after the Windows guest vanished.
+  const [heartbeatMtimeMs, taskMtimeMs, metaMtimeMs, taskLogMtimeMs] =
+    await Promise.all([
+      readFileMtimeMs(HEARTBEAT_PATH),
+      readFileMtimeMs(run?.paths?.taskPath),
+      readFileMtimeMs(run?.paths?.runRoot ? path.join(run.paths.runRoot, "meta.json") : null),
+      readFileMtimeMs(
+        run?.paths?.runRoot ? path.join(run.paths.runRoot, "logs", "task.log") : null
+      ),
+    ]);
+
+  const graceMs = getHeartbeatGraceMs(run?.heartbeat);
+  const heartbeatFresh =
+    heartbeatMtimeMs !== null && Date.now() - heartbeatMtimeMs <= graceMs;
+  const observedRunActivityMs = [taskMtimeMs, metaMtimeMs, taskLogMtimeMs]
+    .filter((value) => value !== null)
+    .reduce((latest, value) => Math.max(latest, value), 0);
+  const runActivityStale =
+    observedRunActivityMs > 0 && Date.now() - observedRunActivityMs > graceMs;
+
+  return {
+    graceMs,
+    heartbeatFresh,
+    heartbeatMtimeUtc:
+      heartbeatMtimeMs !== null ? new Date(heartbeatMtimeMs).toISOString() : null,
+    observedRunActivityUtc:
+      observedRunActivityMs > 0 ? new Date(observedRunActivityMs).toISOString() : null,
+    runActivityStale,
+  };
+}
+
+async function shouldRecoverAbandonedRun(run) {
+  if (!run?.active || !isRecoverableInFlightStatus(run.status)) {
+    return false;
+  }
+
+  const heartbeatHealth = getHeartbeatHealth(run);
+  const observedHealth = await getObservedRunHealth(run);
+  // A run is healthy only when the heartbeat is fresh, still reports "running",
+  // and still belongs to the active run we are evaluating.
+  const heartbeatHealthy =
+    observedHealth.heartbeatFresh &&
+    heartbeatHealth.status === "running" &&
+    heartbeatHealth.runId === run.runId;
+
+  if (heartbeatHealthy) {
+    return false;
+  }
+
+  return observedHealth.runActivityStale;
+}
+
+function isRecoverableInFlightStatus(status) {
+  return ["running", "cancelling"].includes(
+    String(status || "").toLowerCase()
+  );
+}
+
+function buildAbandonedRunMessage(run, observedHealth = null) {
+  const heartbeatHealth = getHeartbeatHealth(run);
+  const messageParts = [
+    "Run stopped receiving a healthy guest-agent heartbeat before the task finished.",
+  ];
+
+  if (observedHealth?.heartbeatMtimeUtc) {
+    messageParts.push(`Heartbeat file last changed at ${observedHealth.heartbeatMtimeUtc}.`);
+  }
+
+  if (heartbeatHealth.timestampUtc) {
+    messageParts.push(`Last heartbeat UTC: ${heartbeatHealth.timestampUtc}.`);
+  } else {
+    messageParts.push("No heartbeat timestamp was available.");
+  }
+
+  if (heartbeatHealth.status && heartbeatHealth.status !== "running") {
+    messageParts.push(`Heartbeat status was '${heartbeatHealth.status}'.`);
+  }
+
+  if (heartbeatHealth.runId && heartbeatHealth.runId !== run.runId) {
+    messageParts.push(`Heartbeat belonged to run '${heartbeatHealth.runId}'.`);
+  }
+
+  messageParts.push("The Windows guest or backing container likely exited unexpectedly.");
+  return messageParts.join(" ");
+}
+
 async function updateMetaFile(runId, patch) {
   const runPaths = await ensureRunLayout(runId);
   const currentMeta = (await readJsonIfExists(runPaths.metaPath)) || { runId };
@@ -164,6 +645,45 @@ async function updateMetaFile(runId, patch) {
 
   await writeJson(runPaths.metaPath, nextMeta);
   return nextMeta;
+}
+
+async function requestRunCancellation2(runId) {
+  const run = await readRun(runId);
+
+  if (!run) {
+    return null;
+  }
+
+  if (isTerminalStatus(run.status)) {
+    return { run, terminal: true };
+  }
+
+  const runPaths = getRunPaths(runId);
+  const requestedUtc = nowIso();
+
+  // The guest agent watches this run-scoped marker while executing.
+  await writeJson(path.join(runPaths.runRoot, "cancel.json"), {
+    runId,
+    requestedUtc,
+  });
+
+  await updateMetaFile(runId, {
+    status: "cancelling",
+    updatedUtc: requestedUtc,
+  });
+
+  const updatedRun = await readRun(runId);
+
+  return {
+    run: updatedRun,
+    terminal: isTerminalStatus(updatedRun?.status),
+  };
+}
+
+async function writeTaskFile(runId, task) {
+  const runPaths = await ensureRunLayout(runId);
+  await writeJson(runPaths.taskPath, task);
+  return task;
 }
 
 function normalizeArtifactRelativePath(runId, rawPath) {
@@ -217,6 +737,41 @@ function buildArtifactMap(runId, artifacts = {}) {
   return mappedArtifacts;
 }
 
+async function findLatestScreenshotArtifact(runId, screenshotsRoot, iterationNumber = null) {
+  try {
+    const entries = await fs.readdir(screenshotsRoot, { withFileTypes: true });
+
+    const screenshots = entries
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".png"))
+      .map((entry) => entry.name)
+      .sort();
+
+    if (!screenshots.length) {
+      return null;
+    }
+
+    const fileName = screenshots[screenshots.length - 1];
+
+    const relativePath =
+      iterationNumber !== null
+        ? `iterations/${iterationNumber}/screenshots/${fileName}`
+        : `screenshots/${fileName}`;
+
+    return {
+      rawPath: relativePath,
+      relativePath,
+      url: buildRunFileUrl(runId, relativePath),
+      fileName,
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 async function syncMetaFromRunState(runId, snapshot) {
   if (!snapshot.meta) {
     return snapshot;
@@ -251,22 +806,33 @@ async function readRun(runId) {
   await ensureBaseLayout();
 
   const runPaths = getRunPaths(runId);
-  const [meta, task, result, heartbeat, currentRunPointer, taskLogLines] =
-    await Promise.all([
-      readJsonIfExists(runPaths.metaPath),
-      readJsonIfExists(runPaths.taskPath),
-      readJsonIfExists(runPaths.resultPath),
-      readJsonIfExists(HEARTBEAT_PATH),
-      readCurrentRunPointer(),
-      readLogLines(runPaths.taskLogPath),
-    ]);
+  const currentRunPointer = await readCurrentRunPointer();
+
+  const activeRunId = currentRunPointer?.runId || null;
+  const isActiveRun = activeRunId === runId;
+  const activeIterationNumber = isActiveRun && Number.isInteger(Number(currentRunPointer?.iterationNumber)) ? Number(currentRunPointer.iterationNumber) : null;
+  const activeIterationPaths = activeIterationNumber !== null ? getIterationPaths(runId, activeIterationNumber) : null;
+  const screenshotsRoot = activeIterationPaths?.screenshotsRoot || runPaths.screenshotsRoot;
+
+  const taskPath = activeIterationPaths?.taskPath || runPaths.taskPath;
+  const resultPath = activeIterationPaths?.resultPath || runPaths.resultPath;
+  const taskLogPath = activeIterationPaths ? path.join(activeIterationPaths.logsRoot, "task.log") : runPaths.taskLogPath;
+
+  const [meta, activeTask, rootTask, result, heartbeat, taskLogLines] = await Promise.all([
+    readJsonIfExists(runPaths.metaPath),
+    readJsonIfExists(taskPath),
+    activeIterationPaths ? readJsonIfExists(runPaths.taskPath) : Promise.resolve(null),
+    readJsonIfExists(resultPath),
+    readJsonIfExists(HEARTBEAT_PATH),
+    readLogLines(taskLogPath),
+  ]);
+
+const task = activeTask || rootTask;
 
   if (!meta && !task && !result) {
     return null;
   }
 
-  const activeRunId = currentRunPointer?.runId || null;
-  const isActiveRun = activeRunId === runId;
   const status = deriveRunStatus(meta, task, result, heartbeat, isActiveRun);
 
   const snapshot = await syncMetaFromRunState(runId, {
@@ -275,6 +841,12 @@ async function readRun(runId) {
     result,
     status,
   });
+
+  const latestScreenshot = await findLatestScreenshotArtifact(
+    runId,
+    screenshotsRoot,
+    activeIterationNumber
+  );
 
   const baseMeta = snapshot.meta || meta || {};
 
@@ -287,6 +859,9 @@ async function readRun(runId) {
     taskPlanPath: baseMeta.taskPlanPath || null,
     taskType: baseMeta.taskType || snapshot.task?.taskType || "unknown",
     status: snapshot.status,
+    settings: baseMeta.settings || snapshot.task?.settings || null,
+    iterationState: baseMeta.iterationState || null,
+    activeIterationNumber,
     active: isActiveRun,
     cleanupPolicy: baseMeta.cleanupPolicy || describeCleanupPolicy(),
     containerId: baseMeta.containerId || null,
@@ -301,7 +876,12 @@ async function readRun(runId) {
           artifacts: buildArtifactMap(runId, snapshot.result.artifacts),
         }
       : null,
-    artifacts: buildArtifactMap(runId, snapshot.result?.artifacts),
+    artifacts: {
+      ...buildArtifactMap(runId, snapshot.result?.artifacts),
+      ...(latestScreenshot
+        ? { screenshot: latestScreenshot }
+        : {}),
+    },
     heartbeat: isActiveRun ? heartbeat : null,
     logs: {
       task: taskLogLines,
@@ -309,15 +889,361 @@ async function readRun(runId) {
     paths: {
       sharedRoot: SHARED_ROOT,
       runRoot: runPaths.runRoot,
-      taskPath: runPaths.taskPath,
+      taskPath: activeIterationPaths?.taskPath || runPaths.taskPath,
       taskPlanPath: runPaths.taskPlanPath,
-      resultPath: runPaths.resultPath,
-      logsRoot: runPaths.logsRoot,
-      screenshotsRoot: runPaths.screenshotsRoot,
-      artifactsRoot: runPaths.artifactsRoot,
+      resultPath: activeIterationPaths?.resultPath || runPaths.resultPath,
+      logsRoot: activeIterationPaths?.logsRoot || runPaths.logsRoot,
+      screenshotsRoot: activeIterationPaths?.screenshotsRoot || runPaths.screenshotsRoot,
+      artifactsRoot: activeIterationPaths?.artifactsRoot || runPaths.artifactsRoot,
       scriptsRoot: runPaths.scriptsRoot,
+      iterationsRoot: runPaths.iterationsRoot,
     },
   };
+}
+
+async function failAbandonedRun(run) {
+  // Convert an orphaned in-flight run into a terminal failure and clear the
+  // active pointer so future runs are not blocked behind stale shared state.
+  const runId = run.runId;
+  const runPaths = await ensureRunLayout(runId);
+  const finishedUtc = nowIso();
+  const observedHealth = await getObservedRunHealth(run);
+  const message = buildAbandonedRunMessage(run, observedHealth);
+  const task = {
+    ...(run.task || {}),
+    runId,
+    taskId: run.taskId || run.task?.taskId || `${runId}-task`,
+    status: "failed",
+    completedUtc: finishedUtc,
+  };
+
+  await Promise.all([
+    writeTaskFile(runId, task),
+    writeJson(runPaths.resultPath, {
+      runId,
+      taskId: task.taskId,
+      status: "failed",
+      finishedUtc,
+      message,
+      artifacts: {},
+      details: {
+        source: "backend-heartbeat-recovery",
+        heartbeatStatus: run.heartbeat?.agent?.status || null,
+        heartbeatRunId: run.heartbeat?.agent?.runId || null,
+        heartbeatTimestampUtc: run.heartbeat?.machine?.timestampUtc || null,
+        heartbeatFileUpdatedUtc: observedHealth.heartbeatMtimeUtc,
+        lastObservedRunActivityUtc: observedHealth.observedRunActivityUtc,
+      },
+    }),
+    updateMetaFile(runId, {
+      status: "failed",
+      finishedUtc,
+    }),
+  ]);
+
+  await appendRunLog(
+    runId,
+    "Run was marked failed because its guest heartbeat became stale or mismatched."
+  );
+
+  const currentRunPointer = await readCurrentRunPointer();
+  if (currentRunPointer?.runId === runId) {
+    await clearActiveChannel();
+  }
+
+  return readRun(runId);
+}
+
+async function getBlockingActiveRun() {
+  const currentRunPointer = await readCurrentRunPointer();
+  if (!currentRunPointer?.runId) {
+    return null;
+  }
+
+  const currentRun = await readRun(currentRunPointer.runId);
+  if (!currentRun) {
+    await clearActiveChannel();
+    return null;
+  }
+
+  if (isTerminalStatus(currentRun.status)) {
+    await clearActiveChannel();
+    return null;
+  }
+
+  // Self-heal abandoned runs before enforcing the single-active-run rule.
+  if (await shouldRecoverAbandonedRun(currentRun)) {
+    await failAbandonedRun(currentRun);
+    return null;
+  }
+
+  return currentRun;
+}
+
+async function archiveQueuedRun(run) {
+  const runId = run.runId;
+  const runPaths = await ensureRunLayout(runId);
+  const finishedUtc = nowIso();
+  const task = {
+    ...(run.task || {}),
+    runId,
+    status: "cancelled",
+    completedUtc: finishedUtc,
+  };
+
+  await Promise.all([
+    writeTaskFile(runId, task),
+    writeJson(runPaths.resultPath, {
+      runId,
+      taskId: run.taskId || task.taskId || `${runId}-task`,
+      status: "cancelled",
+      finishedUtc,
+      message: "Queued run was superseded by a newer run before execution.",
+      artifacts: {},
+      details: {
+        source: "backend-run-replacement",
+      },
+    }),
+    updateMetaFile(runId, {
+      status: "cancelled",
+      finishedUtc,
+    }),
+  ]);
+
+  await appendRunLog(
+    runId,
+    "Queued run was archived because a newer run replaced the active channel."
+  );
+}
+
+async function createRunRecord(options = {}) {
+  const preparedRunner = prepareRunnerScript(options);
+
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const activeRun = await getBlockingActiveRun();
+  if (activeRun) {
+    if (activeRun.status === "queued") {
+      await archiveQueuedRun(activeRun);
+    } else {
+      const error = new Error(
+        `Run '${activeRun.runId}' is still ${activeRun.status}. Wait for it to finish before starting a new one.`
+      );
+      error.code = "RUN_ACTIVE";
+      error.activeRunId = activeRun.runId;
+      throw error;
+    }
+  }
+
+  await clearActiveChannel();
+
+  const runId = buildRunId();
+  const taskId = `${runId}-task`;
+  const createdUtc = nowIso();
+  const runPaths = await ensureRunLayout(runId);
+  const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
+
+  const task = {
+    runId,
+    taskId,
+    taskType,
+    status: "queued",
+    createdUtc,
+    payload: uploadedInputs
+        ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
+        : preparedRunner.plan,
+  };
+
+  const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
+
+  const meta = {
+    runId,
+    taskId,
+    testName: options.testName || "Untitled Test Run",
+    runnerScriptName: preparedRunner?.fileName || options.runnerScriptName || null, runnerScriptPath,
+    taskPlanPath: preparedRunner ? "task-plan.json" : null,
+    configFileName: options.configFileName || null,
+    runnerScriptLanguage: uploadedInputs?.language || options.runnerScriptLanguage || null,
+    taskType: task.taskType,
+    status: "queued",
+    createdUtc,
+    updatedUtc: createdUtc,
+    containerId: null,
+    cleanupPolicy: describeCleanupPolicy(),
+  };
+
+  const currentRunPointer = buildCurrentRunPointer(runId, createdUtc);
+
+  const pendingWrites = [
+    writeJson(runPaths.metaPath, meta),
+    writeJson(runPaths.taskPath, task),
+    writeJson(CURRENT_RUN_POINTER_PATH, currentRunPointer),
+  ];
+
+  if (preparedRunner) {
+    pendingWrites.push(
+      fs.writeFile(
+        path.join(runPaths.scriptsRoot, preparedRunner.fileName),
+        preparedRunner.content,
+        "utf8"
+      ),
+      writeJson(runPaths.taskPlanPath, preparedRunner.plan)
+    );
+  }
+
+  await Promise.all(pendingWrites);
+
+  await appendRunLog(runId, "Run created and queued in the active channel.");
+
+  return {
+    runId,
+    taskId,
+    meta,
+    task,
+    paths: runPaths,
+  };
+}
+// The alternate launch endpoint uses the same parsed task-plan contract.
+async function createRunRecord2(options = {}) {
+  const preparedRunner = prepareRunnerScript(options);
+
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const activeRun = await getBlockingActiveRun();
+  if (activeRun) {
+    if (activeRun.status === "queued") {
+      await archiveQueuedRun(activeRun);
+    } else {
+      const error = new Error(
+        `Run '${activeRun.runId}' is still ${activeRun.status}. Wait for it to finish before starting a new one.`
+      );
+      error.code = "RUN_ACTIVE";
+      error.activeRunId = activeRun.runId;
+      throw error;
+    }
+  }
+
+  await clearActiveChannel();
+
+  const runId = buildRunId();
+  const taskId = `${runId}-task`;
+  const createdUtc = nowIso();
+  const runPaths = await ensureRunLayout(runId);
+  const settings = normalizeRunSettings(options);                                                   //normalize iteration, timeout, and screenshot-capture settings for this run
+  const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
+
+
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
+  const payload = uploadedInputs
+    ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
+    : preparedRunner.plan;
+
+  const task = {
+    runId,
+    taskId,
+    taskType,
+    status: "queued",
+    createdUtc,
+    settings,
+    runOptions: settings,
+    payload,
+  };
+
+  const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
+
+  const meta = {
+    runId,
+    taskId,
+    testName: options.testName || "Untitled Test Run",
+    runnerScriptName: preparedRunner?.fileName || options.runnerScriptName || null,
+    runnerScriptPath,
+    taskPlanPath: preparedRunner ? "task-plan.json" : null,
+    configFileName: options.configFileName || null,
+    taskType: task.taskType,
+    settings,
+    runOptions: settings,
+    iterationState: {
+      total: settings.iterations,
+      current: 0,
+      completed: 0,
+      failed: 0,
+    },
+    status: "queued",
+    createdUtc,
+    updatedUtc: createdUtc,
+    containerId: null,
+    cleanupPolicy: describeCleanupPolicy(),
+  };
+
+  const FIRST_ITERATION_NUMBER = 1;
+  const currentRunPointer = buildIterationRunPointer( runId, createdUtc, FIRST_ITERATION_NUMBER);
+  const pendingWrites = [
+    writeJson(runPaths.metaPath, meta),
+    writeJson(runPaths.taskPath, task),
+    writeJson(CURRENT_RUN_POINTER_PATH, currentRunPointer),
+  ];
+
+  if (preparedRunner) {
+    pendingWrites.push(
+      fs.writeFile(
+        path.join(runPaths.scriptsRoot, preparedRunner.fileName),
+        preparedRunner.content,
+        "utf8"
+      ),
+      writeJson(runPaths.taskPlanPath, preparedRunner.plan)
+    );
+  }
+
+  await Promise.all(pendingWrites);
+
+  await appendRunLog(runId, "Run created and queued in the active channel.");
+
+  return {
+    runId,
+    taskId,
+    meta,
+    task,
+    paths: runPaths,
+  };
+}
+
+async function attachContainerId(runId, containerId) {
+  const nextMeta = await updateMetaFile(runId, {
+    containerId,
+  });
+
+  await appendRunLog(runId, `Launcher container attached to run: ${containerId}`);
+
+  return nextMeta;
+}
+
+async function markRunLaunchFailure(runId, message) {
+  const runPaths = await ensureRunLayout(runId);
+  const meta = (await readJsonIfExists(runPaths.metaPath)) || { runId };
+  const finishedUtc = nowIso();
+
+  await Promise.all([
+    writeJson(runPaths.resultPath, {
+      runId,
+      taskId: meta.taskId || `${runId}-task`,
+      status: "failed",
+      finishedUtc,
+      message,
+      artifacts: {},
+      details: {
+        source: "backend-launch",
+      },
+    }),
+    updateMetaFile(runId, {
+      status: "failed",
+      finishedUtc,
+    }),
+  ]);
+
+  await appendRunLog(runId, `Run failed before agent execution: ${message}`);
 }
 
 async function resolveRunFilePath(runId, relativePath) {
@@ -387,10 +1313,73 @@ async function pruneCompletedRuns() {
   }
 }
 
+async function listRuns() {
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const currentRunPointer = await readCurrentRunPointer();
+  const activeRunId = currentRunPointer?.runId || null;
+  const entries = await fs.readdir(RUNS_ROOT, { withFileTypes: true });
+  const runs = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const runPaths = getRunPaths(entry.name);
+    const [meta, task, result] = await Promise.all([
+      readJsonIfExists(runPaths.metaPath),
+      readJsonIfExists(runPaths.taskPath),
+      readJsonIfExists(runPaths.resultPath),
+    ]);
+
+    if (!meta && !task && !result) {
+      continue;
+    }
+
+    const status = result?.status || task?.status || meta?.status || "queued";
+
+    runs.push({
+      runId: entry.name,
+      testName: meta?.testName || "Untitled Test Run",
+      taskType: task?.taskType || meta?.taskType || "unknown",
+      status,
+      active: activeRunId === entry.name,
+      createdUtc: meta?.createdUtc || task?.createdUtc || null,
+      startedUtc: meta?.startedUtc || task?.startedUtc || null,
+      finishedUtc: meta?.finishedUtc || result?.finishedUtc || null,
+      updatedUtc: meta?.updatedUtc || null,
+    });
+  }
+
+  runs.sort((left, right) => runSortTimestamp(right) - runSortTimestamp(left));
+
+  return runs;
+}
+
+function runSortTimestamp(run) {
+  const candidate = run.createdUtc || run.finishedUtc || "";
+  const parsed = Date.parse(candidate);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 module.exports = {
   SHARED_ROOT,
   buildContainerName,
   readRun,
+  requestRunCancellation,
+  listRuns,
   resolveRunFilePath,
   pruneCompletedRuns,
+  getIterationPaths,                       //for run supervisior
+  buildIterationRunPointer,
+  writeCurrentRunPointer,
+  ensureIterationLayout,
+  updateMetaFile,
+  writeTaskFile,
+  appendRunLog,
+  assertRunStatusTransition,
+  readCancellationRequest,
+  requestRunCancellation2,
 };

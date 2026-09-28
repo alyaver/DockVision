@@ -32,6 +32,7 @@ function App() {
         <Route path="/confirmation" element={<Confirmation />} />
         <Route path="/configuration-settings" element={<ConfigurationSettings />} />
         <Route path="/running-test" element={<TestPage />} />
+        <Route path="/running-test/:runId" element={<TestPage />} />
         <Route path="/Login" element={<Login />} />
         <Route path="/Register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />

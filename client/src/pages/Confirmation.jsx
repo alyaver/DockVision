@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import "../confirmationPage.css";
 import { startTestRun } from "../lib/api";
 import { launchWhenReady } from "../lib/launchWhenReady.mjs";
+import { config } from "dotenv";
 
 /**
  * Confirmation rehydrates from sessionStorage so a refresh or direct navigation
@@ -42,6 +43,22 @@ const Confirmation = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const storedRun = readStoredRun();
+
+  // Remembers which mode user picked (custom runner or built in notepad)
+  const executionMode =
+    location.state?.executionMode ?? // Use the mode sent by dashboard
+    storedRun?.executionMode ?? // if dashboard did not send a mode check storedRun (sessionStorage)
+    "custom"; // if nothing was picked, then default to custom runner
+
+  // read settings saved by configuration settings
+  const savedOptions = storedRun?.runOptions;
+
+  // use the saved settings, if no settings were saved use handbook default
+  const runOptions = {
+    iterations: savedOptions?.iterations ?? 1,
+    captureIntervalSeconds: savedOptions?.captureIntervalSeconds ?? 5,
+    iterationTimeoutSeconds: savedOptions?.iterationTimeoutSeconds ?? 300,
+  }
 
   const testName =
     location.state?.testName || storedRun?.testName || "Untitled Test Run";
@@ -87,16 +104,28 @@ const Confirmation = () => {
        * with backend launch changes. The runner content is included so the
        * backend can persist and execute the selected .py/.ps1 runner.
        */
-      const data = await launchWhenReady({
-        // Temporary bridge for the upload-only flow; Ticket 8 supplies explicit mode selection.
-        executionMode: "custom",
+
+      // information needed by both custom runner and built in notepad
+      const request = {
+        executionMode,
         testName,
-        runnerScriptName,
-        runnerScriptContent,
-        runnerScriptLanguage,
         configFileName,
         configContent,
-      }, { launch: startTestRun, onProgress: setProgressMessage, signal: controller.signal });
+        runOptions,
+      };
+
+      // includes the uploaded runner if Custom Runner was selected
+      if (executionMode === "custom") {
+        request.runnerScriptName = runnerScriptName;
+        request.runnerScriptContent = runnerScriptContent;
+        request.runnerScriptLanguage = runnerScriptLanguage;
+      }
+
+      const data = await launchWhenReady(request, {
+        launch: startTestRun,
+        onProgress: setProgressMessage,
+        signal: controller.signal,
+      });
 
       // Keep the submitted runner source next to the returned run identifiers
       // so the Running Test flow survives refreshes during local development.
@@ -109,11 +138,15 @@ const Confirmation = () => {
         runnerScriptLanguage,
         configFileName,
         configContent,
+        executionMode,
+        runOptions,
       });
 
-      navigate("/running-test", {
+      const runId = data.runId || data.run?.runId || null;
+
+      navigate(`/running-test/${runId}`, {
         state: {
-          runId: data.runId || null,
+          runId,
           containerId: data.containerId || null,
           testName,
         },
@@ -141,12 +174,41 @@ const Confirmation = () => {
             <strong>Test Run Name:</strong> {testName}
           </p>
 
+          {/* Shows the user which mode they selected */}
+          <p>
+            <strong>Execution Mode: </strong>
+            {executionMode === "builtin" ? "Built-in Notepad" : "Custom Runner"}
+          </p>
+
+          {/* Shows the users saved settings, uses default values for missing settings */}
+          <div className="run-settings">
+            <p>
+              <strong>Iterations: </strong>
+              {runOptions.iterations}
+            </p>
+
+            <p>
+              <strong>Screenshot interval: </strong>
+              {runOptions.captureIntervalSeconds} second(s)
+            </p>
+
+            <p>
+              <strong>Timeout per iteration: </strong>
+              {runOptions.iterationTimeoutSeconds} seconds
+            </p>
+          </div>
+
           <div className="Card-Content">
             {/* Preview the script body, not just the filename, before launch. */}
-            <DisplayCard
-              title={`Runner Script (${runnerScriptName})`}
-              content={runnerScriptContent}
-            />
+
+            {/* only used for Custom Runner (uploaded runner script) */}
+            {executionMode === "custom" && (
+              <DisplayCard
+                title={`Runner Script (${runnerScriptName})`}
+                content={runnerScriptContent}
+              />
+            )}
+
             <DisplayCard
               title={`Task Plan (${configFileName})`}
               content={configContent}

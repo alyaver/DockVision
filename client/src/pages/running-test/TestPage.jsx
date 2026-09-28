@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Navigation from "../../components/Navigation";
+import { getRun, cancelRun } from "../../lib/api";
 import "./TestPage.css";
 
 const CURRENT_RUN_STORAGE_KEY = "dockvision-current-run";
 const POLL_INTERVAL_MS = 3000;
+
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const POLLING_STATUSES = new Set(["queued", "running", "cancelling"]);
 
 function readStoredRun() {
   try {
@@ -33,60 +37,210 @@ function formatStatus(value) {
     return "Unknown";
   }
 
-  return value
+  return String(value)
     .split(/[-_]/g)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 }
 
+function formatElapsedTime(startUtc, endUtc = null) {
+  if (!startUtc) {
+    return "Not started";
+  }
+
+  const start = new Date(startUtc).getTime();
+  if (Number.isNaN(start)) {
+    return "Not started";
+  }
+
+  const end = endUtc ? new Date(endUtc).getTime() : Date.now();
+  if (Number.isNaN(end)) {
+    return "Not started";
+  }
+
+  const diffMs = Math.max(0, end - start);
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function isTerminalStatus(status) {
+  return TERMINAL_STATUSES.has(String(status || "").toLowerCase());
+}
+
+function isPollingStatus(status) {
+  return POLLING_STATUSES.has(String(status || "").toLowerCase());
+}
+
+function getResultMessage(run) {
+  if (!run) {
+    return "";
+  }
+  if (run.result?.message) {
+    return run.result.message;
+  }
+  if (run.result?.error?.message) {
+    return run.result.error.message;
+  }
+  if (run.result?.error?.code) {
+    return `Error code: ${run.result.error.code}`;
+  }
+  return "";
+}
+
+function LogPanel({ title, lines, emptyMessage }) {
+  return (
+    <section className="TestPage__panel">
+      <div className="TestPage__panelHeader">
+        <h2>{title}</h2>
+        <span>{lines.length} entries</span>
+      </div>
+
+      <div className="TestPage__logBox">
+        {lines.length > 0 ? (
+          lines.map((line, index) => (
+            <p key={`${title}-${index}`}>{line}</p>
+          ))
+        ) : (
+          <p className="TestPage__muted">{emptyMessage}</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function TestPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { runId: routeRunId } = useParams();
+
   const storedRun = readStoredRun();
-  const runId = location.state?.runId || storedRun?.runId || null;
+  const runId = routeRunId || location.state?.runId || storedRun?.runId || null;
   const fallbackTestName =
     location.state?.testName || storedRun?.testName || "Untitled Test Run";
 
   const [run, setRun] = useState(null);
   const [isLoading, setIsLoading] = useState(Boolean(runId));
   const [errorMessage, setErrorMessage] = useState("");
+  const [networkNotice, setNetworkNotice] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState("");
+
+  const pollTimerRef = useRef(null);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      if (pollTimerRef.current) {
+        window.clearTimeout(pollTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!runId) {
       setIsLoading(false);
+      setRun(null);
+      setErrorMessage("");
+      setNetworkNotice("");
       return undefined;
     }
 
     let isMounted = true;
-    let isFirstRequest = true;
+    let isFetchPending = false;
+
+    const clearTimer = () => {
+      if (pollTimerRef.current) {
+        window.clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    }
+
+    const scheduleNextPoll = (nextStatus) => {
+      if (!isMounted) {
+        return;
+      }
+
+      if (isPollingStatus(nextStatus)) {
+        clearTimer();
+        pollTimerRef.current = window.setTimeout(() => {
+          fetchRun();
+        }, POLL_INTERVAL_MS);
+      } else {
+        clearTimer();
+      }
+    }
 
     async function fetchRun() {
-      try {
-        const response = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
-        const data = await response.json().catch(() => ({}));
+      if (!isMounted || isFetchPending) {
+        return;
+      }
 
-        if (!response.ok) {
-          throw new Error(data.message || "Failed to load the active run.");
-        }
+      isFetchPending = true;
+      setIsLoading(true);
+
+      try {
+        const data = await getRun(runId);
 
         if (!isMounted) {
           return;
         }
 
-        setRun(data.run || null);
+        const nextRun = data?.run || null;
+
+        if (nextRun?.runId) {
+          sessionStorage.setItem(CURRENT_RUN_STORAGE_KEY,
+            JSON.stringify({
+              runId: nextRun.runId,
+              testName: nextRun.testName || fallbackTestName,
+            })
+          );
+        }
+
+        setRun(nextRun);
         setErrorMessage("");
+        setNetworkNotice("");
+
+        //If the run we are working with has been terminated, stop polling
+        if (nextRun && isTerminalStatus(nextRun.status)) {
+          scheduleNextPoll(nextRun.status);
+          return;
+        }
+
+        //if run isn't yet terminated, continue polling
+        scheduleNextPoll(nextRun?.status || "queued");
       } catch (error) {
         if (!isMounted) {
           return;
         }
 
-        setErrorMessage(error.message || "Failed to load the active run.");
-      } finally {
-        if (isMounted && isFirstRequest) {
-          setIsLoading(false);
-          isFirstRequest = false;
+        if (error.status === 404) {
+          setRun(null);
+          setErrorMessage("This run is missing or expired. Please return to the dashboard.");
+          setNetworkNotice("");
+          clearTimer();
+          return;
         }
+        
+        setNetworkNotice("Temporary network issue. Retrying for the latest run status.");
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+        isFetchPending = false;
       }
     }
 
@@ -95,9 +249,36 @@ function TestPage() {
 
     return () => {
       isMounted = false;
-      window.clearInterval(intervalId);
+      clearTimer();
     };
-  }, [runId]);
+  }, [runId, fallbackTestName]);
+
+  async function handleCancel() {
+    if (!runId || isCancelling || isTerminalStatus(run?.status)) {
+      return;
+    }
+
+    setIsCancelling(true);
+    setCancelError("");
+
+    try {
+      const data = await cancelRun(runId);
+
+      if (data?.run) {
+        setRun(data?.run);
+      }
+    } catch (error) {
+      if (error.status === 404) {
+        setErrorMessage("This run is missing or expired. Return to the dashboard.");
+      } else {
+        setCancelError(
+          error.message || "Could not request cancellation. Please try again."
+        );
+      }
+    } finally {
+      setIsCancelling(false);
+    }
+  }
 
   if (!runId) {
     return (
@@ -114,9 +295,32 @@ function TestPage() {
     );
   }
 
+  const statusLabel = formatStatus(run?.status);
+  const statusClass = run?.status ? `status-${String(run.status).toLowerCase()}` : "status-unknown";
   const screenshotArtifact = run?.artifacts?.screenshot || null;
   const artifactEntries = Object.entries(run?.artifacts || {});
   const logLines = run?.logs?.task || [];
+  const taskLogs = Array.isArray(run?.logs?.task) ? run.logs.task : [];
+  const stdoutLogs = Array.isArray(run?.logs?.stdout) ? run.logs.stdout : [];
+  const stderrLogs = Array.isArray(run?.logs?.stderr) ? run.logs.stderr : [];
+  const finalResultMessage = getResultMessage(run);
+
+  const progress = run?.progress ?? {};
+  const isBuiltinExecution = run?.executionMode === "builtin";
+
+  const iterationLabel =
+    progress.currentIteration != null && progress.totalIterations != null
+      ? `${progress.currentIteration} / ${progress.totalIterations}`
+      : "Unknown";
+
+  const currentStepLabel =
+    progress.currentStepNumber != null && progress.totalSteps != null
+      ? `${progress.currentStepNumber} / ${progress.totalSteps}`
+      : "Unknown";
+
+  const elapsedTime = run?.startedUtc
+    ? formatElapsedTime(run.startedUtc, run.finishedUtc || undefined)
+    : "Not started";
 
   return (
     <>
@@ -133,15 +337,29 @@ function TestPage() {
 
           <div className="TestPage__heroActions">
             <button onClick={() => navigate("/dashboard")}>Return to Dashboard</button>
-            <div className={`TestPage__statusBadge status-${run?.status || "unknown"}`}>
-              {formatStatus(run?.status)}
+
+            {!isTerminalStatus(run?.status) && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={isCancelling}
+                className="TestPage__cancelButton"
+              >
+                {isCancelling ? "Cancelling..." : "Cancel"}
+              </button>
+            )}
+
+            <div className={`TestPage__statusBadge ${statusClass}`}>
+              {statusLabel}
             </div>
           </div>
         </div>
 
         {errorMessage && <p className="TestPage__error">{errorMessage}</p>}
+        {networkNotice && <p className="TestPage__error">{networkNotice}</p>}
+        {cancelError && <p className="TestPage__error">{cancelError}</p>}
 
-        {isLoading ? (
+        {isLoading && !run ? (
           <div className="TestPage__panel">
             <p>Loading isolated run data...</p>
           </div>
@@ -178,14 +396,53 @@ function TestPage() {
                   <dt>Cleanup Rule</dt>
                   <dd>{run?.cleanupPolicy || "Not available"}</dd>
                 </div>
+                <div>
+                  <dt>Elapsed</dt>
+                  <dd>{elapsedTime}</dd>
+                </div>
               </dl>
 
-              {run?.result?.message && (
+              {finalResultMessage && (
                 <div className="TestPage__note">
                   <strong>Latest Result</strong>
-                  <p>{run.result.message}</p>
+                  <p>{finalResultMessage}</p>
                 </div>
               )}
+            </section>
+            
+            <section className="TestPage__panel">
+              <h2>Progress</h2>
+
+              <dl className="TestPage__progressDetails">
+                <div>
+                  <dt>Iteration</dt>
+                  <dd>{iterationLabel}</dd>
+                </div>
+
+                <div>
+                  <dt>Completed Iterations</dt>
+                  <dd>{progress.completedIterations ?? "Unknown"}</dd>
+                </div>
+
+                <div>
+                  <dt>Current Step</dt>
+                  <dd>
+                    {isBuiltinExecution || progress.currentStepNumber != null
+                      ? currentStepLabel
+                      : "Unknown"}
+                  </dd>
+                </div>
+
+                <div>
+                  <dt>Completed Steps in This Iteration</dt>
+                  <dd>{progress.completedSteps ?? "Unknown"}</dd>
+                </div>
+
+                <div>
+                  <dt>Current Step ID</dt>
+                  <dd>{progress.currentStepId ?? "Unknown"}</dd>
+                </div>
+              </dl>
             </section>
 
             <section className="TestPage__panel">
@@ -218,20 +475,23 @@ function TestPage() {
               </div>
             </section>
 
-            <section className="TestPage__panel TestPage__panel--wide">
-              <div className="TestPage__panelHeader">
-                <h2>Run Log</h2>
-                <span>{logLines.length} entries</span>
-              </div>
+            <LogPanel
+              title="Task Log"
+              lines={taskLogs}
+              emptyMessage="No task log entries yet."
+            />
 
-              <div className="TestPage__logBox">
-                {logLines.length ? (
-                  logLines.map((line) => <p key={line}>{line}</p>)
-                ) : (
-                  <p>No run-specific log entries yet.</p>
-                )}
-              </div>
-            </section>
+            <LogPanel
+              title="Stdout"
+              lines={stdoutLogs}
+              emptyMessage="No stdout output was returned."
+            />
+            
+            <LogPanel
+              title="Stderr"
+              lines={stderrLogs}
+              emptyMessage="No stderr output was returned."
+            />
 
             <section className="TestPage__panel">
               <div className="TestPage__panelHeader">
