@@ -35,20 +35,37 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import getpass
 import json
+import os
+import platform
 import re
+import socket
 import sys
 import time
 from ctypes import wintypes
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 # The demo is intentionally self-contained. All relative files, generated
 # Notepad documents, and artifacts live beside this runner.
 SCRIPT_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = SCRIPT_DIR / "artifacts"
+
+# Agent transport contract. These values mirror the active PowerShell agent so
+# the backend can continue using the same shared folder and heartbeat schema
+# while the runtime is migrated to this one Python file.
+AGENT_NAME = "DockVision Guest Agent"
+AGENT_VERSION = "0.5.2"
+HEARTBEAT_INTERVAL_SECONDS = 15
+SHARED_ROOT_CANDIDATES = (
+    Path(r"\\host.lan\Data"),
+    Path(r"C:\Users\Docker\Desktop\Shared"),
+    Path(r"C:\Users\Public\Desktop\Shared"),
+)
+SHARED_ROOT_FALLBACK = Path(r"C:\DockVision\shared-fallback")
 
 # Internal app-specific target registry for the DockVision Windows VM.
 #
@@ -133,6 +150,120 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         json.dump(value, handle, indent=2)
+
+
+def write_json_atomically(path: Path, value: dict[str, Any]) -> None:
+    """Publish JSON by replacement so readers do not observe a partial file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2)
+            handle.write("\n")
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink(missing_ok=True)
+
+
+def utc_timestamp() -> str:
+    """Return the ISO-8601 UTC representation used by agent-facing files."""
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def resolve_shared_root(
+    candidates: tuple[Path, ...] = SHARED_ROOT_CANDIDATES,
+    fallback: Path = SHARED_ROOT_FALLBACK,
+) -> Path:
+    """Find the guest/host share using the established PowerShell-agent order."""
+
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def agent_paths(shared_root: Path) -> dict[str, Path]:
+    """Return the shared transport paths owned by the long-running agent."""
+
+    return {
+        "sharedRoot": shared_root,
+        "activeRoot": shared_root / "active",
+        "runsRoot": shared_root / "runs",
+        "heartbeatPath": shared_root / "agent-heartbeat.json",
+        "installLogPath": shared_root / "agent-install-log.txt",
+        "currentRunPointerPath": shared_root / "active" / "current-run.json",
+    }
+
+
+def ensure_agent_shared_layout(shared_root: Path) -> dict[str, Path]:
+    """Create only the durable shared transport directories required by the agent."""
+
+    paths = agent_paths(shared_root)
+    for key in ("sharedRoot", "activeRoot", "runsRoot"):
+        paths[key].mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def append_agent_install_log(shared_root: Path, message: str) -> None:
+    """Append an agent diagnostic without coupling it to run-specific logging."""
+
+    paths = ensure_agent_shared_layout(shared_root)
+    with paths["installLogPath"].open("a", encoding="utf-8") as handle:
+        handle.write(f"[{utc_timestamp()}] {message}\n")
+
+
+def build_agent_heartbeat(
+    shared_root: Path,
+    status: str = "idle",
+    task_name: str = "waiting_for_task",
+    run_id: str = "",
+) -> dict[str, Any]:
+    """Build the heartbeat schema consumed by server/lib/guestReadiness.js."""
+
+    return {
+        "agent": {
+            "name": AGENT_NAME,
+            "version": AGENT_VERSION,
+            "status": status,
+            "taskName": task_name,
+            "runId": run_id,
+            "intervalSeconds": HEARTBEAT_INTERVAL_SECONDS,
+        },
+        "machine": {
+            "computerName": socket.gethostname(),
+            "username": getpass.getuser(),
+            "timestampUtc": utc_timestamp(),
+            "sharedRoot": str(shared_root),
+            "platform": platform.platform(),
+        },
+        "prototype": {
+            "notes": [
+                "Guest agent is running inside the Windows VM.",
+                "Shared folder was detected successfully.",
+                "Heartbeat is being written on a recurring loop.",
+            ]
+        },
+    }
+
+
+def write_agent_heartbeat(
+    shared_root: Path,
+    status: str = "idle",
+    task_name: str = "waiting_for_task",
+    run_id: str = "",
+) -> None:
+    """Write a fresh agent heartbeat to the shared-root contract location."""
+
+    paths = ensure_agent_shared_layout(shared_root)
+    write_json_atomically(
+        paths["heartbeatPath"],
+        build_agent_heartbeat(shared_root, status=status, task_name=task_name, run_id=run_id),
+    )
 
 
 # Convert loose JSON input into a real bool. This keeps the runner forgiving if
@@ -1152,19 +1283,45 @@ def dispatch_custom_runner(language: str, runner_path: Path, config_path: Path) 
     raise RuntimeError(f"Unsupported custom runner language: {language or '(missing)'}")
 
 
+def run_agent_loop(
+    shared_root: Path | None = None,
+    heartbeat_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    max_heartbeats: int | None = None,
+) -> int:
+    """
+    Run the long-lived agent foundation loop.
+
+    This owns transport initialization and liveness publication only. It remains
+    non-admissible until the next piece adds task polling and execution, so the
+    backend cannot queue work to an agent that would leave it unprocessed.
+    """
+
+    resolved_shared_root = shared_root or resolve_shared_root()
+    ensure_agent_shared_layout(resolved_shared_root)
+    append_agent_install_log(resolved_shared_root, "Python agent startup begin.")
+    append_agent_install_log(resolved_shared_root, f"Resolved shared root to: {resolved_shared_root}")
+    append_agent_install_log(resolved_shared_root, "Agent foundation loop starting.")
+
+    emitted_heartbeats = 0
+    while max_heartbeats is None or emitted_heartbeats < max_heartbeats:
+        write_agent_heartbeat(
+            resolved_shared_root,
+            status="initializing",
+            task_name="task_polling_not_configured",
+        )
+        emitted_heartbeats += 1
+
+        if max_heartbeats is None or emitted_heartbeats < max_heartbeats:
+            sleep(max(heartbeat_interval_seconds, 0.0))
+
+    return 0
+
+
 def run_agent() -> int:
-    """
-    Agent-mode entry boundary for the single DockVision Python runtime.
+    """Production CLI entry for the agent foundation loop."""
 
-    Piece 2 intentionally does not activate a second runtime or silently fall
-    back to standalone UI work. Shared-root discovery, heartbeat ownership, and
-    the long-running supervisor are added by subsequent migration pieces.
-    """
-
-    raise RuntimeError(
-        "DockVision agent mode is not configured yet. "
-        "Use --plan for the standalone Notepad worker until the agent runtime migration is complete."
-    )
+    return run_agent_loop()
 
 
 # CLI boundary. --plan preserves the established standalone worker contract;
