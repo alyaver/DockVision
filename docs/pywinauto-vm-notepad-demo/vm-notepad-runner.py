@@ -266,6 +266,188 @@ def write_agent_heartbeat(
     )
 
 
+def read_json_if_present(path: Path) -> dict[str, Any] | None:
+    """Read an optional JSON object; reject empty, scalar, and array payloads."""
+
+    if not path.is_file():
+        return None
+
+    with path.open("r", encoding="utf-8-sig") as handle:
+        raw = handle.read().strip()
+
+    if not raw:
+        return None
+
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected a JSON object in {path}.")
+    return value
+
+
+def path_within(path: Path, parent: Path) -> bool:
+    """Return whether a normalized path is contained by the normalized parent."""
+
+    try:
+        path.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def require_path_within(path: Path, parent: Path, description: str) -> Path:
+    """Normalize a path and reject values that escape the expected directory."""
+
+    resolved_path = path.resolve(strict=False)
+    if not path_within(resolved_path, parent):
+        raise ValueError(f"{description} is outside the active run folder: {path}")
+    return resolved_path
+
+
+def get_run_context(shared_root: Path, run_id: str) -> dict[str, Path | str]:
+    """Build the default filesystem contract for one validated active run."""
+
+    if not re.fullmatch(r"run-[A-Za-z0-9-]+", run_id):
+        raise ValueError(f"Active run pointer has an invalid runId: {run_id!r}")
+
+    paths = ensure_agent_shared_layout(shared_root)
+    run_root = require_path_within(paths["runsRoot"] / run_id, paths["runsRoot"], "Run root")
+    logs_root = run_root / "logs"
+    return {
+        "runId": run_id,
+        "runRoot": run_root,
+        "metaPath": run_root / "meta.json",
+        "taskPath": run_root / "task.json",
+        "resultPath": run_root / "result.json",
+        "logsRoot": logs_root,
+        "taskLogPath": logs_root / "task.log",
+        "screenshotsRoot": run_root / "screenshots",
+        "artifactsRoot": run_root / "artifacts",
+        "cancelRequestPath": run_root / "cancel-request.json",
+        "cancelMarkerPath": run_root / "cancel.json",
+    }
+
+
+def resolve_active_channel_path(
+    shared_root: Path,
+    run_context: dict[str, Path | str],
+    path_value: Any,
+    description: str,
+) -> Path:
+    """Resolve a pointer channel path while constraining it to its active run."""
+
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError(f"Active pointer {description} must be a non-empty string.")
+
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = shared_root / candidate
+    return require_path_within(candidate, Path(run_context["runRoot"]), description)
+
+
+def read_current_run_pointer(shared_root: Path) -> dict[str, Any] | None:
+    """Read the host-published active-run pointer without changing its state."""
+
+    pointer_path = agent_paths(shared_root)["currentRunPointerPath"]
+    try:
+        return read_json_if_present(pointer_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        append_agent_install_log(shared_root, f"Failed to parse current run pointer: {exc}")
+        return None
+
+
+def resolve_active_run_context(shared_root: Path) -> dict[str, Path | str] | None:
+    """Resolve the current pointer into validated paths for its one active run."""
+
+    pointer = read_current_run_pointer(shared_root)
+    if pointer is None:
+        return None
+
+    run_id = pointer.get("runId")
+    if not isinstance(run_id, str) or not run_id.strip():
+        append_agent_install_log(shared_root, "Active run pointer did not contain a usable runId.")
+        return None
+
+    try:
+        context = get_run_context(shared_root, run_id)
+        channel = pointer.get("channel")
+        if channel is not None:
+            if not isinstance(channel, dict):
+                raise ValueError("Active run pointer channel must be a JSON object.")
+
+            channel_paths = {
+                "taskPath": "taskPath",
+                "resultPath": "resultPath",
+                "logsDir": "logsRoot",
+                "screenshotsDir": "screenshotsRoot",
+                "artifactsDir": "artifactsRoot",
+            }
+            for channel_key, context_key in channel_paths.items():
+                if channel_key in channel and channel[channel_key] is not None:
+                    context[context_key] = resolve_active_channel_path(
+                        shared_root,
+                        context,
+                        channel[channel_key],
+                        f"Active pointer channel.{channel_key}",
+                    )
+
+            context["taskLogPath"] = Path(context["logsRoot"]) / "task.log"
+
+        return context
+    except (OSError, ValueError) as exc:
+        append_agent_install_log(shared_root, f"Failed to resolve active run context: {exc}")
+        return None
+
+
+def read_active_task(shared_root: Path) -> tuple[dict[str, Path | str], dict[str, Any]] | None:
+    """Read the task addressed by the active pointer and normalize its run ID."""
+
+    context = resolve_active_run_context(shared_root)
+    if context is None:
+        return None
+
+    try:
+        task = read_json_if_present(Path(context["taskPath"]))
+        if task is None:
+            return None
+        task.setdefault("runId", context["runId"])
+        if task["runId"] != context["runId"]:
+            raise ValueError("Active task runId does not match current-run.json.")
+        return context, task
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        append_agent_install_log(shared_root, f"Failed to parse active task file: {exc}")
+        return None
+
+
+def is_run_cancellation_requested(run_context: dict[str, Path | str], shared_root: Path) -> bool:
+    """Return true for either supported run-scoped cancellation marker."""
+
+    try:
+        request = read_json_if_present(Path(run_context["cancelRequestPath"]))
+        if request is not None and request.get("status") == "requested":
+            return True
+
+        # The established PowerShell contract uses cancel-request.json. The
+        # current /cancel2 backend endpoint also writes cancel.json, whose
+        # runId is required to match the already validated active run context.
+        marker = read_json_if_present(Path(run_context["cancelMarkerPath"]))
+        return marker is not None and marker.get("runId") == run_context["runId"]
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        append_agent_install_log(shared_root, f"Cancellation marker could not be read: {exc}")
+        return False
+
+
+def resolve_run_relative_path(run_context: dict[str, Path | str], path_value: str) -> Path:
+    """Resolve an uploaded runner/config path and confine it to the active run."""
+
+    if not path_value or not path_value.strip():
+        raise ValueError("Run-relative path must be a non-empty string.")
+
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = Path(run_context["runRoot"]) / candidate
+    return require_path_within(candidate, Path(run_context["runRoot"]), "Resolved path")
+
+
 # Convert loose JSON input into a real bool. This keeps the runner forgiving if
 # future UI code sends "true" as a string instead of true as a JSON boolean.
 def bool_value(value: Any, default: bool = False) -> bool:
