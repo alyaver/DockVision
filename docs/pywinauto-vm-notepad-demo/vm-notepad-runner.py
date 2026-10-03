@@ -969,10 +969,11 @@ def named_targets_for_app(app_config: dict[str, Any]) -> dict[str, dict[str, Any
     raise RuntimeError(f"No named target registry exists for app '{app_name}'.")
 
 
-# Main interpreter loop. Each JSON step becomes one concrete runner action.
-# This mirrors the architecture we eventually want in the DockVision inner
-# agent: read a plan, execute each task, and collect structured results.
-def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
+# Built-in Notepad worker. Each JSON step becomes one concrete runner action.
+# This function deliberately owns only the VM UI Automation work; the long-lived
+# agent will later own shared-root polling, lifecycle updates, cancellation,
+# timeout supervision, screenshots, and task selection.
+def execute_notepad_plan(plan: dict[str, Any]) -> dict[str, Any]:
     from pywinauto import mouse
     from pywinauto.keyboard import send_keys
 
@@ -1101,24 +1102,94 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# CLI boundary. The runner defaults to the task plan beside itself, but accepts
-# --plan so teammates can try alternate contracts without editing this file.
+# Compatibility boundary for existing direct callers and uploaded copies of this
+# runner. New runtime code should call dispatch_builtin_notepad_task() instead.
+def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    return execute_notepad_plan(plan)
+
+
+def dispatch_builtin_notepad_task(plan: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch DockVision's built-in task-plan workload to the Notepad worker."""
+
+    return execute_notepad_plan(plan)
+
+
+def dispatch_custom_python_runner(runner_path: Path, config_path: Path) -> dict[str, Any]:
+    """
+    Reserved custom-Python runner dispatch boundary.
+
+    The agent implementation must provide run-scoped path validation, process
+    lifecycle/cancellation, output capture, and timeout handling before an
+    uploaded program can be launched. Keeping that work out of the Notepad
+    worker prevents a partially implemented agent mode from executing arbitrary
+    uploads without supervision.
+    """
+
+    raise RuntimeError(
+        "Custom Python runner dispatch is not configured yet "
+        f"(runner={runner_path}, config={config_path})."
+    )
+
+
+def dispatch_custom_powershell_runner(runner_path: Path, config_path: Path) -> dict[str, Any]:
+    """Reserved custom-PowerShell runner dispatch boundary; see Python equivalent."""
+
+    raise RuntimeError(
+        "Custom PowerShell runner dispatch is not configured yet "
+        f"(runner={runner_path}, config={config_path})."
+    )
+
+
+def dispatch_custom_runner(language: str, runner_path: Path, config_path: Path) -> dict[str, Any]:
+    """Route an uploaded runner to its language-specific dispatch boundary."""
+
+    normalized_language = language.strip().casefold()
+    if normalized_language == "python":
+        return dispatch_custom_python_runner(runner_path, config_path)
+    if normalized_language == "powershell":
+        return dispatch_custom_powershell_runner(runner_path, config_path)
+
+    raise RuntimeError(f"Unsupported custom runner language: {language or '(missing)'}")
+
+
+def run_agent() -> int:
+    """
+    Agent-mode entry boundary for the single DockVision Python runtime.
+
+    Piece 2 intentionally does not activate a second runtime or silently fall
+    back to standalone UI work. Shared-root discovery, heartbeat ownership, and
+    the long-running supervisor are added by subsequent migration pieces.
+    """
+
+    raise RuntimeError(
+        "DockVision agent mode is not configured yet. "
+        "Use --plan for the standalone Notepad worker until the agent runtime migration is complete."
+    )
+
+
+# CLI boundary. --plan preserves the established standalone worker contract;
+# --agent is the explicit future long-running DockVision runtime entry point.
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run DockVision pywinauto named-control demo.")
+    parser = argparse.ArgumentParser(
+        description="Run the DockVision Notepad worker or the DockVision VM agent runtime."
+    )
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Run the long-lived DockVision VM agent instead of the standalone Notepad worker.",
+    )
     parser.add_argument("--plan", default=str(SCRIPT_DIR / "task-plan.json"), help="Path to task-plan.json")
     return parser.parse_args()
 
 
-# Program entry point. Always write result.json, even on failure, because the
-# failure artifact is usually the fastest way to understand what went wrong.
-def main() -> int:
-    args = parse_args()
-    plan_path = Path(args.plan)
+# Standalone worker entry. Always write result.json, even on failure, because
+# the failure artifact is usually the fastest way to understand what went wrong.
+def run_standalone_notepad_worker(plan_path: Path) -> int:
     result_path = ARTIFACT_DIR / "result.json"
 
     try:
         plan = read_json(plan_path)
-        result = execute_plan(plan)
+        result = dispatch_builtin_notepad_task(plan)
         write_json(result_path, result)
         print(json.dumps(result, indent=2))
         return 0
@@ -1133,6 +1204,25 @@ def main() -> int:
         write_json(result_path, result)
         print(json.dumps(result, indent=2))
         return 1
+
+
+def main() -> int:
+    args = parse_args()
+    if args.agent:
+        try:
+            return run_agent()
+        except Exception as exc:
+            result = {
+                "status": "failed",
+                "finishedAt": datetime.now().isoformat(),
+                "runtimeMode": "agent",
+                "message": str(exc),
+                "errorType": type(exc).__name__,
+            }
+            print(json.dumps(result, indent=2))
+            return 1
+
+    return run_standalone_notepad_worker(Path(args.plan))
 
 
 if __name__ == "__main__":
