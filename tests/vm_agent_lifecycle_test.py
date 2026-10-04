@@ -38,14 +38,16 @@ class VmAgentLifecycleTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
 
-    def write_task(self, status: str = "queued", task_type: str = "noop") -> dict:
+    def write_task(
+        self, status: str = "queued", task_type: str = "noop", payload: dict | None = None
+    ) -> dict:
         task = {
             "runId": self.run_id,
             "taskId": f"{self.run_id}-task",
             "taskType": task_type,
             "status": status,
             "createdUtc": "2026-10-04T00:00:00Z",
-            "payload": {},
+            "payload": {} if payload is None else payload,
         }
         runner.write_json_atomically(Path(self.context["taskPath"]), task)
         return task
@@ -165,6 +167,146 @@ class VmAgentLifecycleTest(unittest.TestCase):
         self.assertEqual(task["status"], "completed")
         self.assertEqual(result["status"], "completed")
         self.assertEqual(heartbeat["agent"]["status"], "idle")
+
+    def test_task_sequence_uses_payload_and_returns_run_scoped_artifacts(self) -> None:
+        plan = {
+            "name": "Unicode fixture",
+            "captureScreenshot": True,
+            "tasks": [
+                {"id": "click-editor", "action": "CLICK", "target": "editor"},
+                {"id": "type-text", "action": "TYPE", "text": "  λ\tline one\nline two! "},
+            ],
+        }
+        task = self.write_task(task_type="task_sequence", payload=plan)
+        calls = []
+        original_dispatch = runner.dispatch_builtin_notepad_task
+
+        def fixture_dispatch(received_plan, **kwargs):
+            calls.append((received_plan, kwargs))
+            return {
+                "status": "completed",
+                "planName": received_plan["name"],
+                "automationBackend": "python-pywinauto-uia",
+                "openedFile": "notepad-uia-demo.txt",
+                "artifacts": {
+                    "controlTree": "artifacts/control-tree.txt",
+                    "screenshot": f"screenshots/notepad-{task['taskId']}.png",
+                },
+                "startup": {"action": "OPEN_APP", "status": "completed"},
+                "steps": [
+                    {"id": "click-editor", "action": "CLICK", "status": "completed"},
+                    {
+                        "id": "type-text",
+                        "action": "TYPE",
+                        "status": "completed",
+                        "typedCharacterCount": len(plan["tasks"][1]["text"]),
+                    },
+                ],
+            }
+
+        runner.dispatch_builtin_notepad_task = fixture_dispatch
+        try:
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        finally:
+            runner.dispatch_builtin_notepad_task = original_dispatch
+
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(calls[0][0], plan)
+        self.assertEqual(calls[0][1]["artifact_dir"], Path(self.context["artifactsRoot"]))
+        self.assertEqual(calls[0][1]["artifact_relative_root"], self.run_root)
+        self.assertEqual(calls[0][1]["file_dir"], Path(self.context["artifactsRoot"]))
+        self.assertEqual(calls[0][1]["screenshot_dir"], Path(self.context["screenshotsRoot"]))
+        self.assertEqual(calls[0][1]["screenshot_name"], f"notepad-{task['taskId']}.png")
+        self.assertTrue(calls[0][1]["capture_screenshot"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["artifacts"]["controlTree"], "artifacts/control-tree.txt")
+        self.assertEqual(result["artifacts"]["screenshot"], f"screenshots/notepad-{task['taskId']}.png")
+        self.assertEqual(result["details"]["taskType"], "task_sequence")
+        self.assertEqual(result["details"]["totalStepCount"], 2)
+        self.assertEqual(result["details"]["clickedStepCount"], 1)
+        self.assertEqual(result["details"]["typedStepCount"], 1)
+        self.assertEqual(result["details"]["typedCharacterCount"], len(plan["tasks"][1]["text"]))
+        self.assertEqual(result["details"]["steps"][1]["id"], "type-text")
+
+    def test_task_sequence_falls_back_to_run_task_plan_when_payload_is_not_an_object(self) -> None:
+        plan = {"name": "Fallback", "captureScreenshot": False, "tasks": []}
+        task = self.write_task(task_type="task_sequence", payload=None)
+        task.pop("payload")
+        runner.write_json_atomically(Path(self.context["taskPath"]), task)
+        (self.run_root / "task-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+        observed = {}
+        original_dispatch = runner.dispatch_builtin_notepad_task
+
+        def fixture_dispatch(received_plan, **kwargs):
+            observed["plan"] = received_plan
+            observed["capture_screenshot"] = kwargs["capture_screenshot"]
+            return {"status": "completed", "artifacts": {}, "steps": []}
+
+        runner.dispatch_builtin_notepad_task = fixture_dispatch
+        try:
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        finally:
+            runner.dispatch_builtin_notepad_task = original_dispatch
+
+        self.assertEqual(observed["plan"], plan)
+        self.assertFalse(observed["capture_screenshot"])
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["details"]["totalStepCount"], 0)
+
+    def test_diagnostic_artifacts_use_the_active_run_as_the_relative_root(self) -> None:
+        artifact_root = self.run_root / "artifacts"
+
+        class FixtureControl:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def window_text(self) -> str:
+                return self.name
+
+            def descendants(self) -> list:
+                return []
+
+        window = FixtureControl("Fixture Notepad")
+        control_tree = runner.write_control_tree(
+            window,
+            artifact_root / "control-tree.txt",
+            relative_root=self.run_root,
+        )
+        snapshot = runner.write_control_snapshot(
+            window,
+            artifact_root / "dialog.txt",
+            "Fixture dialog",
+            relative_root=self.run_root,
+        )
+        original_list_windows = runner.list_visible_top_level_windows
+        runner.list_visible_top_level_windows = lambda: []
+        try:
+            top_level = runner.write_top_level_windows_snapshot(
+                artifact_root / "windows.txt",
+                "Fixture windows",
+                relative_root=self.run_root,
+            )
+        finally:
+            runner.list_visible_top_level_windows = original_list_windows
+
+        self.assertEqual(control_tree["path"], "artifacts/control-tree.txt")
+        self.assertEqual(snapshot["path"], "artifacts/dialog.txt")
+        self.assertEqual(top_level["path"], "artifacts/windows.txt")
+        self.assertTrue((artifact_root / "control-tree.txt").is_file())
+        self.assertTrue((artifact_root / "dialog.txt").is_file())
+        self.assertTrue((artifact_root / "windows.txt").is_file())
+
+    def test_agent_file_path_is_constrained_to_the_active_artifacts_directory(self) -> None:
+        artifacts_root = Path(self.context["artifactsRoot"])
+        self.assertEqual(
+            runner.resolve_notepad_file_path(r"..\outside\proof.txt", file_dir=artifacts_root),
+            artifacts_root / "proof.txt",
+        )
+        self.assertEqual(
+            runner.resolve_notepad_file_path("nested/proof.txt", file_dir=artifacts_root),
+            artifacts_root / "proof.txt",
+        )
 
 
 if __name__ == "__main__":

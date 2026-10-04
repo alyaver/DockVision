@@ -45,7 +45,7 @@ import sys
 import time
 from ctypes import wintypes
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 
 
@@ -528,12 +528,7 @@ def build_active_result(
 def execute_agent_task(
     run_context: dict[str, Path | str], task: dict[str, Any], shared_root: Path
 ) -> dict[str, Any]:
-    """Execute only workloads implemented by this migration piece.
-
-    Piece 6 adds task_sequence execution and the later custom-runner piece adds
-    script_runner process handling. Failing unsupported work here is deliberate:
-    it produces a visible terminal result without claiming unexecuted work passed.
-    """
+    """Dispatch implemented agent workloads without accepting unsupported work."""
 
     if is_run_cancellation_requested(run_context, shared_root):
         raise AgentTaskCancelled("Cancellation was requested before task execution began.")
@@ -547,7 +542,76 @@ def execute_agent_task(
             "details": {"taskType": task_type},
         }
 
+    if task_type == "task_sequence":
+        return execute_task_sequence_task(run_context, task)
+
     raise RuntimeError(f"Task type '{task_type}' execution is not configured yet.")
+
+
+def read_task_sequence_plan(run_context: dict[str, Path | str], task: dict[str, Any]) -> dict[str, Any]:
+    """Read a built-in plan from its normalized payload or active run task-plan file."""
+
+    payload = task.get("payload")
+    if isinstance(payload, dict):
+        return payload
+
+    plan_path = Path(run_context["runRoot"]) / "task-plan.json"
+    try:
+        plan = read_json(plan_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not read built-in task plan at '{plan_path}': {exc}") from exc
+
+    if not isinstance(plan, dict):
+        raise RuntimeError(f"Built-in task plan at '{plan_path}' must be a JSON object.")
+    return plan
+
+
+def execute_task_sequence_task(
+    run_context: dict[str, Path | str], task: dict[str, Any]
+) -> dict[str, Any]:
+    """Run one normalized built-in Notepad plan in the active run directories."""
+
+    plan = read_task_sequence_plan(run_context, task)
+    task_id = str(task.get("taskId") or "unknown-task")
+    execution = dispatch_builtin_notepad_task(
+        plan,
+        artifact_dir=Path(run_context["artifactsRoot"]),
+        artifact_relative_root=Path(run_context["runRoot"]),
+        file_dir=Path(run_context["artifactsRoot"]),
+        screenshot_dir=Path(run_context["screenshotsRoot"]),
+        screenshot_name=f"notepad-{task_id}.png",
+        capture_screenshot=bool_value(plan.get("captureScreenshot"), True),
+    )
+    steps = execution.get("steps")
+    if not isinstance(steps, list):
+        steps = []
+
+    typed_steps = [step for step in steps if isinstance(step, dict) and step.get("action") == "TYPE"]
+    clicked_steps = [step for step in steps if isinstance(step, dict) and step.get("action") == "CLICK"]
+    details: dict[str, Any] = {
+        "taskType": "task_sequence",
+        "automationBackend": execution.get("automationBackend", "python-pywinauto-uia"),
+        "planName": execution.get("planName"),
+        "totalStepCount": len(steps),
+        "typedStepCount": len(typed_steps),
+        "clickedStepCount": len(clicked_steps),
+        "typedCharacterCount": sum(int_value(step.get("typedCharacterCount"), 0) for step in typed_steps),
+        "steps": steps,
+        "startup": execution.get("startup"),
+        "openedFile": execution.get("openedFile"),
+    }
+    if execution.get("screenshotWarning"):
+        details["screenshotWarning"] = execution["screenshotWarning"]
+
+    return {
+        "status": "completed",
+        "message": (
+            f"Completed {len(typed_steps)} TYPE and {len(clicked_steps)} CLICK task(s) "
+            "through Python UI automation."
+        ),
+        "artifacts": execution.get("artifacts") if isinstance(execution.get("artifacts"), dict) else {},
+        "details": details,
+    }
 
 
 def process_queued_active_task(
@@ -678,6 +742,19 @@ def resolve_demo_path(path_value: str | None) -> Path | None:
     return SCRIPT_DIR / path
 
 
+def resolve_notepad_file_path(file_name: Any, file_dir: Path | None = None) -> Path | None:
+    """Resolve a standalone demo file or constrain an agent file to its run."""
+
+    if not file_name:
+        return None
+    if file_dir is not None:
+        # Task plans can originate on Windows hosts and therefore may contain
+        # either slash convention. PureWindowsPath consistently strips both
+        # parent components before the filename is placed in this run's output.
+        return file_dir / PureWindowsPath(str(file_name)).name
+    return resolve_demo_path(str(file_name))
+
+
 # Convert pywinauto's rectangle object into plain JSON-friendly numbers.
 def rectangle_to_dict(rect: Any) -> dict[str, int]:
     return {
@@ -777,7 +854,9 @@ def list_visible_top_level_windows() -> list[dict[str, Any]]:
     return windows
 
 
-def write_top_level_windows_snapshot(output_path: Path, title: str) -> dict[str, Any]:
+def write_top_level_windows_snapshot(
+    output_path: Path, title: str, relative_root: Path | None = None
+) -> dict[str, Any]:
     """Write visible top-level Win32 windows when UIA cannot see a dialog."""
 
     windows = list_visible_top_level_windows()
@@ -801,9 +880,15 @@ def write_top_level_windows_snapshot(output_path: Path, title: str) -> dict[str,
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
-        "path": str(output_path.relative_to(SCRIPT_DIR)),
+        "path": artifact_path(output_path, relative_root),
         "windowCount": len(windows),
     }
+
+
+def artifact_path(output_path: Path, relative_root: Path | None = None) -> str:
+    """Return an artifact reference relative to its current execution boundary."""
+
+    return str(output_path.relative_to(relative_root or SCRIPT_DIR)).replace("\\", "/")
 
 
 def wait_for_win32_font_dialog(timeout_seconds: int) -> dict[str, Any] | None:
@@ -873,7 +958,9 @@ def safe_control_line(index: int, control: Any) -> str:
 
 # Write every visible descendant control under the active Notepad window.
 # This file is the discovery tool for creating future namedTargets entries.
-def write_control_tree(window: Any, output_path: Path, limit: int = 300) -> dict[str, Any]:
+def write_control_tree(
+    window: Any, output_path: Path, limit: int = 300, relative_root: Path | None = None
+) -> dict[str, Any]:
     controls = window.descendants()
     lines = [
         "DockVision pywinauto/UI Automation control tree",
@@ -892,12 +979,18 @@ def write_control_tree(window: Any, output_path: Path, limit: int = 300) -> dict
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
-        "path": str(output_path.relative_to(SCRIPT_DIR)),
+        "path": artifact_path(output_path, relative_root),
         "controlCount": len(controls),
     }
 
 
-def write_control_snapshot(root_control: Any, output_path: Path, title: str, limit: int = 300) -> dict[str, Any]:
+def write_control_snapshot(
+    root_control: Any,
+    output_path: Path,
+    title: str,
+    limit: int = 300,
+    relative_root: Path | None = None,
+) -> dict[str, Any]:
     """
     Write a focused UIA snapshot for temporary windows such as the Font dialog.
 
@@ -929,7 +1022,7 @@ def write_control_snapshot(root_control: Any, output_path: Path, title: str, lim
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
-        "path": str(output_path.relative_to(SCRIPT_DIR)),
+        "path": artifact_path(output_path, relative_root),
         "controlCount": len(controls),
     }
 
@@ -1249,6 +1342,8 @@ def set_classic_notepad_font_style(
     named_targets: dict[str, Any],
     style: str,
     timeout_seconds: int,
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
 ) -> dict[str, Any]:
     """
     Drive classic Notepad's Format -> Font... dialog and choose a font style.
@@ -1300,8 +1395,9 @@ def set_classic_notepad_font_style(
 
     dialog_window = wait_for_win32_font_dialog(dialog_lookup_timeout + 3)
     top_level_snapshot = write_top_level_windows_snapshot(
-        ARTIFACT_DIR / f"top-level-windows-before-font-{normalized_style.casefold().replace(' ', '-')}.txt",
+        artifact_dir / f"top-level-windows-before-font-{normalized_style.casefold().replace(' ', '-')}.txt",
         f"DockVision top-level windows before selecting {normalized_style}",
+        artifact_relative_root,
     )
 
     if dialog_window is None:
@@ -1329,8 +1425,9 @@ def set_classic_notepad_font_style(
             font_dialog = Desktop(backend="uia").window(handle=int(dialog_window["hwnd"])).wrapper_object()
             dialog_snapshot = write_control_snapshot(
                 font_dialog,
-                ARTIFACT_DIR / f"font-dialog-{normalized_style.casefold().replace(' ', '-')}.txt",
+                artifact_dir / f"font-dialog-{normalized_style.casefold().replace(' ', '-')}.txt",
                 f"DockVision Font dialog snapshot before selecting {normalized_style}",
+                relative_root=artifact_relative_root,
             )
         except Exception as exc:
             dialog_snapshot = {
@@ -1389,11 +1486,14 @@ def set_classic_notepad_font_style(
 # Execute OPEN_APP. For this demo, that means preparing a fresh Notepad file,
 # launching Notepad, finding the correct window by title, and making the window
 # predictable before later CLICK steps run.
-def open_app(step: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
+def open_app(
+    step: dict[str, Any], timeout_seconds: int, file_dir: Path | None = None
+) -> dict[str, Any]:
     from pywinauto import Application, Desktop
 
     executable = str(step.get("executable") or "notepad.exe")
-    target_file = resolve_demo_path(step.get("fileName"))
+    file_name = step.get("fileName")
+    target_file = resolve_notepad_file_path(file_name, file_dir=file_dir)
 
     if target_file is not None:
         if bool_value(step.get("uniqueFilePerRun")):
@@ -1465,7 +1565,15 @@ def named_targets_for_app(app_config: dict[str, Any]) -> dict[str, dict[str, Any
 # This function deliberately owns only the VM UI Automation work; the long-lived
 # agent will later own shared-root polling, lifecycle updates, cancellation,
 # timeout supervision, screenshots, and task selection.
-def execute_notepad_plan(plan: dict[str, Any]) -> dict[str, Any]:
+def execute_notepad_plan(
+    plan: dict[str, Any],
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
+    file_dir: Path | None = None,
+    screenshot_dir: Path | None = None,
+    screenshot_name: str | None = None,
+    capture_screenshot: bool | None = None,
+) -> dict[str, Any]:
     from pywinauto import mouse
     from pywinauto.keyboard import send_keys
 
@@ -1476,11 +1584,11 @@ def execute_notepad_plan(plan: dict[str, Any]) -> dict[str, Any]:
     app_config = app_config_from_plan(plan)
     named_targets = named_targets_for_app(app_config)
 
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
 
     # Startup is runner-owned now. The user-authored JSON task list should not
     # have to include OPEN_APP or INSPECT just to make CLICK/TYPE possible.
-    opened = open_app(app_config, timeout_seconds)
+    opened = open_app(app_config, timeout_seconds, file_dir=file_dir)
     active_window = opened["window"]
     opened_file = opened["file"]
     steps_result: list[dict[str, Any]] = []
@@ -1494,8 +1602,10 @@ def execute_notepad_plan(plan: dict[str, Any]) -> dict[str, Any]:
 
     # Always inspect after startup. This keeps debugging information available
     # without making INSPECT a user-facing task in task-plan.json.
-    control_tree_path = ARTIFACT_DIR / "control-tree.txt"
-    inspect_result = write_control_tree(active_window, control_tree_path)
+    control_tree_path = artifact_dir / "control-tree.txt"
+    inspect_result = write_control_tree(
+        active_window, control_tree_path, relative_root=artifact_relative_root
+    )
     artifacts["controlTree"] = inspect_result["path"]
     startup_result["inspect"] = inspect_result
 
@@ -1555,6 +1665,8 @@ def execute_notepad_plan(plan: dict[str, Any]) -> dict[str, Any]:
                 named_targets=named_targets,
                 style=style,
                 timeout_seconds=timeout_seconds,
+                artifact_dir=artifact_dir,
+                artifact_relative_root=artifact_relative_root,
             )
 
         elif action == "KEY":
@@ -1582,7 +1694,7 @@ def execute_notepad_plan(plan: dict[str, Any]) -> dict[str, Any]:
         if step_delay_ms > 0:
             time.sleep(step_delay_ms / 1000.0)
 
-    return {
+    result: dict[str, Any] = {
         "status": "completed",
         "planName": plan.get("name"),
         "finishedAt": datetime.now().isoformat(),
@@ -1593,6 +1705,20 @@ def execute_notepad_plan(plan: dict[str, Any]) -> dict[str, Any]:
         "steps": steps_result,
     }
 
+    should_capture_screenshot = bool_value(
+        plan.get("captureScreenshot"), True
+    ) if capture_screenshot is None else capture_screenshot
+    if should_capture_screenshot and screenshot_dir is not None:
+        screenshot_path = screenshot_dir / (screenshot_name or "notepad.png")
+        try:
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            active_window.capture_as_image().save(screenshot_path)
+            artifacts["screenshot"] = artifact_path(screenshot_path, artifact_relative_root)
+        except Exception as exc:
+            result["screenshotWarning"] = f"{type(exc).__name__}: {exc}"
+
+    return result
+
 
 # Compatibility boundary for existing direct callers and uploaded copies of this
 # runner. New runtime code should call dispatch_builtin_notepad_task() instead.
@@ -1600,10 +1726,26 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
     return execute_notepad_plan(plan)
 
 
-def dispatch_builtin_notepad_task(plan: dict[str, Any]) -> dict[str, Any]:
+def dispatch_builtin_notepad_task(
+    plan: dict[str, Any],
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
+    file_dir: Path | None = None,
+    screenshot_dir: Path | None = None,
+    screenshot_name: str | None = None,
+    capture_screenshot: bool | None = None,
+) -> dict[str, Any]:
     """Dispatch DockVision's built-in task-plan workload to the Notepad worker."""
 
-    return execute_notepad_plan(plan)
+    return execute_notepad_plan(
+        plan,
+        artifact_dir=artifact_dir,
+        artifact_relative_root=artifact_relative_root,
+        file_dir=file_dir,
+        screenshot_dir=screenshot_dir,
+        screenshot_name=screenshot_name,
+        capture_screenshot=capture_screenshot,
+    )
 
 
 def dispatch_custom_python_runner(runner_path: Path, config_path: Path) -> dict[str, Any]:
