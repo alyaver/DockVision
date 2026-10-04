@@ -436,6 +436,185 @@ def is_run_cancellation_requested(run_context: dict[str, Path | str], shared_roo
         return False
 
 
+class AgentTaskCancelled(RuntimeError):
+    """Signal a supported cancellation outcome to the task lifecycle boundary."""
+
+
+AGENT_TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
+
+
+def ensure_run_output_layout(run_context: dict[str, Path | str]) -> None:
+    """Create the active run's output directories before publishing lifecycle files."""
+
+    for context_key in ("runRoot", "logsRoot", "screenshotsRoot", "artifactsRoot"):
+        Path(run_context[context_key]).mkdir(parents=True, exist_ok=True)
+
+
+def write_active_task(run_context: dict[str, Path | str], task: dict[str, Any]) -> None:
+    """Atomically publish task status changes to the active channel task path."""
+
+    ensure_run_output_layout(run_context)
+    write_json_atomically(Path(run_context["taskPath"]), task)
+
+
+def write_active_result(run_context: dict[str, Path | str], result: dict[str, Any]) -> None:
+    """Atomically publish a terminal result to the active channel result path."""
+
+    ensure_run_output_layout(run_context)
+    write_json_atomically(Path(run_context["resultPath"]), result)
+
+
+def mark_active_task_running(run_context: dict[str, Path | str], task: dict[str, Any]) -> None:
+    """Persist the queued-to-running transition before task execution begins."""
+
+    task["status"] = "running"
+    task["startedUtc"] = utc_timestamp()
+    write_active_task(run_context, task)
+
+
+def mark_active_task_finished(
+    run_context: dict[str, Path | str], task: dict[str, Any], status: str
+) -> None:
+    """Persist a backend-supported terminal task state and completion timestamp."""
+
+    if status not in AGENT_TERMINAL_TASK_STATUSES:
+        raise ValueError(f"Unsupported terminal task status: {status!r}")
+
+    task["status"] = status
+    task["completedUtc"] = utc_timestamp()
+    write_active_task(run_context, task)
+
+
+def build_active_result(
+    run_context: dict[str, Path | str],
+    task: dict[str, Any],
+    status: str,
+    message: str,
+    execution_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Normalize a task outcome to the result.json contract used by the backend."""
+
+    if status not in AGENT_TERMINAL_TASK_STATUSES:
+        raise ValueError(f"Unsupported terminal result status: {status!r}")
+
+    execution_result = execution_result or {}
+    artifacts = execution_result.get("artifacts")
+    details = execution_result.get("details")
+    reserved_fields = {"runId", "taskId", "status", "finishedUtc", "message", "artifacts", "details"}
+    additional_details = {
+        key: value for key, value in execution_result.items() if key not in reserved_fields
+    }
+
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    if not isinstance(details, dict):
+        details = {}
+    if additional_details:
+        details = {**details, **additional_details}
+
+    result: dict[str, Any] = {
+        "runId": run_context["runId"],
+        "taskId": str(task.get("taskId") or "unknown-task"),
+        "status": status,
+        "finishedUtc": utc_timestamp(),
+        "message": message,
+        "artifacts": artifacts,
+    }
+    if details:
+        result["details"] = details
+    return result
+
+
+def execute_agent_task(
+    run_context: dict[str, Path | str], task: dict[str, Any], shared_root: Path
+) -> dict[str, Any]:
+    """Execute only workloads implemented by this migration piece.
+
+    Piece 6 adds task_sequence execution and the later custom-runner piece adds
+    script_runner process handling. Failing unsupported work here is deliberate:
+    it produces a visible terminal result without claiming unexecuted work passed.
+    """
+
+    if is_run_cancellation_requested(run_context, shared_root):
+        raise AgentTaskCancelled("Cancellation was requested before task execution began.")
+
+    task_type = str(task.get("taskType") or "unknown")
+    if task_type == "noop":
+        return {
+            "status": "completed",
+            "message": "No-op task completed.",
+            "artifacts": {},
+            "details": {"taskType": task_type},
+        }
+
+    raise RuntimeError(f"Task type '{task_type}' execution is not configured yet.")
+
+
+def process_queued_active_task(
+    shared_root: Path,
+    executor: Callable[[dict[str, Path | str], dict[str, Any], Path], dict[str, Any]] = execute_agent_task,
+) -> bool:
+    """Process one queued active task and always publish a terminal outcome.
+
+    Returns true only when this call claimed a queued task. The caller may use the
+    return value for polling diagnostics; terminal and non-queued tasks are never
+    executed again.
+    """
+
+    active_task = read_active_task(shared_root)
+    if active_task is None:
+        return False
+
+    run_context, task = active_task
+    if task.get("status") != "queued":
+        return False
+
+    task_id = str(task.get("taskId") or "unknown-task")
+    task_type = str(task.get("taskType") or "unknown")
+    append_agent_install_log(
+        shared_root, f"Handling task '{task_id}' of type '{task_type}' for run '{run_context['runId']}'."
+    )
+    mark_active_task_running(run_context, task)
+    write_agent_heartbeat(shared_root, status="running", task_name=task_type, run_id=str(run_context["runId"]))
+
+    final_status = "failed"
+    result: dict[str, Any]
+    try:
+        if is_run_cancellation_requested(run_context, shared_root):
+            raise AgentTaskCancelled("Cancellation was requested before task execution began.")
+
+        execution_result = executor(run_context, task, shared_root)
+        requested_status = str(execution_result.get("status") or "completed").lower()
+        if requested_status not in AGENT_TERMINAL_TASK_STATUSES:
+            raise RuntimeError(f"Task executor returned unsupported terminal status '{requested_status}'.")
+
+        final_status = requested_status
+        message = str(execution_result.get("message") or "Task completed.")
+        result = build_active_result(run_context, task, final_status, message, execution_result)
+    except AgentTaskCancelled as exc:
+        final_status = "cancelled"
+        result = build_active_result(run_context, task, final_status, str(exc))
+        append_agent_install_log(shared_root, f"Task '{task_id}' cancelled: {exc}")
+    except Exception as exc:
+        final_status = "failed"
+        result = build_active_result(
+            run_context,
+            task,
+            final_status,
+            str(exc),
+            {"details": {"errorType": type(exc).__name__}},
+        )
+        append_agent_install_log(shared_root, f"Task '{task_id}' failed: {exc}")
+    finally:
+        try:
+            write_active_result(run_context, result)
+            mark_active_task_finished(run_context, task, final_status)
+        finally:
+            write_agent_heartbeat(shared_root, status="idle", task_name="waiting_for_task")
+
+    return True
+
+
 def resolve_run_relative_path(run_context: dict[str, Path | str], path_value: str) -> Path:
     """Resolve an uploaded runner/config path and confine it to the active run."""
 
@@ -1470,28 +1649,38 @@ def run_agent_loop(
     heartbeat_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     max_heartbeats: int | None = None,
+    task_executor: Callable[[dict[str, Path | str], dict[str, Any], Path], dict[str, Any]] = execute_agent_task,
 ) -> int:
     """
-    Run the long-lived agent foundation loop.
+    Run the long-lived agent polling loop.
 
-    This owns transport initialization and liveness publication only. It remains
-    non-admissible until the next piece adds task polling and execution, so the
-    backend cannot queue work to an agent that would leave it unprocessed.
+    Each polling cycle publishes idle availability, claims at most one queued
+    active task, and restores idle state after its terminal result is published.
+    The injectable executor keeps lifecycle tests independent from VM UI work.
     """
 
     resolved_shared_root = shared_root or resolve_shared_root()
     ensure_agent_shared_layout(resolved_shared_root)
     append_agent_install_log(resolved_shared_root, "Python agent startup begin.")
     append_agent_install_log(resolved_shared_root, f"Resolved shared root to: {resolved_shared_root}")
-    append_agent_install_log(resolved_shared_root, "Agent foundation loop starting.")
+    append_agent_install_log(resolved_shared_root, "Agent polling loop starting.")
 
     emitted_heartbeats = 0
     while max_heartbeats is None or emitted_heartbeats < max_heartbeats:
         write_agent_heartbeat(
             resolved_shared_root,
-            status="initializing",
-            task_name="task_polling_not_configured",
+            status="idle",
+            task_name="waiting_for_task",
         )
+        try:
+            process_queued_active_task(resolved_shared_root, executor=task_executor)
+        except Exception as exc:
+            append_agent_install_log(resolved_shared_root, f"Agent task polling error: {exc}")
+            write_agent_heartbeat(
+                resolved_shared_root,
+                status="idle",
+                task_name="waiting_for_task",
+            )
         emitted_heartbeats += 1
 
         if max_heartbeats is None or emitted_heartbeats < max_heartbeats:
@@ -1501,7 +1690,7 @@ def run_agent_loop(
 
 
 def run_agent() -> int:
-    """Production CLI entry for the agent foundation loop."""
+    """Production CLI entry for the agent polling loop."""
 
     return run_agent_loop()
 
