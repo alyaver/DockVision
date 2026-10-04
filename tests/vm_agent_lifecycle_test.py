@@ -5,8 +5,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 RUNNER_PATH = (
@@ -141,6 +143,143 @@ class VmAgentLifecycleTest(unittest.TestCase):
         self.assertEqual(task["status"], "cancelled")
         self.assertEqual(result["status"], "cancelled")
         self.assertEqual(result["details"], {"reason": "fixture"})
+
+    def test_active_cancellation_stops_a_cooperative_builtin_execution_and_restores_idle(self) -> None:
+        self.write_task(task_type="task_sequence", payload={"tasks": []})
+        original_dispatch = runner.dispatch_builtin_notepad_task
+
+        def fixture_dispatch(plan, *, abort_check, **kwargs):
+            Path(self.context["cancelRequestPath"]).write_text(
+                json.dumps({"runId": self.run_id, "status": "requested"}), encoding="utf-8"
+            )
+            abort_check()
+            self.fail("The active cancellation checkpoint must stop execution.")
+
+        runner.dispatch_builtin_notepad_task = fixture_dispatch
+        try:
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        finally:
+            runner.dispatch_builtin_notepad_task = original_dispatch
+
+        task = self.read_json(Path(self.context["taskPath"]))
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(task["status"], "cancelled")
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIn("while task execution was active", result["message"])
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+
+    def test_iteration_timeout_is_failed_and_a_later_task_can_complete(self) -> None:
+        task = self.write_task(task_type="noop")
+        task["runOptions"] = {"iterationTimeoutSeconds": 1}
+        runner.write_json_atomically(Path(self.context["taskPath"]), task)
+
+        def timeout_executor(context, active_task, shared_root):
+            check = runner.make_execution_abort_check(context, active_task, shared_root)
+            check()
+            return {"status": "completed"}
+
+        with patch.object(runner.time, "monotonic", side_effect=[0.0, 1.0]):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=timeout_executor))
+
+        timed_out_task = self.read_json(Path(self.context["taskPath"]))
+        timed_out_result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(timed_out_task["status"], "failed")
+        self.assertEqual(timed_out_result["status"], "failed")
+        self.assertTrue(timed_out_result["details"]["timedOut"])
+        self.assertEqual(timed_out_result["details"]["errorType"], "AgentTaskTimedOut")
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+
+        self.write_task(task_type="noop")
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
+
+    def test_iteration_timeout_interrupts_a_real_wait_promptly(self) -> None:
+        task = self.write_task(task_type="noop")
+        task["runOptions"] = {"iterationTimeoutSeconds": 1}
+        runner.write_json_atomically(Path(self.context["taskPath"]), task)
+
+        def timeout_executor(context, active_task, shared_root):
+            check = runner.make_execution_abort_check(context, active_task, shared_root)
+            runner.interruptible_sleep(5, check)
+            self.fail("The timeout checkpoint must interrupt the active wait.")
+
+        started = time.monotonic()
+        self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=timeout_executor))
+        elapsed = time.monotonic() - started
+
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertLess(elapsed, 2.0)
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["details"]["timedOut"])
+
+    def test_selector_polling_honors_cancellation_checkpoint(self) -> None:
+        class EmptyWindow:
+            def descendants(self):
+                return []
+
+        checks = 0
+
+        def cancel_on_second_check():
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                raise runner.AgentTaskCancelled("fixture selector cancellation")
+
+        with self.assertRaisesRegex(runner.AgentTaskCancelled, "selector cancellation"):
+            runner.find_control_by_candidate(
+                EmptyWindow(), {"title": "Never appears"}, 5, cancel_on_second_check
+            )
+        self.assertEqual(checks, 2)
+
+    def test_notepad_window_is_closed_after_cancellation_or_automation_failure(self) -> None:
+        class FixtureWindow:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        for failure in (runner.AgentTaskCancelled("fixture cancellation"), RuntimeError("fixture failure")):
+            window = FixtureWindow()
+            original_execute = runner._execute_notepad_plan
+
+            def fixture_execute(*args, **kwargs):
+                kwargs["opened_window_callback"](window)
+                raise failure
+
+            runner._execute_notepad_plan = fixture_execute
+            try:
+                with self.assertRaises(type(failure)):
+                    runner.execute_notepad_plan({"tasks": []})
+            finally:
+                runner._execute_notepad_plan = original_execute
+
+            self.assertEqual(window.close_calls, 1)
+
+    def test_terminate_child_process_tree_uses_windows_taskkill(self) -> None:
+        class FixtureProcess:
+            pid = 4321
+
+            def __init__(self) -> None:
+                self.terminated = False
+
+            def poll(self):
+                return 0 if self.terminated else None
+
+            def wait(self, timeout):
+                self.terminated = True
+
+            def kill(self):
+                self.terminated = True
+
+        process = FixtureProcess()
+        with patch.object(runner.os, "name", "nt"), patch.object(runner.subprocess, "run") as taskkill:
+            self.assertTrue(runner.terminate_child_process_tree(process, grace_seconds=0.1))
+
+        taskkill.assert_called_once()
+        self.assertEqual(taskkill.call_args.args[0], ["taskkill", "/PID", "4321", "/T", "/F"])
 
     def test_terminal_task_is_not_executed_again(self) -> None:
         self.write_task(status="completed")

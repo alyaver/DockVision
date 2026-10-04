@@ -41,6 +41,7 @@ import os
 import platform
 import re
 import socket
+import subprocess
 import sys
 import time
 from ctypes import wintypes
@@ -440,7 +441,64 @@ class AgentTaskCancelled(RuntimeError):
     """Signal a supported cancellation outcome to the task lifecycle boundary."""
 
 
+class AgentTaskTimedOut(RuntimeError):
+    """Signal a configured iteration timeout to the task lifecycle boundary."""
+
+
 AGENT_TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
+
+
+def configured_iteration_timeout_seconds(task: dict[str, Any]) -> int:
+    """Read the backend's per-iteration deadline, separate from plan UIA timeouts."""
+
+    options = task.get("runOptions")
+    value = options.get("iterationTimeoutSeconds") if isinstance(options, dict) else None
+    return max(int_value(value, 300), 1)
+
+
+def make_execution_abort_check(
+    run_context: dict[str, Path | str], task: dict[str, Any], shared_root: Path
+) -> Callable[[], None]:
+    """Build a cooperative cancellation and configured-deadline checkpoint."""
+
+    timeout_seconds = configured_iteration_timeout_seconds(task)
+    deadline = time.monotonic() + timeout_seconds
+
+    def check() -> None:
+        if is_run_cancellation_requested(run_context, shared_root):
+            raise AgentTaskCancelled("Cancellation was requested while task execution was active.")
+        if time.monotonic() >= deadline:
+            raise AgentTaskTimedOut(
+                f"Task exceeded its configured iteration timeout of {timeout_seconds} seconds."
+            )
+
+    return check
+
+
+def terminate_child_process_tree(process: subprocess.Popen[Any], grace_seconds: float = 5.0) -> bool:
+    """Terminate a future custom-runner process tree without leaking descendants."""
+
+    if process.poll() is not None:
+        return True
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=max(grace_seconds, 1.0),
+            )
+        else:
+            process.terminate()
+        process.wait(timeout=max(grace_seconds, 0.1))
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            process.kill()
+            process.wait(timeout=max(grace_seconds, 0.1))
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return process.poll() is not None
 
 
 def ensure_run_output_layout(run_context: dict[str, Path | str]) -> None:
@@ -533,6 +591,9 @@ def execute_agent_task(
     if is_run_cancellation_requested(run_context, shared_root):
         raise AgentTaskCancelled("Cancellation was requested before task execution began.")
 
+    abort_check = make_execution_abort_check(run_context, task, shared_root)
+    abort_check()
+
     task_type = str(task.get("taskType") or "unknown")
     if task_type == "noop":
         return {
@@ -543,7 +604,7 @@ def execute_agent_task(
         }
 
     if task_type == "task_sequence":
-        return execute_task_sequence_task(run_context, task)
+        return execute_task_sequence_task(run_context, task, abort_check=abort_check)
 
     raise RuntimeError(f"Task type '{task_type}' execution is not configured yet.")
 
@@ -567,7 +628,9 @@ def read_task_sequence_plan(run_context: dict[str, Path | str], task: dict[str, 
 
 
 def execute_task_sequence_task(
-    run_context: dict[str, Path | str], task: dict[str, Any]
+    run_context: dict[str, Path | str],
+    task: dict[str, Any],
+    abort_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Run one normalized built-in Notepad plan in the active run directories."""
 
@@ -581,6 +644,7 @@ def execute_task_sequence_task(
         screenshot_dir=Path(run_context["screenshotsRoot"]),
         screenshot_name=f"notepad-{task_id}.png",
         capture_screenshot=bool_value(plan.get("captureScreenshot"), True),
+        abort_check=abort_check,
     )
     steps = execution.get("steps")
     if not isinstance(steps, list):
@@ -659,6 +723,16 @@ def process_queued_active_task(
         final_status = "cancelled"
         result = build_active_result(run_context, task, final_status, str(exc))
         append_agent_install_log(shared_root, f"Task '{task_id}' cancelled: {exc}")
+    except AgentTaskTimedOut as exc:
+        final_status = "failed"
+        result = build_active_result(
+            run_context,
+            task,
+            final_status,
+            str(exc),
+            {"details": {"errorType": type(exc).__name__, "timedOut": True}},
+        )
+        append_agent_install_log(shared_root, f"Task '{task_id}' timed out: {exc}")
     except Exception as exc:
         final_status = "failed"
         result = build_active_result(
@@ -891,7 +965,9 @@ def artifact_path(output_path: Path, relative_root: Path | None = None) -> str:
     return str(output_path.relative_to(relative_root or SCRIPT_DIR)).replace("\\", "/")
 
 
-def wait_for_win32_font_dialog(timeout_seconds: int) -> dict[str, Any] | None:
+def wait_for_win32_font_dialog(
+    timeout_seconds: int, abort_check: Callable[[], None] | None = None
+) -> dict[str, Any] | None:
     """
     Find the classic Font dialog through Win32 instead of UIA.
 
@@ -900,22 +976,26 @@ def wait_for_win32_font_dialog(timeout_seconds: int) -> dict[str, Any] | None:
     path is better for classic Windows dialogs.
     """
 
-    deadline = time.time() + max(timeout_seconds, 1)
-    while time.time() < deadline:
+    deadline = time.monotonic() + max(timeout_seconds, 1)
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
         for window in list_visible_top_level_windows():
             if window["title"].casefold() == "font" and window["className"] == "#32770":
                 return window
-        time.sleep(0.2)
+        interruptible_sleep(0.2, abort_check)
 
     return None
 
 
-def focus_win32_window(hwnd: int) -> None:
+def focus_win32_window(hwnd: int, abort_check: Callable[[], None] | None = None) -> None:
     """Bring a native window to the foreground before sending keyboard input."""
 
+    if abort_check is not None:
+        abort_check()
     ctypes.windll.user32.ShowWindow(hwnd, 9)
     ctypes.windll.user32.SetForegroundWindow(hwnd)
-    time.sleep(0.2)
+    interruptible_sleep(0.2, abort_check)
 
 
 def is_win32_window_visible(hwnd: int) -> bool:
@@ -1077,7 +1157,11 @@ def control_matches_candidate(control: Any, candidate: dict[str, Any]) -> bool:
     return True
 
 
-def find_global_control_by_candidate(candidate: dict[str, Any], timeout_seconds: int) -> Any | None:
+def find_global_control_by_candidate(
+    candidate: dict[str, Any],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> Any | None:
     """
     Search all top-level UIA windows for a transient control.
 
@@ -1089,12 +1173,16 @@ def find_global_control_by_candidate(candidate: dict[str, Any], timeout_seconds:
     from pywinauto.keyboard import send_keys
 
     found_index = int_value(candidate.get("foundIndex"), 0)
-    deadline = time.time() + max(timeout_seconds, 1)
+    deadline = time.monotonic() + max(timeout_seconds, 1)
 
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
         try:
             matches: list[Any] = []
             for top_window in Desktop(backend="uia").windows():
+                if abort_check is not None:
+                    abort_check()
                 controls = [top_window]
                 try:
                     controls.extend(top_window.descendants())
@@ -1115,31 +1203,40 @@ def find_global_control_by_candidate(candidate: dict[str, Any], timeout_seconds:
         except Exception:
             pass
 
-        time.sleep(0.25)
+        interruptible_sleep(0.25, abort_check)
 
     return None
 
 
-def find_control_by_candidates(window: Any, candidates: list[dict[str, Any]], timeout_seconds: int) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
+def find_control_by_candidates(
+    window: Any,
+    candidates: list[dict[str, Any]],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
     """Try several UIA candidate shapes and report exactly what was attempted."""
 
     attempted: list[dict[str, Any]] = []
     for candidate in candidates:
         attempted.append(candidate)
-        control = find_control_by_candidate(window, candidate, timeout_seconds)
+        control = find_control_by_candidate(window, candidate, timeout_seconds, abort_check)
         if control is not None:
             return control, candidate, attempted
 
     return None, None, attempted
 
 
-def find_global_control_by_candidates(candidates: list[dict[str, Any]], timeout_seconds: int) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
+def find_global_control_by_candidates(
+    candidates: list[dict[str, Any]],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
     """Try several desktop-wide UIA candidates for pop-up menus and dialogs."""
 
     attempted: list[dict[str, Any]] = []
     for candidate in candidates:
         attempted.append(candidate)
-        control = find_global_control_by_candidate(candidate, timeout_seconds)
+        control = find_global_control_by_candidate(candidate, timeout_seconds, abort_check)
         if control is not None:
             return control, candidate, attempted
 
@@ -1164,11 +1261,18 @@ def click_control_center(control: Any, button: str = "left") -> dict[str, Any]:
 # Search the active window for the first control matching a candidate. A named
 # target can define several candidates, and each candidate can choose foundIndex
 # if multiple controls match the same pattern.
-def find_control_by_candidate(window: Any, candidate: dict[str, Any], timeout_seconds: int) -> Any | None:
+def find_control_by_candidate(
+    window: Any,
+    candidate: dict[str, Any],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> Any | None:
     found_index = int_value(candidate.get("foundIndex"), 0)
-    deadline = time.time() + max(timeout_seconds, 1)
+    deadline = time.monotonic() + max(timeout_seconds, 1)
 
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
         try:
             matches = [
                 control
@@ -1183,14 +1287,20 @@ def find_control_by_candidate(window: Any, candidate: dict[str, Any], timeout_se
         except Exception:
             pass
 
-        time.sleep(0.25)
+        interruptible_sleep(0.25, abort_check)
 
     return None
 
 
 # Resolve a user-facing target name such as "notepad.fileMenu" to a real
 # pywinauto control. This is the heart of the named-control architecture.
-def resolve_named_control(window: Any, named_targets: dict[str, Any], target_name: str, timeout_seconds: int) -> tuple[Any, dict[str, Any]]:
+def resolve_named_control(
+    window: Any,
+    named_targets: dict[str, Any],
+    target_name: str,
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[Any, dict[str, Any]]:
     target_definition = named_targets.get(target_name)
     if not target_definition:
         raise ValueError(f"Unknown named target: {target_name}")
@@ -1202,7 +1312,7 @@ def resolve_named_control(window: Any, named_targets: dict[str, Any], target_nam
     attempted: list[dict[str, Any]] = []
     for candidate in candidates:
         attempted.append(candidate)
-        control = find_control_by_candidate(window, candidate, timeout_seconds)
+        control = find_control_by_candidate(window, candidate, timeout_seconds, abort_check)
         if control is not None:
             return control, {
                 "name": target_name,
@@ -1229,7 +1339,13 @@ def calculate_point_in_rect(rect: dict[str, int], x_percent: float, y_percent: f
 # Resolve a CLICK target from task-plan.json into a final screen coordinate.
 # namedControl is the goal architecture, while windowPoint and screenPoint are
 # kept as lower-level fallbacks for debugging or edge cases.
-def resolve_click_target(active_window: Any, named_targets: dict[str, Any], target: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
+def resolve_click_target(
+    active_window: Any,
+    named_targets: dict[str, Any],
+    target: dict[str, Any],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
     target_type = str(target.get("type") or "namedControl")
 
     if target_type == "namedControl":
@@ -1237,7 +1353,9 @@ def resolve_click_target(active_window: Any, named_targets: dict[str, Any], targ
         if not target_name:
             raise ValueError("CLICK target.type 'namedControl' requires target.name.")
 
-        control, target_info = resolve_named_control(active_window, named_targets, target_name, timeout_seconds)
+        control, target_info = resolve_named_control(
+            active_window, named_targets, target_name, timeout_seconds, abort_check
+        )
         control_rect = rectangle_to_dict(control.rectangle())
         default_point = target_info.get("defaultPoint") or {}
 
@@ -1310,12 +1428,30 @@ def click_target_from_step(step: dict[str, Any]) -> dict[str, Any]:
 # Send text through pywinauto in small pieces. Special characters need escaping
 # because pywinauto's send_keys uses a syntax where braces and modifier symbols
 # have special meanings.
-def send_text_human_like(text: str, delay_ms: int) -> None:
+def interruptible_sleep(seconds: float, abort_check: Callable[[], None] | None = None) -> None:
+    """Sleep in short slices so cancellation and timeout are observed promptly."""
+
+    remaining = max(seconds, 0.0)
+    while remaining > 0:
+        if abort_check is not None:
+            abort_check()
+        interval = min(remaining, 0.1)
+        time.sleep(interval)
+        remaining -= interval
+    if abort_check is not None:
+        abort_check()
+
+
+def send_text_human_like(
+    text: str, delay_ms: int, abort_check: Callable[[], None] | None = None
+) -> None:
     from pywinauto.keyboard import send_keys
 
     delay_seconds = max(delay_ms, 0) / 1000.0
 
     for character in text:
+        if abort_check is not None:
+            abort_check()
         if character == "\r":
             continue
         if character == "\n":
@@ -1334,7 +1470,7 @@ def send_text_human_like(text: str, delay_ms: int) -> None:
         send_keys(keys, with_spaces=True)
 
         if delay_seconds:
-            time.sleep(delay_seconds)
+            interruptible_sleep(delay_seconds, abort_check)
 
 
 def set_classic_notepad_font_style(
@@ -1344,6 +1480,7 @@ def set_classic_notepad_font_style(
     timeout_seconds: int,
     artifact_dir: Path = ARTIFACT_DIR,
     artifact_relative_root: Path | None = None,
+    abort_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """
     Drive classic Notepad's Format -> Font... dialog and choose a font style.
@@ -1363,15 +1500,18 @@ def set_classic_notepad_font_style(
 
     dialog_lookup_timeout = max(1, min(timeout_seconds, 2))
 
+    if abort_check is not None:
+        abort_check()
     active_window.set_focus()
     format_control, format_target_info = resolve_named_control(
         active_window,
         named_targets,
         "formatMenu",
         timeout_seconds,
+        abort_check,
     )
     format_click = click_control_center(format_control)
-    time.sleep(0.25)
+    interruptible_sleep(0.25, abort_check)
 
     font_menu_item, font_menu_candidate, font_menu_attempted = find_global_control_by_candidates(
         [
@@ -1379,8 +1519,11 @@ def set_classic_notepad_font_style(
             {"titleRegex": r"^Font"},
         ],
         dialog_lookup_timeout,
+        abort_check,
     )
     if font_menu_item is None:
+        if abort_check is not None:
+            abort_check()
         send_keys("f")
         font_menu_click = {
             "fallback": "formatMenuAccessKey",
@@ -1388,12 +1531,14 @@ def set_classic_notepad_font_style(
             "attempted": font_menu_attempted,
         }
     else:
+        if abort_check is not None:
+            abort_check()
         font_menu_click = click_control_center(font_menu_item)
         font_menu_click["matchedCandidate"] = font_menu_candidate
 
-    time.sleep(0.5)
+    interruptible_sleep(0.5, abort_check)
 
-    dialog_window = wait_for_win32_font_dialog(dialog_lookup_timeout + 3)
+    dialog_window = wait_for_win32_font_dialog(dialog_lookup_timeout + 3, abort_check)
     top_level_snapshot = write_top_level_windows_snapshot(
         artifact_dir / f"top-level-windows-before-font-{normalized_style.casefold().replace(' ', '-')}.txt",
         f"DockVision top-level windows before selecting {normalized_style}",
@@ -1413,7 +1558,7 @@ def set_classic_notepad_font_style(
             "reason": "Font dialog handle was not found.",
         }
     else:
-        focus_win32_window(int(dialog_window["hwnd"]))
+        focus_win32_window(int(dialog_window["hwnd"]), abort_check)
         dialog_focus = {
             "hwnd": dialog_window["hwnd"],
             "title": dialog_window["title"],
@@ -1422,6 +1567,8 @@ def set_classic_notepad_font_style(
         }
 
         try:
+            if abort_check is not None:
+                abort_check()
             font_dialog = Desktop(backend="uia").window(handle=int(dialog_window["hwnd"])).wrapper_object()
             dialog_snapshot = write_control_snapshot(
                 font_dialog,
@@ -1440,14 +1587,16 @@ def set_classic_notepad_font_style(
     # Alt+O activates OK. This is closer to a user-operated dialog than poking
     # individual child controls, and it avoids the UIA timeout seen in the VM.
     keys_sent = ["%y", "^a", normalized_style, "%o"]
+    if abort_check is not None:
+        abort_check()
     send_keys("%y")
-    time.sleep(0.1)
+    interruptible_sleep(0.1, abort_check)
     send_keys("^a")
-    time.sleep(0.05)
+    interruptible_sleep(0.05, abort_check)
     send_keys(normalized_style, with_spaces=True)
-    time.sleep(0.1)
+    interruptible_sleep(0.1, abort_check)
     send_keys("%o")
-    time.sleep(0.4)
+    interruptible_sleep(0.4, abort_check)
 
     ok_confirm = {
         "method": "keyboardAccessKeys",
@@ -1455,14 +1604,18 @@ def set_classic_notepad_font_style(
     }
 
     if dialog_window is not None and is_win32_window_visible(int(dialog_window["hwnd"])):
+        if abort_check is not None:
+            abort_check()
         send_keys("{ENTER}")
         ok_confirm["fallback"] = "enterAfterAltO"
         ok_confirm["fallbackKey"] = "{ENTER}"
-        time.sleep(0.4)
+        interruptible_sleep(0.4, abort_check)
 
     if dialog_window is not None and is_win32_window_visible(int(dialog_window["hwnd"])):
         raise RuntimeError(f"Font dialog did not close after selecting {normalized_style}.")
 
+    if abort_check is not None:
+        abort_check()
     active_window.set_focus()
     return {
         "fontStyle": normalized_style,
@@ -1487,7 +1640,11 @@ def set_classic_notepad_font_style(
 # launching Notepad, finding the correct window by title, and making the window
 # predictable before later CLICK steps run.
 def open_app(
-    step: dict[str, Any], timeout_seconds: int, file_dir: Path | None = None
+    step: dict[str, Any],
+    timeout_seconds: int,
+    file_dir: Path | None = None,
+    abort_check: Callable[[], None] | None = None,
+    opened_window_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     from pywinauto import Application, Desktop
 
@@ -1512,19 +1669,45 @@ def open_app(
         command_line = executable
         title_regex = r".*Notepad.*"
 
+    if abort_check is not None:
+        abort_check()
     Application(backend="uia").start(command_line)
 
     window_spec = Desktop(backend="uia").window(title_re=title_regex)
-    window_spec.wait("exists visible ready", timeout=timeout_seconds)
-    window = window_spec.wrapper_object()
+    deadline = time.monotonic() + max(timeout_seconds, 1)
+    window = None
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
+        try:
+            if window_spec.exists(timeout=0.1):
+                window = window_spec.wrapper_object()
+                if window.is_visible() and window.is_enabled():
+                    break
+                window = None
+        except Exception as exc:
+            last_error = exc
+            window = None
+        interruptible_sleep(0.1, abort_check)
+
+    if window is None:
+        detail = f": {type(last_error).__name__}: {last_error}" if last_error is not None else ""
+        raise RuntimeError(f"Notepad window did not become visible and ready within {timeout_seconds} seconds{detail}")
+    if opened_window_callback is not None:
+        opened_window_callback(window)
 
     bounds = step.get("windowBounds") or {}
     if bounds:
+        if abort_check is not None:
+            abort_check()
         move_window_with_win32(window, bounds)
-        time.sleep(0.5)
+        interruptible_sleep(0.5, abort_check)
 
+    if abort_check is not None:
+        abort_check()
     window.set_focus()
-    time.sleep(0.3)
+    interruptible_sleep(0.3, abort_check)
 
     return {
         "window": window,
@@ -1562,10 +1745,9 @@ def named_targets_for_app(app_config: dict[str, Any]) -> dict[str, dict[str, Any
 
 
 # Built-in Notepad worker. Each JSON step becomes one concrete runner action.
-# This function deliberately owns only the VM UI Automation work; the long-lived
-# agent will later own shared-root polling, lifecycle updates, cancellation,
-# timeout supervision, screenshots, and task selection.
-def execute_notepad_plan(
+# The long-lived agent owns shared-root polling and lifecycle publication; this
+# worker cooperates with its cancellation and iteration-timeout checkpoints.
+def _execute_notepad_plan(
     plan: dict[str, Any],
     artifact_dir: Path = ARTIFACT_DIR,
     artifact_relative_root: Path | None = None,
@@ -1573,6 +1755,8 @@ def execute_notepad_plan(
     screenshot_dir: Path | None = None,
     screenshot_name: str | None = None,
     capture_screenshot: bool | None = None,
+    abort_check: Callable[[], None] | None = None,
+    opened_window_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     from pywinauto import mouse
     from pywinauto.keyboard import send_keys
@@ -1583,13 +1767,30 @@ def execute_notepad_plan(
     typing_delay_ms = int_value(settings.get("typingDelayMs"), 25)
     app_config = app_config_from_plan(plan)
     named_targets = named_targets_for_app(app_config)
+    active_window: Any | None = None
+
+    def check_abort() -> None:
+        if abort_check is None:
+            return
+        try:
+            abort_check()
+        except (AgentTaskCancelled, AgentTaskTimedOut):
+            raise
 
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     # Startup is runner-owned now. The user-authored JSON task list should not
     # have to include OPEN_APP or INSPECT just to make CLICK/TYPE possible.
-    opened = open_app(app_config, timeout_seconds, file_dir=file_dir)
+    check_abort()
+    opened = open_app(
+        app_config,
+        timeout_seconds,
+        file_dir=file_dir,
+        abort_check=check_abort,
+        opened_window_callback=opened_window_callback,
+    )
     active_window = opened["window"]
+    check_abort()
     opened_file = opened["file"]
     steps_result: list[dict[str, Any]] = []
     artifacts: dict[str, str] = {}
@@ -1610,6 +1811,7 @@ def execute_notepad_plan(
     startup_result["inspect"] = inspect_result
 
     for step in plan.get("tasks") or plan.get("steps") or []:
+        check_abort()
         # Normalize the step identity early so every result object has a stable
         # id/action pair regardless of whether a later operation fails.
         step_id = str(step.get("id") or "step")
@@ -1629,15 +1831,17 @@ def execute_notepad_plan(
                 named_targets=named_targets,
                 target=click_target_from_step(step),
                 timeout_seconds=timeout_seconds,
+                abort_check=check_abort,
             )
             button = str(step.get("button") or "left").lower()
             click_count = max(int_value(step.get("clickCount"), 1), 1)
             coords = (resolved["point"]["x"], resolved["point"]["y"])
 
             for index in range(click_count):
+                check_abort()
                 mouse.click(button=button, coords=coords)
                 if index < click_count - 1:
-                    time.sleep(0.1)
+                    interruptible_sleep(0.1, check_abort)
 
             step_result["button"] = button
             step_result["clickCount"] = click_count
@@ -1649,7 +1853,7 @@ def execute_notepad_plan(
             # separate so Task-i-fy can generate them independently.
             active_window.set_focus()
             text = str(step.get("text") or "")
-            send_text_human_like(text, typing_delay_ms)
+            send_text_human_like(text, typing_delay_ms, abort_check=check_abort)
             step_result["typedCharacterCount"] = len(text)
 
         elif action == "SET_FONT_STYLE":
@@ -1667,6 +1871,7 @@ def execute_notepad_plan(
                 timeout_seconds=timeout_seconds,
                 artifact_dir=artifact_dir,
                 artifact_relative_root=artifact_relative_root,
+                abort_check=check_abort,
             )
 
         elif action == "KEY":
@@ -1683,7 +1888,7 @@ def execute_notepad_plan(
             # WAIT exists mostly for humans watching the demo. It gives menus
             # and context menus time to be visibly open before the next step.
             delay_ms = int_value(step.get("delayMs"), step_delay_ms)
-            time.sleep(max(delay_ms, 0) / 1000.0)
+            interruptible_sleep(max(delay_ms, 0) / 1000.0, check_abort)
             step_result["delayMs"] = delay_ms
 
         else:
@@ -1692,7 +1897,7 @@ def execute_notepad_plan(
         steps_result.append(step_result)
 
         if step_delay_ms > 0:
-            time.sleep(step_delay_ms / 1000.0)
+            interruptible_sleep(step_delay_ms / 1000.0, check_abort)
 
     result: dict[str, Any] = {
         "status": "completed",
@@ -1709,6 +1914,7 @@ def execute_notepad_plan(
         plan.get("captureScreenshot"), True
     ) if capture_screenshot is None else capture_screenshot
     if should_capture_screenshot and screenshot_dir is not None:
+        check_abort()
         screenshot_path = screenshot_dir / (screenshot_name or "notepad.png")
         try:
             screenshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1718,6 +1924,45 @@ def execute_notepad_plan(
             result["screenshotWarning"] = f"{type(exc).__name__}: {exc}"
 
     return result
+
+
+def execute_notepad_plan(
+    plan: dict[str, Any],
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
+    file_dir: Path | None = None,
+    screenshot_dir: Path | None = None,
+    screenshot_name: str | None = None,
+    capture_screenshot: bool | None = None,
+    abort_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Run a plan and close only its run-owned Notepad window after a failure."""
+
+    opened_window: Any | None = None
+
+    def remember_opened_window(window: Any) -> None:
+        nonlocal opened_window
+        opened_window = window
+
+    try:
+        return _execute_notepad_plan(
+            plan,
+            artifact_dir=artifact_dir,
+            artifact_relative_root=artifact_relative_root,
+            file_dir=file_dir,
+            screenshot_dir=screenshot_dir,
+            screenshot_name=screenshot_name,
+            capture_screenshot=capture_screenshot,
+            abort_check=abort_check,
+            opened_window_callback=remember_opened_window,
+        )
+    except Exception:
+        if opened_window is not None:
+            try:
+                opened_window.close()
+            except Exception:
+                pass
+        raise
 
 
 # Compatibility boundary for existing direct callers and uploaded copies of this
@@ -1734,6 +1979,7 @@ def dispatch_builtin_notepad_task(
     screenshot_dir: Path | None = None,
     screenshot_name: str | None = None,
     capture_screenshot: bool | None = None,
+    abort_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Dispatch DockVision's built-in task-plan workload to the Notepad worker."""
 
@@ -1745,6 +1991,7 @@ def dispatch_builtin_notepad_task(
         screenshot_dir=screenshot_dir,
         screenshot_name=screenshot_name,
         capture_screenshot=capture_screenshot,
+        abort_check=abort_check,
     )
 
 
