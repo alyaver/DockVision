@@ -441,9 +441,18 @@ def is_run_cancellation_requested(run_context: dict[str, Path | str], shared_roo
 class AgentTaskCancelled(RuntimeError):
     """Signal a supported cancellation outcome to the task lifecycle boundary."""
 
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
+
 
 class AgentTaskTimedOut(RuntimeError):
     """Signal a configured iteration timeout to the task lifecycle boundary."""
+
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
 
 
 class AgentTaskExecutionError(RuntimeError):
@@ -718,6 +727,8 @@ def execute_script_runner_task(
     capture_interval_seconds = configured_capture_interval_seconds(task)
     next_capture = started_monotonic + capture_interval_seconds
     process: subprocess.Popen[Any] | None = None
+    screenshot_paths: list[str] = []
+    screenshot_warnings: list[str] = []
 
     append_run_log(run_context, f"Executing uploaded {language} runner: {runner_path}")
     append_run_log(
@@ -738,24 +749,55 @@ def execute_script_runner_task(
                 now_monotonic = time.monotonic()
                 if is_run_cancellation_requested(run_context, shared_root):
                     append_run_log(run_context, f"Cancellation requested. Terminating worker PID {process.pid}.")
-                    terminate_child_process_tree(process)
-                    raise AgentTaskCancelled("Run was cancelled.")
+                    terminated = terminate_child_process_tree(process)
+                    raise AgentTaskCancelled(
+                        "Run was cancelled.",
+                        {
+                            "process": build_custom_runner_process_details(
+                                language,
+                                runner_path,
+                                config_path,
+                                run_context,
+                                process,
+                                started_utc,
+                                stdout_path,
+                                stderr_path,
+                                terminated=terminated,
+                            )
+                        },
+                    )
                 if now_monotonic - started_monotonic >= timeout_seconds:
                     append_run_log(
                         run_context,
                         f"Worker PID {process.pid} exceeded iteration timeout of {timeout_seconds}s.",
                     )
-                    terminate_child_process_tree(process)
+                    terminated = terminate_child_process_tree(process)
                     raise AgentTaskTimedOut(
-                        f"Uploaded runner exceeded iteration timeout of {timeout_seconds}s."
+                        f"Uploaded runner exceeded iteration timeout of {timeout_seconds}s.",
+                        {
+                            "process": build_custom_runner_process_details(
+                                language,
+                                runner_path,
+                                config_path,
+                                run_context,
+                                process,
+                                started_utc,
+                                stdout_path,
+                                stderr_path,
+                                terminated=terminated,
+                            )
+                        },
                     )
                 if now_monotonic >= next_capture:
                     capture_name = f"{task_id}-{timestamp()}.png"
                     try:
                         capture_path = capture_custom_runner_screenshot(run_context, task_id, capture_name)
+                        screenshot_paths.append(capture_path)
                         append_run_log(run_context, f"Captured periodic screenshot: {capture_path}")
                     except Exception as exc:
-                        append_run_log(run_context, f"Periodic screenshot capture unavailable: {exc}")
+                        warning = f"Periodic screenshot capture unavailable: {exc}"
+                        screenshot_warnings.append(warning)
+                        append_run_log(run_context, warning)
                     next_capture = now_monotonic + capture_interval_seconds
                 time.sleep(0.25)
 
@@ -770,25 +812,27 @@ def execute_script_runner_task(
         capture_path = capture_custom_runner_screenshot(
             run_context, task_id, f"{task_id}-complete-{timestamp()}.png"
         )
+        screenshot_paths.append(capture_path)
         append_run_log(run_context, f"Captured completion screenshot: {capture_path}")
     except Exception as exc:
-        append_run_log(run_context, f"Completion screenshot capture unavailable: {exc}")
+        warning = f"Completion screenshot capture unavailable: {exc}"
+        screenshot_warnings.append(warning)
+        append_run_log(run_context, warning)
 
     stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
     stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
-    process_details = {
-        "language": language,
-        "runnerPath": str(runner_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
-        "configPath": str(config_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
-        "processId": process.pid,
-        "exitCode": exit_code,
-        "startedUtc": started_utc,
-        "completedUtc": completed_utc,
-        "stdoutPath": str(stdout_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
-        "stderrPath": str(stderr_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
-    }
-    if stderr_text:
-        process_details["stderr"] = stderr_text
+    process_details = build_custom_runner_process_details(
+        language,
+        runner_path,
+        config_path,
+        run_context,
+        process,
+        started_utc,
+        stdout_path,
+        stderr_path,
+        exit_code=exit_code,
+        completed_utc=completed_utc,
+    )
     if exit_code != 0:
         raise AgentTaskExecutionError(
             f"Uploaded runner failed with exit code {exit_code}. {stderr_text} {stdout_text}".strip(),
@@ -823,12 +867,59 @@ def execute_script_runner_task(
         raise AgentTaskExecutionError(
             "Uploaded runner result details must be an object.", {"process": process_details}
         )
+    result_artifacts = dict(artifacts)
+    if screenshot_paths:
+        result_artifacts["screenshots"] = screenshot_paths
+        result_artifacts["screenshot"] = screenshot_paths[-1]
+    result_details = {**runner_details, "taskType": "script_runner", "process": process_details}
+    if screenshot_warnings:
+        result_details["screenshotWarnings"] = screenshot_warnings
+    append_run_log(run_context, f"Worker process PID {process.pid} completed with exit code {exit_code}.")
     return {
         "status": "completed",
         "message": str(runner_result.get("message") or "Uploaded runner completed."),
-        "artifacts": artifacts,
-        "details": {**runner_details, "taskType": "script_runner", "process": process_details},
+        "artifacts": result_artifacts,
+        "details": result_details,
     }
+
+
+def build_custom_runner_process_details(
+    language: str,
+    runner_path: Path,
+    config_path: Path,
+    run_context: dict[str, Path | str],
+    process: subprocess.Popen[Any],
+    started_utc: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    *,
+    exit_code: int | None = None,
+    completed_utc: str | None = None,
+    terminated: bool | None = None,
+) -> dict[str, Any]:
+    """Build result-safe runner diagnostics from run-confined log files."""
+
+    run_root = Path(run_context["runRoot"])
+    details: dict[str, Any] = {
+        "language": language,
+        "runnerPath": str(runner_path.relative_to(run_root)).replace("\\", "/"),
+        "configPath": str(config_path.relative_to(run_root)).replace("\\", "/"),
+        "processId": process.pid,
+        "startedUtc": started_utc,
+        "stdoutPath": str(stdout_path.relative_to(run_root)).replace("\\", "/"),
+        "stderrPath": str(stderr_path.relative_to(run_root)).replace("\\", "/"),
+    }
+    if exit_code is not None:
+        details["exitCode"] = exit_code
+    if completed_utc is not None:
+        details["completedUtc"] = completed_utc
+    if terminated is not None:
+        details["processTreeTerminated"] = terminated
+    if stderr_path.is_file():
+        stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+        if stderr_text:
+            details["stderr"] = stderr_text
+    return details
 
 
 def process_queued_active_task(
@@ -857,6 +948,7 @@ def process_queued_active_task(
     )
     mark_active_task_running(run_context, task)
     write_agent_heartbeat(shared_root, status="running", task_name=task_type, run_id=str(run_context["runId"]))
+    append_run_log(run_context, f"Task '{task_id}' started ({task_type}).")
 
     final_status = "failed"
     result: dict[str, Any]
@@ -874,7 +966,7 @@ def process_queued_active_task(
         result = build_active_result(run_context, task, final_status, message, execution_result)
     except AgentTaskCancelled as exc:
         final_status = "cancelled"
-        result = build_active_result(run_context, task, final_status, str(exc))
+        result = build_active_result(run_context, task, final_status, str(exc), {"details": exc.details})
         append_agent_install_log(shared_root, f"Task '{task_id}' cancelled: {exc}")
     except AgentTaskTimedOut as exc:
         final_status = "failed"
@@ -883,7 +975,7 @@ def process_queued_active_task(
             task,
             final_status,
             str(exc),
-            {"details": {"errorType": type(exc).__name__, "timedOut": True}},
+            {"details": {"errorType": type(exc).__name__, "timedOut": True, **exc.details}},
         )
         append_agent_install_log(shared_root, f"Task '{task_id}' timed out: {exc}")
     except Exception as exc:
@@ -903,6 +995,7 @@ def process_queued_active_task(
         try:
             write_active_result(run_context, result)
             mark_active_task_finished(run_context, task, final_status)
+            append_run_log(run_context, f"Task '{task_id}' finished with status '{final_status}'.")
         finally:
             write_agent_heartbeat(shared_root, status="idle", task_name="waiting_for_task")
 

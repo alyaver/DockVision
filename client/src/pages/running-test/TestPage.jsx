@@ -119,6 +119,18 @@ function LogPanel({ title, lines, emptyMessage }) {
   );
 }
 
+function flattenArtifactEntries(artifacts) {
+  return Object.entries(artifacts || {}).flatMap(([name, artifact]) => {
+    const values = Array.isArray(artifact) ? artifact : [artifact];
+
+    return values.map((value, index) => ({
+      name: values.length > 1 ? `${name} ${index + 1}` : name,
+      key: `${name}-${index}`,
+      artifact: value || {},
+    }));
+  });
+}
+
 function TestPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -297,8 +309,11 @@ function TestPage() {
 
   const statusLabel = formatStatus(run?.status);
   const statusClass = run?.status ? `status-${String(run.status).toLowerCase()}` : "status-unknown";
-  const screenshotArtifact = run?.artifacts?.screenshot || null;
-  const artifactEntries = Object.entries(run?.artifacts || {});
+  const screenshotArtifacts = run?.artifacts?.screenshots;
+  const screenshotArtifact =
+    run?.artifacts?.screenshot ||
+    (Array.isArray(screenshotArtifacts) ? screenshotArtifacts.at(-1) : null);
+  const artifactEntries = flattenArtifactEntries(run?.artifacts);
   const logLines = run?.logs?.task || [];
   const taskLogs = Array.isArray(run?.logs?.task) ? run.logs.task : [];
   const stdoutLogs = Array.isArray(run?.logs?.stdout) ? run.logs.stdout : [];
@@ -524,8 +539,8 @@ function TestPage() {
 
               {artifactEntries.length ? (
                 <ul className="TestPage__artifactList">
-                  {artifactEntries.map(([name, artifact]) => (
-                    <li key={name}>
+                  {artifactEntries.map(({ key, name, artifact }) => (
+                    <li key={key}>
                       <strong>{name}</strong>
                       <span>{artifact.fileName || artifact.rawPath || "Not available"}</span>
                       {artifact.url ? (

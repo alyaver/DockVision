@@ -724,14 +724,20 @@ function buildArtifactMap(runId, artifacts = {}) {
   const mappedArtifacts = {};
 
   for (const [name, rawPath] of Object.entries(artifacts)) {
-    const relativePath = normalizeArtifactRelativePath(runId, rawPath);
+    const mapArtifact = (artifactPath) => {
+      const relativePath = normalizeArtifactRelativePath(runId, artifactPath);
 
-    mappedArtifacts[name] = {
-      rawPath,
-      relativePath,
-      url: relativePath ? buildRunFileUrl(runId, relativePath) : null,
-      fileName: relativePath ? path.posix.basename(relativePath) : null,
+      return {
+        rawPath: artifactPath,
+        relativePath,
+        url: relativePath ? buildRunFileUrl(runId, relativePath) : null,
+        fileName: relativePath ? path.posix.basename(relativePath) : null,
+      };
     };
+
+    mappedArtifacts[name] = Array.isArray(rawPath)
+      ? rawPath.map(mapArtifact)
+      : mapArtifact(rawPath);
   }
 
   return mappedArtifacts;
@@ -1382,4 +1388,5 @@ module.exports = {
   assertRunStatusTransition,
   readCancellationRequest,
   requestRunCancellation2,
+  buildArtifactMap,
 };
