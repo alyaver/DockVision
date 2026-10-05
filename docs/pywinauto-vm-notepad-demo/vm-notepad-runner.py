@@ -40,6 +40,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -445,6 +446,14 @@ class AgentTaskTimedOut(RuntimeError):
     """Signal a configured iteration timeout to the task lifecycle boundary."""
 
 
+class AgentTaskExecutionError(RuntimeError):
+    """Expose runner diagnostics to the lifecycle failure result formatter."""
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
+
+
 AGENT_TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 
 
@@ -452,6 +461,8 @@ def configured_iteration_timeout_seconds(task: dict[str, Any]) -> int:
     """Read the backend's per-iteration deadline, separate from plan UIA timeouts."""
 
     options = task.get("runOptions")
+    if not isinstance(options, dict):
+        options = task.get("settings")
     value = options.get("iterationTimeoutSeconds") if isinstance(options, dict) else None
     return max(int_value(value, 300), 1)
 
@@ -506,6 +517,14 @@ def ensure_run_output_layout(run_context: dict[str, Path | str]) -> None:
 
     for context_key in ("runRoot", "logsRoot", "screenshotsRoot", "artifactsRoot"):
         Path(run_context[context_key]).mkdir(parents=True, exist_ok=True)
+
+
+def append_run_log(run_context: dict[str, Path | str], message: str) -> None:
+    """Append a timestamped diagnostic to the active run's task log."""
+
+    ensure_run_output_layout(run_context)
+    with Path(run_context["taskLogPath"]).open("a", encoding="utf-8") as handle:
+        handle.write(f"[{utc_timestamp()}] {message}\n")
 
 
 def write_active_task(run_context: dict[str, Path | str], task: dict[str, Any]) -> None:
@@ -606,6 +625,9 @@ def execute_agent_task(
     if task_type == "task_sequence":
         return execute_task_sequence_task(run_context, task, abort_check=abort_check)
 
+    if task_type == "script_runner":
+        return execute_script_runner_task(run_context, task, shared_root)
+
     raise RuntimeError(f"Task type '{task_type}' execution is not configured yet.")
 
 
@@ -678,6 +700,137 @@ def execute_task_sequence_task(
     }
 
 
+def execute_script_runner_task(
+    run_context: dict[str, Path | str], task: dict[str, Any], shared_root: Path
+) -> dict[str, Any]:
+    """Launch and supervise one uploaded Python or PowerShell runner process."""
+
+    language, runner_path, config_path = resolve_custom_runner_inputs(run_context, task)
+    task_id = str(task.get("taskId") or "unknown-task")
+    command = custom_runner_command(language, runner_path, config_path)
+    ensure_run_output_layout(run_context)
+
+    stdout_path = Path(run_context["logsRoot"]) / f"{task_id}-stdout.txt"
+    stderr_path = Path(run_context["logsRoot"]) / f"{task_id}-stderr.txt"
+    started_utc = utc_timestamp()
+    started_monotonic = time.monotonic()
+    timeout_seconds = configured_iteration_timeout_seconds(task)
+    capture_interval_seconds = configured_capture_interval_seconds(task)
+    next_capture = started_monotonic + capture_interval_seconds
+    process: subprocess.Popen[Any] | None = None
+
+    append_run_log(run_context, f"Executing uploaded {language} runner: {runner_path}")
+    append_run_log(
+        run_context,
+        f"Worker supervision settings: timeout={timeout_seconds}s, capture interval={capture_interval_seconds:g}s.",
+    )
+    try:
+        with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
+            process = subprocess.Popen(
+                command,
+                cwd=str(Path(run_context["runRoot"])),
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+            )
+            append_run_log(run_context, f"Worker process started with PID {process.pid}.")
+
+            while process.poll() is None:
+                now_monotonic = time.monotonic()
+                if is_run_cancellation_requested(run_context, shared_root):
+                    append_run_log(run_context, f"Cancellation requested. Terminating worker PID {process.pid}.")
+                    terminate_child_process_tree(process)
+                    raise AgentTaskCancelled("Run was cancelled.")
+                if now_monotonic - started_monotonic >= timeout_seconds:
+                    append_run_log(
+                        run_context,
+                        f"Worker PID {process.pid} exceeded iteration timeout of {timeout_seconds}s.",
+                    )
+                    terminate_child_process_tree(process)
+                    raise AgentTaskTimedOut(
+                        f"Uploaded runner exceeded iteration timeout of {timeout_seconds}s."
+                    )
+                if now_monotonic >= next_capture:
+                    capture_name = f"{task_id}-{timestamp()}.png"
+                    try:
+                        capture_path = capture_custom_runner_screenshot(run_context, task_id, capture_name)
+                        append_run_log(run_context, f"Captured periodic screenshot: {capture_path}")
+                    except Exception as exc:
+                        append_run_log(run_context, f"Periodic screenshot capture unavailable: {exc}")
+                    next_capture = now_monotonic + capture_interval_seconds
+                time.sleep(0.25)
+
+            exit_code = process.wait()
+    except Exception:
+        if process is not None and process.poll() is None:
+            terminate_child_process_tree(process)
+        raise
+
+    completed_utc = utc_timestamp()
+    try:
+        capture_path = capture_custom_runner_screenshot(
+            run_context, task_id, f"{task_id}-complete-{timestamp()}.png"
+        )
+        append_run_log(run_context, f"Captured completion screenshot: {capture_path}")
+    except Exception as exc:
+        append_run_log(run_context, f"Completion screenshot capture unavailable: {exc}")
+
+    stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
+    stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+    process_details = {
+        "language": language,
+        "runnerPath": str(runner_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
+        "configPath": str(config_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
+        "processId": process.pid,
+        "exitCode": exit_code,
+        "startedUtc": started_utc,
+        "completedUtc": completed_utc,
+        "stdoutPath": str(stdout_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
+        "stderrPath": str(stderr_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/"),
+    }
+    if stderr_text:
+        process_details["stderr"] = stderr_text
+    if exit_code != 0:
+        raise AgentTaskExecutionError(
+            f"Uploaded runner failed with exit code {exit_code}. {stderr_text} {stdout_text}".strip(),
+            {"process": process_details},
+        )
+
+    try:
+        runner_result = parse_runner_output_json(stdout_text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise AgentTaskExecutionError(
+            f"Uploaded runner completed but did not return valid JSON. Output: {stdout_text}",
+            {"process": process_details},
+        ) from exc
+
+    runner_status = runner_result.get("status")
+    if runner_status is not None and str(runner_status).casefold() != "completed":
+        raise AgentTaskExecutionError(
+            f"Uploaded runner reported status '{runner_status}'.", {"process": process_details}
+        )
+
+    artifacts = runner_result.get("artifacts")
+    if artifacts is None:
+        artifacts = {}
+    if not isinstance(artifacts, dict):
+        raise AgentTaskExecutionError(
+            "Uploaded runner result artifacts must be an object.", {"process": process_details}
+        )
+    runner_details = runner_result.get("details")
+    if runner_details is None:
+        runner_details = {}
+    if not isinstance(runner_details, dict):
+        raise AgentTaskExecutionError(
+            "Uploaded runner result details must be an object.", {"process": process_details}
+        )
+    return {
+        "status": "completed",
+        "message": str(runner_result.get("message") or "Uploaded runner completed."),
+        "artifacts": artifacts,
+        "details": {**runner_details, "taskType": "script_runner", "process": process_details},
+    }
+
+
 def process_queued_active_task(
     shared_root: Path,
     executor: Callable[[dict[str, Path | str], dict[str, Any], Path], dict[str, Any]] = execute_agent_task,
@@ -735,12 +888,15 @@ def process_queued_active_task(
         append_agent_install_log(shared_root, f"Task '{task_id}' timed out: {exc}")
     except Exception as exc:
         final_status = "failed"
+        failure_details = {"errorType": type(exc).__name__}
+        if isinstance(exc, AgentTaskExecutionError):
+            failure_details.update(exc.details)
         result = build_active_result(
             run_context,
             task,
             final_status,
             str(exc),
-            {"details": {"errorType": type(exc).__name__}},
+            {"details": failure_details},
         )
         append_agent_install_log(shared_root, f"Task '{task_id}' failed: {exc}")
     finally:
@@ -791,6 +947,112 @@ def float_value(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def configured_capture_interval_seconds(task: dict[str, Any]) -> float:
+    """Read the server's periodic screenshot interval with a safe default."""
+
+    options = task.get("runOptions")
+    value = options.get("captureIntervalSeconds") if isinstance(options, dict) else None
+    return max(float_value(value, 5.0), 0.1)
+
+
+def capture_custom_runner_screenshot(
+    run_context: dict[str, Path | str], task_id: str, file_name: str
+) -> str:
+    """Capture a best-effort screen artifact for an externally supervised runner."""
+
+    from PIL import ImageGrab
+
+    ensure_run_output_layout(run_context)
+    screenshot_path = require_path_within(
+        Path(run_context["screenshotsRoot"]) / file_name,
+        Path(run_context["runRoot"]),
+        "Custom runner screenshot",
+    )
+    ImageGrab.grab().save(screenshot_path, "PNG")
+    return str(screenshot_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/")
+
+
+def parse_runner_output_json(output_text: str) -> dict[str, Any]:
+    """Mirror ConvertFrom-RunnerOutputJson's brace-delimited JSON behavior."""
+
+    if not output_text or not output_text.strip():
+        raise ValueError("Runner produced no output.")
+
+    start_index = output_text.find("{")
+    end_index = output_text.rfind("}")
+    if start_index < 0 or end_index < start_index:
+        raise ValueError(f"Runner output did not contain a JSON object. Output: {output_text}")
+
+    result = json.loads(output_text[start_index : end_index + 1])
+    if not isinstance(result, dict):
+        raise ValueError("Runner output JSON must be an object.")
+    return result
+
+
+def resolve_custom_runner_inputs(
+    run_context: dict[str, Path | str], task: dict[str, Any]
+) -> tuple[str, Path, Path]:
+    """Validate the task payload and its run-confined uploaded input files."""
+
+    payload = task.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("script_runner task requires an object payload.")
+
+    runner_value = payload.get("runnerPath")
+    config_value = payload.get("configPath")
+    language_value = payload.get("runnerScriptLanguage")
+    if not isinstance(runner_value, str) or not runner_value.strip():
+        raise ValueError("script_runner task requires payload.runnerPath.")
+    if not isinstance(config_value, str) or not config_value.strip():
+        raise ValueError("script_runner task requires payload.configPath.")
+    if not isinstance(language_value, str) or not language_value.strip():
+        raise ValueError("script_runner task requires payload.runnerScriptLanguage.")
+
+    runner_path = resolve_run_relative_path(run_context, runner_value)
+    config_path = resolve_run_relative_path(run_context, config_value)
+    if not runner_path.is_file():
+        raise FileNotFoundError(f"Uploaded runner was not found at {runner_path}")
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Uploaded task plan was not found at {config_path}")
+
+    language = language_value.strip().casefold()
+    expected_extension = {"python": ".py", "powershell": ".ps1"}.get(language)
+    if expected_extension is None:
+        raise ValueError(f"Unsupported uploaded runner language '{language_value}'.")
+    if runner_path.suffix.casefold() != expected_extension:
+        raise ValueError(
+            f"Uploaded {language} runner must use the '{expected_extension}' extension: {runner_path.name}"
+        )
+    return language, runner_path, config_path
+
+
+def custom_runner_command(language: str, runner_path: Path, config_path: Path) -> list[str]:
+    """Return the established command-line contract for an uploaded runner."""
+
+    if language == "python":
+        python_executable = Path(sys.executable) if sys.executable else None
+        if python_executable is None or not python_executable.is_file():
+            raise RuntimeError("Python is not available inside the Windows guest.")
+        return [str(python_executable), str(runner_path), "--plan", str(config_path)]
+
+    if language == "powershell":
+        powershell_executable = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell_executable:
+            raise RuntimeError("PowerShell is not available inside the Windows guest.")
+        return [
+            powershell_executable,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(runner_path),
+            "-ConfigPath",
+            str(config_path),
+        ]
+
+    raise ValueError(f"Unsupported uploaded runner language '{language}'.")
 
 
 # Timestamp helper used to create fresh demo filenames.

@@ -57,6 +57,27 @@ class VmAgentLifecycleTest(unittest.TestCase):
     def read_json(self, path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def write_custom_runner_task(
+        self, language: str, runner_name: str, runner_content: str, run_options: dict | None = None
+    ) -> dict:
+        config_name = "uploaded-task-plan.json"
+        (self.run_root / runner_name).write_text(runner_content, encoding="utf-8")
+        (self.run_root / config_name).write_text('{"fixture": true}', encoding="utf-8")
+        task = self.write_task(
+            task_type="script_runner",
+            payload={
+                "runnerPath": runner_name,
+                "configPath": config_name,
+                "runnerScriptLanguage": language,
+                "runnerScriptName": runner_name,
+                "configFileName": config_name,
+            },
+        )
+        if run_options is not None:
+            task["runOptions"] = run_options
+            runner.write_json_atomically(Path(self.context["taskPath"]), task)
+        return task
+
     def test_queued_task_completes_with_consistent_task_and_result(self) -> None:
         self.write_task()
         observed = {}
@@ -280,6 +301,178 @@ class VmAgentLifecycleTest(unittest.TestCase):
 
         taskkill.assert_called_once()
         self.assertEqual(taskkill.call_args.args[0], ["taskkill", "/PID", "4321", "/T", "/F"])
+
+    def test_script_runner_executes_uploaded_python_and_publishes_process_details(self) -> None:
+        task = self.write_custom_runner_task(
+            "python",
+            "uploaded-runner.py",
+            "import json\nprint(json.dumps({'status': 'completed', 'message': 'Python fixture completed.', 'artifacts': {'report': 'artifacts/report.txt'}, 'details': {'runner': 'python'}}))\n",
+            {"iterationTimeoutSeconds": 5, "captureIntervalSeconds": 60},
+        )
+
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["message"], "Python fixture completed.")
+        self.assertEqual(result["artifacts"], {"report": "artifacts/report.txt"})
+        self.assertEqual(result["details"]["runner"], "python")
+        self.assertEqual(result["details"]["process"]["language"], "python")
+        self.assertEqual(result["details"]["process"]["runnerPath"], "uploaded-runner.py")
+        self.assertEqual(result["details"]["process"]["exitCode"], 0)
+        self.assertTrue((self.run_root / result["details"]["process"]["stdoutPath"]).is_file())
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(task["taskId"], result["taskId"])
+
+    def test_script_runner_executes_uploaded_powershell_with_established_command(self) -> None:
+        task = self.write_custom_runner_task(
+            "powershell",
+            "uploaded-runner.ps1",
+            "# Fixture is executed through a mocked PowerShell process.\n",
+        )
+
+        class FixtureProcess:
+            pid = 8765
+
+            def poll(self):
+                return 0
+
+            def wait(self):
+                return 0
+
+        def launch(command, **kwargs):
+            kwargs["stdout"].write(
+                b'runner diagnostics\n{"status":"completed","message":"PowerShell fixture completed."}\n'
+            )
+            return FixtureProcess()
+
+        with patch.object(runner.shutil, "which", side_effect=lambda name: "powershell.exe" if name == "powershell.exe" else None), patch.object(
+            runner.subprocess, "Popen", side_effect=launch
+        ) as popen, patch.object(runner, "capture_custom_runner_screenshot", return_value="screenshots/fixture.png"):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], "powershell.exe")
+        self.assertEqual(command[1:5], ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        self.assertEqual(command[5], str(self.run_root / "uploaded-runner.ps1"))
+        self.assertEqual(command[6:], ["-ConfigPath", str(self.run_root / "uploaded-task-plan.json")])
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["message"], "PowerShell fixture completed.")
+        self.assertEqual(result["details"]["process"]["language"], "powershell")
+
+    def test_script_runner_cancellation_terminates_process_tree_and_restores_idle(self) -> None:
+        self.write_custom_runner_task("python", "uploaded-runner.py", "# Fixture is mocked.\n")
+
+        class FixtureProcess:
+            pid = 2468
+
+            def __init__(self):
+                self.terminated = False
+
+            def poll(self):
+                return 0 if self.terminated else None
+
+            def wait(self):
+                self.terminated = True
+                return -1
+
+        process = FixtureProcess()
+
+        def launch(command, **kwargs):
+            Path(self.context["cancelRequestPath"]).write_text(
+                json.dumps({"runId": self.run_id, "status": "requested"}), encoding="utf-8"
+            )
+            return process
+
+        def terminate(received_process):
+            self.assertIs(received_process, process)
+            process.terminated = True
+            return True
+
+        with patch.object(runner, "custom_runner_command", return_value=["fixture-python"]), patch.object(
+            runner.subprocess, "Popen", side_effect=launch
+        ), patch.object(runner, "terminate_child_process_tree", side_effect=terminate) as terminate_tree:
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
+
+        task = self.read_json(Path(self.context["taskPath"]))
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(task["status"], "cancelled")
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["message"], "Run was cancelled.")
+        terminate_tree.assert_called_once_with(process)
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+
+    def test_script_runner_timeout_terminates_process_tree_and_later_task_succeeds(self) -> None:
+        self.write_custom_runner_task(
+            "python", "uploaded-runner.py", "# Fixture is mocked.\n", {"iterationTimeoutSeconds": 1}
+        )
+
+        class FixtureProcess:
+            pid = 1357
+
+            def __init__(self):
+                self.terminated = False
+
+            def poll(self):
+                return 0 if self.terminated else None
+
+            def wait(self):
+                self.terminated = True
+                return -1
+
+        process = FixtureProcess()
+
+        def terminate(received_process):
+            self.assertIs(received_process, process)
+            process.terminated = True
+            return True
+
+        with patch.object(runner, "custom_runner_command", return_value=["fixture-python"]), patch.object(
+            runner.subprocess, "Popen", return_value=process
+        ), patch.object(runner, "terminate_child_process_tree", side_effect=terminate) as terminate_tree, patch.object(
+            runner.time, "monotonic", side_effect=[0.0, 0.0, 0.0, 1.0]
+        ):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
+
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["details"]["timedOut"])
+        self.assertEqual(result["details"]["errorType"], "AgentTaskTimedOut")
+        terminate_tree.assert_called_once_with(process)
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+
+        self.write_task(task_type="noop")
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
+
+    def test_script_runner_rejects_path_escape_and_language_extension_mismatch(self) -> None:
+        outside_runner = self.shared_root / "outside.py"
+        outside_runner.write_text("print('{}')", encoding="utf-8")
+        self.write_task(
+            task_type="script_runner",
+            payload={
+                "runnerPath": "../outside.py",
+                "configPath": "uploaded-task-plan.json",
+                "runnerScriptLanguage": "python",
+            },
+        )
+        (self.run_root / "uploaded-task-plan.json").write_text("{}", encoding="utf-8")
+
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("outside the active run folder", result["message"])
+
+        self.write_custom_runner_task("python", "uploaded-runner.ps1", "# mismatch\n")
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("must use the '.py' extension", result["message"])
 
     def test_terminal_task_is_not_executed_again(self) -> None:
         self.write_task(status="completed")
