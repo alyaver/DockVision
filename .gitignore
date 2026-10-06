@@ -14,6 +14,7 @@ WindowsVm/shared/*
 !WindowsVm/shared/agent.py
 !WindowsVm/shared/dockvision_notepad_task.py
 !WindowsVm/shared/install-agent.bat
+!WindowsVm/shared/vm-notepad-runner.py
 WindowsVm/shared/active/
 WindowsVm/shared/runs/
 WindowsVm/shared/screenshots/

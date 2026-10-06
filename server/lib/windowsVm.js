@@ -24,9 +24,7 @@ const WINDOWS_VM_HOST_PORTS = {
   rdpUdp: 3389,
 };
 const RUNTIME_FILE_NAMES = [
-  "DockVisionAgent.ps1",
-  "agent.py",
-  "dockvision_notepad_task.py",
+  "vm-notepad-runner.py",
   "ensure-python-runtime.ps1",
   "install-agent.bat",
 ];
