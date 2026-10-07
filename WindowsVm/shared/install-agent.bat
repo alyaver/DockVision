@@ -83,8 +83,9 @@ if errorlevel 1 (
 )
 call :log "Verified Python runtime and required pywinauto dependencies."
 
-rem Stop the existing scheduled task and both legacy PowerShell and prior Python
-rem agent processes so the guest always comes up on the freshly deployed version.
+rem Stop the existing scheduled task and any earlier agent process. The legacy
+rem PowerShell filename below is a migration cleanup matcher only; it is never
+rem copied, launched, or scheduled by this installer.
 schtasks /End /TN "DockVisionAgent" >nul 2>nul
 schtasks /Delete /TN "DockVisionAgent" /F >nul 2>nul
 
