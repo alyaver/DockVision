@@ -23,7 +23,28 @@ const Navigation = () => {
         if (!isMounted) {
           return;
         }
+        //distingushing between erros
+        if(response.status === 401 || response.status === 403){
+          setUser(null);
 
+          const authenticatedPaths = [
+            "/dashboard,",
+            "/configuration-settings",
+            "/create-a-task",
+            "/running-test"
+          ];
+
+          const isAuthenticatedPath = authenticatedPaths.some(
+            (path) => 
+              location.pathname == path || location.pathname.startsWith('${path}/')
+          );
+          
+          if (isAuthenticatedPath){
+            navigate("/dashboard",{replace: true});
+          }
+
+          return;
+        }
         if (!response.ok) {
           setUser(null);
           return;
@@ -91,6 +112,16 @@ const Navigation = () => {
         {!isCheckingAuth &&
           (user ? (
             <>
+            {(location.pathname === "/about" || 
+              location.pathname === "/contact")
+            && (
+              <li>
+                <Link to="/dashboard" className="nav-button">
+                Dashboard
+                </Link>
+              </li>
+            )}
+
               <li>
                 <Link to="/profile" className="nav-button">
                   Profile
