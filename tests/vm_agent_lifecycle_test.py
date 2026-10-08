@@ -43,6 +43,7 @@ class VmAgentLifecycleTest(unittest.TestCase):
     def write_task(
         self, status: str = "queued", task_type: str = "noop", payload: dict | None = None
     ) -> dict:
+        # Build the task shape normally published by the server.
         task = {
             "runId": self.run_id,
             "taskId": f"{self.run_id}-task",
@@ -51,16 +52,20 @@ class VmAgentLifecycleTest(unittest.TestCase):
             "createdUtc": "2026-10-04T00:00:00Z",
             "payload": {} if payload is None else payload,
         }
+        # Put the task in this temporary run folder for the agent to read.
         runner.write_json_atomically(Path(self.context["taskPath"]), task)
         return task
 
     def read_json(self, path: Path) -> dict:
+        # Read a lifecycle file written by the agent during the test.
         return json.loads(path.read_text(encoding="utf-8"))
 
     def write_custom_runner_task(
         self, language: str, runner_name: str, runner_content: str, run_options: dict | None = None
     ) -> dict:
+        # Use the same uploaded file names and payload fields as a real custom run.
         config_name = "uploaded-task-plan.json"
+        # Write the uploaded runner and config into the active run folder.
         (self.run_root / runner_name).write_text(runner_content, encoding="utf-8")
         (self.run_root / config_name).write_text('{"fixture": true}', encoding="utf-8")
         task = self.write_task(
@@ -73,10 +78,172 @@ class VmAgentLifecycleTest(unittest.TestCase):
                 "configFileName": config_name,
             },
         )
+        # Add optional worker settings when this test needs them.
         if run_options is not None:
             task["runOptions"] = run_options
             runner.write_json_atomically(Path(self.context["taskPath"]), task)
         return task
+
+    def assert_failed_result(self, message: str) -> dict:
+        """Assert the lifecycle boundary publishes failure and returns the agent to idle."""
+        # Let the agent claim and process the queued task.
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        # Read every file the lifecycle boundary should have updated.
+        task = self.read_json(Path(self.context["taskPath"]))
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        # A failed task must have a failed result and an idle final heartbeat.
+        self.assertEqual(task["status"], "failed")
+        self.assertEqual(result["status"], "failed")
+        self.assertIn(message, result["message"])
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        return result
+
+    def test_heartbeat_schema_contains_an_iso_8601_utc_timestamp(self) -> None:
+        # Build the heartbeat that the server uses to decide whether the guest is ready.
+        heartbeat = runner.build_agent_heartbeat(
+            self.shared_root, status="running", task_name="noop", run_id=self.run_id
+        )
+        runner.write_agent_heartbeat(self.shared_root, status="running", task_name="noop", run_id=self.run_id)
+
+        # Read the heartbeat file that the agent published to the shared folder.
+        persisted = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(persisted["agent"], heartbeat["agent"])
+        self.assertEqual(persisted["machine"]["sharedRoot"], heartbeat["machine"]["sharedRoot"])
+        # Check the required agent fields, run state, and machine location.
+        self.assertEqual(
+            set(heartbeat["agent"]),
+            {"name", "version", "status", "taskName", "runId", "intervalSeconds"},
+        )
+        self.assertEqual(heartbeat["agent"]["status"], "running")
+        self.assertEqual(heartbeat["agent"]["taskName"], "noop")
+        self.assertEqual(heartbeat["agent"]["runId"], self.run_id)
+        self.assertEqual(heartbeat["machine"]["sharedRoot"], str(self.shared_root))
+        # The readiness code expects an ISO-8601 UTC timestamp ending in Z.
+        self.assertRegex(heartbeat["machine"]["timestampUtc"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
+        self.assertGreater(heartbeat["agent"]["intervalSeconds"], 0)
+
+    def test_missing_or_invalid_active_run_inputs_are_ignored_and_logged(self) -> None:
+        # Corrupt host-published state must not be claimed or produce a result for an unknown task.
+        pointer_path = self.shared_root / "active" / "current-run.json"
+        # Each case is a pointer or task file problem the polling loop must handle safely.
+        cases = [
+            ("missing pointer", None, ""),
+            ("malformed pointer", "{", "Failed to parse current run pointer"),
+            ("pointer without run ID", "{}", "did not contain a usable runId"),
+            ("missing task", json.dumps({"runId": self.run_id}), ""),
+            ("malformed task", json.dumps({"runId": self.run_id}), "Failed to parse active task file"),
+        ]
+
+        for label, pointer, expected_log in cases:
+            with self.subTest(label=label):
+                # Start each case without a pointer or task left over from the last one.
+                pointer_path.unlink(missing_ok=True)
+                Path(self.context["taskPath"]).unlink(missing_ok=True)
+                if pointer is not None:
+                    pointer_path.write_text(pointer, encoding="utf-8")
+                if label == "malformed task":
+                    Path(self.context["taskPath"]).write_text("{", encoding="utf-8")
+
+                # The agent should ignore bad input instead of claiming a task.
+                self.assertFalse(runner.process_queued_active_task(self.shared_root))
+                self.assertFalse(Path(self.context["resultPath"]).exists())
+                install_log = self.shared_root / "agent-install-log.txt"
+                # Bad JSON and missing run IDs should leave an install-log diagnostic.
+                if expected_log:
+                    self.assertIn(expected_log, install_log.read_text(encoding="utf-8"))
+
+    def test_script_runner_failures_publish_terminal_results(self) -> None:
+        # Validate input failures before process launch still complete the lifecycle cleanly.
+        cases = [
+            (
+                "missing runner",
+                {"runnerPath": "missing.py", "configPath": "uploaded-task-plan.json", "runnerScriptLanguage": "python"},
+                "Uploaded runner was not found",
+            ),
+            (
+                "missing config",
+                {"runnerPath": "uploaded-runner.py", "configPath": "missing.json", "runnerScriptLanguage": "python"},
+                "Uploaded task plan was not found",
+            ),
+            (
+                "unsupported language",
+                {"runnerPath": "uploaded-runner.rb", "configPath": "uploaded-task-plan.json", "runnerScriptLanguage": "ruby"},
+                "Unsupported uploaded runner language",
+            ),
+        ]
+
+        for label, payload, message in cases:
+            with self.subTest(label=label):
+                # Publish the task and any files that should exist for this failure case.
+                self.write_task(task_type="script_runner", payload=payload)
+                (self.run_root / "uploaded-runner.py").write_text("print('{}')", encoding="utf-8")
+                (self.run_root / "uploaded-runner.rb").write_text("puts '{}'", encoding="utf-8")
+                (self.run_root / "uploaded-task-plan.json").write_text("{}", encoding="utf-8")
+                # The agent should publish a failed result with the useful error message.
+                self.assert_failed_result(message)
+                # Replace the terminal task before the next subtest reuses this run folder.
+                self.write_task(task_type="noop")
+
+    def test_script_runner_reports_unavailable_interpreters(self) -> None:
+        # Python is resolved from sys.executable; PowerShell is resolved from PATH.
+        self.write_custom_runner_task("python", "uploaded-runner.py", "print('{}')")
+        # Simulate a guest without Python configured.
+        with patch.object(runner.sys, "executable", None):
+            self.assert_failed_result("Python is not available")
+
+        self.write_custom_runner_task("powershell", "uploaded-runner.ps1", "# fixture")
+        # Simulate a guest without PowerShell on PATH.
+        with patch.object(runner.shutil, "which", return_value=None):
+            self.assert_failed_result("PowerShell is not available")
+
+    def test_script_runner_reports_nonzero_and_invalid_json_output(self) -> None:
+        # A launched runner can fail at the process or result-contract boundary.
+        fixtures = [
+            ("nonzero", "import sys\nsys.stderr.write('runner stderr')\nsys.exit(7)\n", "failed with exit code 7"),
+            ("empty", "# no stdout\n", "did not return valid JSON"),
+            ("malformed", "print('{')\n", "did not return valid JSON"),
+        ]
+        for label, source, message in fixtures:
+            with self.subTest(label=label):
+                # Run a small real Python fixture so stdout and stderr use the normal process path.
+                self.write_custom_runner_task("python", "uploaded-runner.py", source)
+                result = self.assert_failed_result(message)
+                # A non-zero runner should still retain its stderr diagnostic.
+                if label == "nonzero":
+                    self.assertEqual(result["details"]["process"]["stderr"], "runner stderr")
+                self.write_task(task_type="noop")
+
+    def test_script_runner_preserves_stderr_for_successful_json_output(self) -> None:
+        # Diagnostics on stderr are retained even when stdout contains a valid success payload.
+        self.write_custom_runner_task(
+            "python",
+            "uploaded-runner.py",
+            "import json, sys\nsys.stderr.write('success diagnostic')\nprint(json.dumps({'status': 'completed', 'message': 'ok'}))\n",
+        )
+
+        # Run the task normally and read the published result.
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["details"]["process"]["stderr"], "success diagnostic")
+
+    def test_builtin_invalid_plans_publish_failed_lifecycle_results(self) -> None:
+        # The dispatcher is isolated here so each invalid-plan failure verifies terminal publication.
+        invalid_plans = [
+            ("unsupported action", {"tasks": [{"id": "bad", "action": "DELETE"}]}, "unsupported action"),
+            ("invalid target", {"tasks": [{"id": "bad", "action": "CLICK", "target": "missing"}]}, "target"),
+            ("empty plan", {}, "tasks"),
+        ]
+        for label, plan, message in invalid_plans:
+            with self.subTest(label=label):
+                # Queue one bad built-in plan for this case.
+                self.write_task(task_type="task_sequence", payload=plan)
+                # Make the dispatcher fail with the matching plan error.
+                with patch.object(runner, "dispatch_builtin_notepad_task", side_effect=RuntimeError(f"Invalid plan: {message}")):
+                    self.assert_failed_result(message)
+                # Reset the task file before the next invalid-plan case.
+                self.write_task(task_type="noop")
 
     def test_queued_task_completes_with_consistent_task_and_result(self) -> None:
         self.write_task()

@@ -296,6 +296,14 @@ async function writeCurrentRunPointer(pointer) {
   return pointer;
 }
 
+async function clearActiveChannel() {
+  // Remove the old active-run pointer before starting a new run.
+  // This keeps the shared folder pointed at only one run.
+  await ensureBaseLayout();
+  // Do not fail if there is no old pointer to remove.
+  await fs.rm(CURRENT_RUN_POINTER_PATH, { force: true });
+}
+
 async function readJsonIfExists(filePath) {
   try {
     const rawValue = await fs.readFile(filePath, "utf8");
@@ -1373,6 +1381,9 @@ function runSortTimestamp(run) {
 module.exports = {
   SHARED_ROOT,
   buildContainerName,
+  // Keep these older run creators available for the older server routes.
+  createRunRecord,
+  createRunRecord2,
   readRun,
   requestRunCancellation,
   listRuns,
