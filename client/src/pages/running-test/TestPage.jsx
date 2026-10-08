@@ -11,6 +11,7 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const POLLING_STATUSES = new Set(["queued", "running", "cancelling"]);
 
 function readStoredRun() {
+  // restore the most recently viewed run when the page is opened without route state
   try {
     const rawValue = sessionStorage.getItem(CURRENT_RUN_STORAGE_KEY);
     return rawValue ? JSON.parse(rawValue) : null;
@@ -45,6 +46,7 @@ function formatStatus(value) {
 }
 
 function formatElapsedTime(startUtc, endUtc = null) {
+  // convert a run's timestamps into the short elapsed-time label displayed by the page
   if (!startUtc) {
     return "Not started";
   }
@@ -226,13 +228,13 @@ function TestPage() {
         setErrorMessage("");
         setNetworkNotice("");
 
-        //If the run we are working with has been terminated, stop polling
+        // terminal runs stop scheduling new polls because their final result is already available
         if (nextRun && isTerminalStatus(nextRun.status)) {
           scheduleNextPoll(nextRun.status);
           return;
         }
 
-        //if run isn't yet terminated, continue polling
+        // queued and active runs continue polling so the page shows their latest state
         scheduleNextPoll(nextRun?.status || "queued");
       } catch (error) {
         if (!isMounted) {

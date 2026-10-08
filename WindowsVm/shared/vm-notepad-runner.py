@@ -156,6 +156,7 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
 def write_json_atomically(path: Path, value: dict[str, Any]) -> None:
     """Publish JSON by replacement so readers do not observe a partial file."""
 
+    # write a complete temporary file first, then replace the public file in one step
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
@@ -180,6 +181,7 @@ def resolve_shared_root(
 ) -> Path:
     """Find the guest/host share using the established DockVision path order."""
 
+    # use the first mounted share that exists, and create a local fallback only when none do
     for candidate in candidates:
         if candidate.is_dir():
             return candidate
@@ -204,6 +206,7 @@ def agent_paths(shared_root: Path) -> dict[str, Path]:
 def ensure_agent_shared_layout(shared_root: Path) -> dict[str, Path]:
     """Create only the durable shared transport directories required by the agent."""
 
+    # create the common, active-channel, and run-history folders before writing agent files
     paths = agent_paths(shared_root)
     for key in ("sharedRoot", "activeRoot", "runsRoot"):
         paths[key].mkdir(parents=True, exist_ok=True)
@@ -226,6 +229,7 @@ def build_agent_heartbeat(
 ) -> dict[str, Any]:
     """Build the heartbeat schema consumed by server/lib/guestReadiness.js."""
 
+    # keep the agent state and machine details together in the file read by guest readiness checks
     return {
         "agent": {
             "name": AGENT_NAME,
@@ -260,6 +264,7 @@ def write_agent_heartbeat(
 ) -> None:
     """Write a fresh agent heartbeat to the shared-root contract location."""
 
+    # reuse the shared layout and atomic writer so the server never reads a half-written heartbeat
     paths = ensure_agent_shared_layout(shared_root)
     write_json_atomically(
         paths["heartbeatPath"],
@@ -270,6 +275,7 @@ def write_agent_heartbeat(
 def read_json_if_present(path: Path) -> dict[str, Any] | None:
     """Read an optional JSON object; reject empty, scalar, and array payloads."""
 
+    # a missing or blank optional file means there is no active value to process
     if not path.is_file():
         return None
 
@@ -307,6 +313,7 @@ def require_path_within(path: Path, parent: Path, description: str) -> Path:
 def get_run_context(shared_root: Path, run_id: str) -> dict[str, Path | str]:
     """Build the default filesystem contract for one validated active run."""
 
+    # validate the host-provided ID before using it to construct any filesystem path
     if not re.fullmatch(r"run-[A-Za-z0-9-]+", run_id):
         raise ValueError(f"Active run pointer has an invalid runId: {run_id!r}")
 
@@ -615,12 +622,14 @@ def execute_agent_task(
 ) -> dict[str, Any]:
     """Dispatch implemented agent workloads without accepting unsupported work."""
 
+    # check cancellation before selecting a workload so cancelled runs never start UI or child processes
     if is_run_cancellation_requested(run_context, shared_root):
         raise AgentTaskCancelled("Cancellation was requested before task execution began.")
 
     abort_check = make_execution_abort_check(run_context, task, shared_root)
     abort_check()
 
+    # route each supported task type to its isolated execution path
     task_type = str(task.get("taskType") or "unknown")
     if task_type == "noop":
         return {
@@ -642,6 +651,7 @@ def execute_agent_task(
 def read_task_sequence_plan(run_context: dict[str, Path | str], task: dict[str, Any]) -> dict[str, Any]:
     """Read a built-in plan from its normalized payload or active run task-plan file."""
 
+    # prefer the server-normalized payload, then support older runs that stored task-plan.json
     payload = task.get("payload")
     if isinstance(payload, dict):
         return payload
@@ -664,6 +674,7 @@ def execute_task_sequence_task(
 ) -> dict[str, Any]:
     """Run one normalized built-in Notepad plan in the active run directories."""
 
+    # give the Notepad worker only paths that belong to this run so its artifacts stay isolated
     plan = read_task_sequence_plan(run_context, task)
     task_id = str(task.get("taskId") or "unknown-task")
     execution = dispatch_builtin_notepad_task(
@@ -676,6 +687,7 @@ def execute_task_sequence_task(
         capture_screenshot=bool_value(plan.get("captureScreenshot"), True),
         abort_check=abort_check,
     )
+    # summarize the worker's detailed steps into the result fields used by the backend and UI
     steps = execution.get("steps")
     if not isinstance(steps, list):
         steps = []
@@ -713,6 +725,7 @@ def execute_script_runner_task(
 ) -> dict[str, Any]:
     """Launch and supervise one uploaded Python or PowerShell runner process."""
 
+    # validate the uploaded paths and build the language-specific command before starting a child process
     language, runner_path, config_path = resolve_custom_runner_inputs(run_context, task)
     task_id = str(task.get("taskId") or "unknown-task")
     command = custom_runner_command(language, runner_path, config_path)
@@ -744,6 +757,7 @@ def execute_script_runner_task(
             )
             append_run_log(run_context, f"Worker process started with PID {process.pid}.")
 
+            # supervise the child until it exits, checking cancellation, timeout, and screenshot capture
             while process.poll() is None:
                 now_monotonic = time.monotonic()
                 if is_run_cancellation_requested(run_context, shared_root):
@@ -806,6 +820,7 @@ def execute_script_runner_task(
             terminate_child_process_tree(process)
         raise
 
+    # the child exited normally, so record completion details and make one final best-effort screenshot
     completed_utc = utc_timestamp()
     try:
         capture_path = capture_custom_runner_screenshot(
@@ -832,6 +847,7 @@ def execute_script_runner_task(
         exit_code=exit_code,
         completed_utc=completed_utc,
     )
+    # a non-zero process or invalid result contract is a terminal agent failure, not a successful run
     if exit_code != 0:
         raise AgentTaskExecutionError(
             f"Uploaded runner failed with exit code {exit_code}. {stderr_text} {stdout_text}".strip(),
@@ -898,6 +914,7 @@ def build_custom_runner_process_details(
 ) -> dict[str, Any]:
     """Build result-safe runner diagnostics from run-confined log files."""
 
+    # report only paths relative to the active run so host file locations are not exposed in results
     run_root = Path(run_context["runRoot"])
     details: dict[str, Any] = {
         "language": language,
@@ -932,6 +949,7 @@ def process_queued_active_task(
     executed again.
     """
 
+    # read and claim only one queued task; missing, malformed, and terminal tasks are left alone
     active_task = read_active_task(shared_root)
     if active_task is None:
         return False
@@ -945,12 +963,14 @@ def process_queued_active_task(
     append_agent_install_log(
         shared_root, f"Handling task '{task_id}' of type '{task_type}' for run '{run_context['runId']}'."
     )
+    # publish running state before execution so the server can observe that the agent owns this task
     mark_active_task_running(run_context, task)
     write_agent_heartbeat(shared_root, status="running", task_name=task_type, run_id=str(run_context["runId"]))
     append_run_log(run_context, f"Task '{task_id}' started ({task_type}).")
 
     final_status = "failed"
     result: dict[str, Any]
+    # convert every execution outcome into a supported terminal result without stopping the agent loop
     try:
         if is_run_cancellation_requested(run_context, shared_root):
             raise AgentTaskCancelled("Cancellation was requested before task execution began.")
@@ -991,6 +1011,7 @@ def process_queued_active_task(
         )
         append_agent_install_log(shared_root, f"Task '{task_id}' failed: {exc}")
     finally:
+        # always publish the result, terminal task state, and idle heartbeat even after an exception
         try:
             write_active_result(run_context, result)
             mark_active_task_finished(run_context, task, final_status)
@@ -1069,6 +1090,7 @@ def capture_custom_runner_screenshot(
 def parse_runner_output_json(output_text: str) -> dict[str, Any]:
     """Mirror ConvertFrom-RunnerOutputJson's brace-delimited JSON behavior."""
 
+    # ignore ordinary runner logging around the first complete JSON object returned on stdout
     if not output_text or not output_text.strip():
         raise ValueError("Runner produced no output.")
 
@@ -1088,6 +1110,7 @@ def resolve_custom_runner_inputs(
 ) -> tuple[str, Path, Path]:
     """Validate the task payload and its run-confined uploaded input files."""
 
+    # read the server-provided file references before resolving them inside this run's folder
     payload = task.get("payload")
     if not isinstance(payload, dict):
         raise ValueError("script_runner task requires an object payload.")
@@ -1102,6 +1125,7 @@ def resolve_custom_runner_inputs(
     if not isinstance(language_value, str) or not language_value.strip():
         raise ValueError("script_runner task requires payload.runnerScriptLanguage.")
 
+    # resolve both paths through the run boundary, then require the expected script language and extension
     runner_path = resolve_run_relative_path(run_context, runner_value)
     config_path = resolve_run_relative_path(run_context, config_value)
     if not runner_path.is_file():
@@ -1123,6 +1147,7 @@ def resolve_custom_runner_inputs(
 def custom_runner_command(language: str, runner_path: Path, config_path: Path) -> list[str]:
     """Return the established command-line contract for an uploaded runner."""
 
+    # keep Python and PowerShell invocation flags compatible with the existing uploaded-runner contract
     if language == "python":
         python_executable = Path(sys.executable) if sys.executable else None
         if python_executable is None or not python_executable.is_file():
@@ -2292,6 +2317,7 @@ def execute_notepad_plan(
 ) -> dict[str, Any]:
     """Run a plan and close only its run-owned Notepad window after a failure."""
 
+    # remember the window opened for this plan so error cleanup cannot close an unrelated Notepad window
     opened_window: Any | None = None
 
     def remember_opened_window(window: Any) -> None:
@@ -2337,6 +2363,7 @@ def dispatch_builtin_notepad_task(
 ) -> dict[str, Any]:
     """Dispatch DockVision's built-in task-plan workload to the Notepad worker."""
 
+    # keep the agent-facing built-in dispatch boundary separate from the lower-level Notepad executor
     return execute_notepad_plan(
         plan,
         artifact_dir=artifact_dir,
@@ -2402,6 +2429,7 @@ def run_agent_loop(
     The injectable executor keeps lifecycle tests independent from VM UI work.
     """
 
+    # resolve and initialize the shared transport once before the recurring polling work starts
     resolved_shared_root = shared_root or resolve_shared_root()
     ensure_agent_shared_layout(resolved_shared_root)
     append_agent_install_log(resolved_shared_root, "Python agent startup begin.")
@@ -2409,6 +2437,7 @@ def run_agent_loop(
     append_agent_install_log(resolved_shared_root, "Agent polling loop starting.")
 
     emitted_heartbeats = 0
+    # each cycle advertises idle availability, processes at most one task, and then waits for the next cycle
     while max_heartbeats is None or emitted_heartbeats < max_heartbeats:
         write_agent_heartbeat(
             resolved_shared_root,
@@ -2441,6 +2470,7 @@ def run_agent() -> int:
 # CLI boundary. --plan preserves the established standalone worker contract;
 # --agent is the explicit future long-running DockVision runtime entry point.
 def parse_args() -> argparse.Namespace:
+    # accept either the long-running agent mode or the established standalone plan mode
     parser = argparse.ArgumentParser(
         description="Run the DockVision Notepad worker or the DockVision VM agent runtime."
     )
@@ -2456,6 +2486,7 @@ def parse_args() -> argparse.Namespace:
 # Standalone worker entry. Always write result.json, even on failure, because
 # the failure artifact is usually the fastest way to understand what went wrong.
 def run_standalone_notepad_worker(plan_path: Path) -> int:
+    # keep standalone success and failure results in the same artifact location for manual diagnosis
     result_path = ARTIFACT_DIR / "result.json"
 
     try:
@@ -2478,6 +2509,7 @@ def run_standalone_notepad_worker(plan_path: Path) -> int:
 
 
 def main() -> int:
+    # choose agent mode only when explicitly requested; otherwise preserve the standalone worker behavior
     args = parse_args()
     if args.agent:
         try:

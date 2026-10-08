@@ -12,15 +12,18 @@ const legacySupervisorPath = path.join(root, "WindowsVm", "shared", "DockVisionA
 const legacyNotepadHelperPath = path.join(root, "WindowsVm", "shared", "dockvision_notepad_task.py");
 
 test("VM deployment bundle contains the selected single-file Python agent", () => {
+  // the installer copy must stay identical to the selected source of truth
   assert.equal(fs.readFileSync(deployedPath, "utf8"), fs.readFileSync(sourcePath, "utf8"));
 });
 
 test("VM deployment bundle excludes retired supervisor and duplicate Notepad runtimes", () => {
+  // retired files must not return to the guest bundle after the Python migration
   assert.equal(fs.existsSync(legacySupervisorPath), false);
   assert.equal(fs.existsSync(legacyNotepadHelperPath), false);
 });
 
 test("VM installer deploys and schedules only the Python agent", () => {
+  // read the batch file as text because this regression test protects its launch contract
   const installer = fs.readFileSync(installerPath, "utf8");
 
   assert.match(installer, /vm-notepad-runner\.py/);
@@ -32,6 +35,7 @@ test("VM installer deploys and schedules only the Python agent", () => {
 });
 
 test("VM runtime diagnostics list only the active Python supervisor", () => {
+  // runtime diagnostics must list only deployable supervisor files, not inactive prototypes
   const runtimeModule = fs.readFileSync(windowsVmRuntimePath, "utf8");
 
   assert.match(runtimeModule, /const RUNTIME_FILE_NAMES = \[[\s\S]*"vm-notepad-runner\.py"/);

@@ -1121,6 +1121,7 @@ async function createRunRecord(options = {}) {
 }
 // The alternate launch endpoint uses the same parsed task-plan contract.
 async function createRunRecord2(options = {}) {
+  // create an alternate-route run using the same shared-folder lifecycle contract as the primary creator
   const preparedRunner = prepareRunnerScript(options);
 
   await ensureBaseLayout();

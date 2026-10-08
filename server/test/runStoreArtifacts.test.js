@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { buildArtifactMap } = require("../lib/runStore");
 
 test("artifact mapper normalizes each custom screenshot and builds a scoped URL", () => {
+  // supply both relative and run-prefixed screenshot paths like custom runners can return
   const runId = "run-artifact-fixture";
   const artifacts = buildArtifactMap(runId, {
     screenshots: [
@@ -11,6 +12,7 @@ test("artifact mapper normalizes each custom screenshot and builds a scoped URL"
     ],
   });
 
+  // verify each path is normalized into a URL that stays scoped to this run
   assert.equal(Array.isArray(artifacts.screenshots), true);
   assert.deepEqual(artifacts.screenshots, [
     {
@@ -29,6 +31,7 @@ test("artifact mapper normalizes each custom screenshot and builds a scoped URL"
 });
 
 test("artifact mapper retains iteration-relative screenshot arrays", () => {
+  // iteration artifacts must keep their iteration directory when the UI builds file URLs
   const runId = "run-iteration-fixture";
   const artifacts = buildArtifactMap(runId, {
     screenshot: `runs/${runId}/iterations/2/screenshots/task-complete.png`,

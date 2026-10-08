@@ -24,6 +24,7 @@ RUNNER_SPEC.loader.exec_module(runner)
 
 
 class VmAgentLifecycleTest(unittest.TestCase):
+    # create one isolated shared-folder run for every lifecycle test
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.shared_root = Path(self.temporary_directory.name)
@@ -38,12 +39,13 @@ class VmAgentLifecycleTest(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        # remove the temporary shared folder after the test has inspected its files
         self.temporary_directory.cleanup()
 
     def write_task(
         self, status: str = "queued", task_type: str = "noop", payload: dict | None = None
     ) -> dict:
-        # Build the task shape normally published by the server.
+        # build and publish the task shape normally produced by the server
         task = {
             "runId": self.run_id,
             "taskId": f"{self.run_id}-task",
@@ -63,7 +65,7 @@ class VmAgentLifecycleTest(unittest.TestCase):
     def write_custom_runner_task(
         self, language: str, runner_name: str, runner_content: str, run_options: dict | None = None
     ) -> dict:
-        # Use the same uploaded file names and payload fields as a real custom run.
+        # create the uploaded files and task payload used by a real custom-runner request
         config_name = "uploaded-task-plan.json"
         # Write the uploaded runner and config into the active run folder.
         (self.run_root / runner_name).write_text(runner_content, encoding="utf-8")
@@ -760,6 +762,7 @@ class VmAgentLifecycleTest(unittest.TestCase):
         self.assertEqual(result["details"]["totalStepCount"], 0)
 
     def test_diagnostic_artifacts_use_the_active_run_as_the_relative_root(self) -> None:
+        # verify diagnostic helpers return run-relative paths instead of guest-local absolute paths
         artifact_root = self.run_root / "artifacts"
 
         class FixtureControl:
@@ -803,6 +806,7 @@ class VmAgentLifecycleTest(unittest.TestCase):
         self.assertTrue((artifact_root / "windows.txt").is_file())
 
     def test_agent_file_path_is_constrained_to_the_active_artifacts_directory(self) -> None:
+        # verify supplied document names cannot make built-in Notepad write outside this run's artifacts
         artifacts_root = Path(self.context["artifactsRoot"])
         self.assertEqual(
             runner.resolve_notepad_file_path(r"..\outside\proof.txt", file_dir=artifacts_root),
