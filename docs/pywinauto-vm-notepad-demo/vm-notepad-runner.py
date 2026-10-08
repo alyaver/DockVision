@@ -56,9 +56,8 @@ from typing import Any, Callable
 SCRIPT_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = SCRIPT_DIR / "artifacts"
 
-# Agent transport contract. These values mirror the active PowerShell agent so
-# the backend can continue using the same shared folder and heartbeat schema
-# while the runtime is migrated to this one Python file.
+# Agent transport contract. These values preserve the existing shared-folder
+# and heartbeat schema while this Python file runs the VM agent.
 AGENT_NAME = "DockVision Guest Agent"
 AGENT_VERSION = "0.5.2"
 HEARTBEAT_INTERVAL_SECONDS = 15
@@ -179,7 +178,7 @@ def resolve_shared_root(
     candidates: tuple[Path, ...] = SHARED_ROOT_CANDIDATES,
     fallback: Path = SHARED_ROOT_FALLBACK,
 ) -> Path:
-    """Find the guest/host share using the established PowerShell-agent order."""
+    """Find the guest/host share using the established DockVision path order."""
 
     for candidate in candidates:
         if candidate.is_dir():

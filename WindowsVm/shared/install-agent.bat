@@ -83,13 +83,11 @@ if errorlevel 1 (
 )
 call :log "Verified Python runtime and required pywinauto dependencies."
 
-rem Stop the existing scheduled task and any earlier agent process. The legacy
-rem PowerShell filename below is a migration cleanup matcher only; it is never
-rem copied, launched, or scheduled by this installer.
+rem Stop the existing scheduled task and any earlier Python agent process.
 schtasks /End /TN "DockVisionAgent" >nul 2>nul
 schtasks /Delete /TN "DockVisionAgent" /F >nul 2>nul
 
-for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process ^| Where-Object { $_.CommandLine -like '*DockVisionAgent.ps1*' -or $_.CommandLine -like '*vm-notepad-runner.py*' } ^| Select-Object -ExpandProperty ProcessId"') do (
+for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process ^| Where-Object { $_.CommandLine -like '*vm-notepad-runner.py*' } ^| Select-Object -ExpandProperty ProcessId"') do (
   taskkill /F /PID %%P >nul 2>nul
 )
 

@@ -8,12 +8,19 @@ const sourcePath = path.join(root, "docs", "pywinauto-vm-notepad-demo", "vm-note
 const deployedPath = path.join(root, "WindowsVm", "shared", "vm-notepad-runner.py");
 const installerPath = path.join(root, "WindowsVm", "shared", "install-agent.bat");
 const windowsVmRuntimePath = path.join(root, "server", "lib", "windowsVm.js");
+const legacySupervisorPath = path.join(root, "WindowsVm", "shared", "DockVisionAgent.ps1");
+const legacyNotepadHelperPath = path.join(root, "WindowsVm", "shared", "dockvision_notepad_task.py");
 
 test("VM deployment bundle contains the selected single-file Python agent", () => {
   assert.equal(fs.readFileSync(deployedPath, "utf8"), fs.readFileSync(sourcePath, "utf8"));
 });
 
-test("VM installer deploys and schedules the Python agent while only cleaning up a legacy supervisor", () => {
+test("VM deployment bundle excludes retired supervisor and duplicate Notepad runtimes", () => {
+  assert.equal(fs.existsSync(legacySupervisorPath), false);
+  assert.equal(fs.existsSync(legacyNotepadHelperPath), false);
+});
+
+test("VM installer deploys and schedules only the Python agent", () => {
   const installer = fs.readFileSync(installerPath, "utf8");
 
   assert.match(installer, /vm-notepad-runner\.py/);
@@ -21,11 +28,7 @@ test("VM installer deploys and schedules the Python agent while only cleaning up
   assert.match(installer, /-c "import pywinauto; from PIL import Image"/);
   assert.match(installer, /start "" \/B "%PYTHON_EXE%" "%AGENT_PATH%" --agent/);
   assert.match(installer, /schtasks \/Create[\s\S]*%PYTHON_EXE%[\s\S]*%AGENT_PATH%[\s\S]*--agent/);
-  assert.match(installer, /\*DockVisionAgent\.ps1\*/);
-  assert.match(installer, /migration cleanup matcher only/);
-  assert.doesNotMatch(installer, /copy[^\r\n]*DockVisionAgent\.ps1/i);
-  assert.doesNotMatch(installer, /set "AGENT_SOURCE=[^\r\n]*DockVisionAgent\.ps1/i);
-  assert.doesNotMatch(installer, /-File "C:\\DockVision\\agent\\DockVisionAgent\.ps1"/);
+  assert.doesNotMatch(installer, /DockVisionAgent\.ps1/i);
 });
 
 test("VM runtime diagnostics list only the active Python supervisor", () => {
