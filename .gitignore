@@ -10,6 +10,7 @@ lerna-debug.log*
 WindowsVm/Data/
 WindowsVm/OS/
 WindowsVm/shared/*
+WindowsVm/windows.vars.backup
 !WindowsVm/shared/DockVisionAgent.ps1
 !WindowsVm/shared/agent.py
 !WindowsVm/shared/dockvision_notepad_task.py
@@ -160,3 +161,6 @@ vite.config.ts.timestamp-*
 .env
 server/.env
 client/.env
+client/.vite/*
+
+.idea
