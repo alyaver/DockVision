@@ -28,6 +28,20 @@ const Notepad_Reference_Images = [ // List of reference images for the notepad s
         width: 1280,
         height: 720,
     },
+    {
+        id: "notepad_screen_file_menu",
+        label: "Notepad File Menu",
+        src: "",
+        width: 1280,
+        height: 720,
+    },
+    {
+        id: "notepad_screen_edit_menu",
+        label: "Notepad Edit Menu",
+        src: "",
+        width: 1280,
+        height: 720,
+    }
 ]
 
 function getCoordinateDetails(details = {}) { // Returns the coordinate details, ensuring x and y are numbers and providing a default reference image ID if not present
@@ -36,6 +50,11 @@ function getCoordinateDetails(details = {}) { // Returns the coordinate details,
         y: details.y ?? "",
         referenceImageId: details.referenceImageId || Notepad_Reference_Images[0]?.id || "",
     };
+}
+
+function getReferenceImageIndex(referenceImages, referenceImageId) { // Returns the index of the reference image based on the referenceImageId, or 0 if not found
+    const index = referenceImages.findIndex((image) => image.id === referenceImageId);
+    return index >= 0 ? index : 0;
 }
 
 function getSelectedReferenceImage(referenceImages, referenceImageId) { // Returns the selected reference image based on the referenceImageId, or the first image if not found
@@ -177,6 +196,7 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
     const isTyped = taskDescription.task === "TYPE";
     const selectedReferenceImageId = taskDescription.details?.referenceImageId || Notepad_Reference_Images[0]?.id || "";
     const selectedReferenceImage = getSelectedReferenceImage(referenceImages, selectedReferenceImageId);
+    const selectedReferenceImageIndex = getReferenceImageIndex(referenceImages, selectedReferenceImageId);
     return (
         <div className="create-task-container">
             <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
@@ -228,14 +248,16 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                     )}
 
                     {taskDescription.targetType === "coordinates" && (
-                        <>
-                        <select className="reference-image-select" value={selectedReferenceImageId} onChange={(e) => onChangeDetail("referenceImageId", e.target.value)}>
-                            {referenceImages.map((image) => (
-                                <option key={image.id} value={image.id}>
-                                    {image.label}
-                                </option>
-                            ))}
-                        </select>   
+                        <><div className="coordinate-image-navigation">
+                            <select className="reference-image-select" value={selectedReferenceImageId} onChange={(e) => onChangeDetail("referenceImageId", e.target.value)}>
+                                {referenceImages.map((image) => (
+                                    <option key={image.id} value={image.id}>
+                                        {image.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <span className="reference-image-index"> Screen {selectedReferenceImageIndex + 1} of {referenceImages.length}</span>
+                        </div>
 
                         <CoordinateReferencePreview image={selectedReferenceImage} details={taskDescription.details} onSelectCoordinates={(coordinates) => {
                             onChangeDetail("x", coordinates.x);

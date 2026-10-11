@@ -233,7 +233,22 @@
     height: 100%;
     object-fit: contain;
     display: block;
+}
+
+.coordinate-preview-screen {
     cursor: pointer;
+}
+
+.coordinate-image-navigation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.reference-image-index {
+    font-size: 14px;
+    color: #666;
 }
 
 .reference-image-placeholder {
