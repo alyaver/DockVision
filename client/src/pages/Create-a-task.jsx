@@ -60,7 +60,38 @@ function getMarkerStyle(details, image) { // Returns the style for the marker ba
     }
 }
 
-function  TaskSelect({value, tasks, onChange}) {
+function getCoordinateFromPreview(event, image) { // Returns the coordinates based on the marker style and reference image, since the marker style is in percentage, we need to calculate the absolute position based on the image dimensions
+    const rect = event.currentTarget.getBoundingClientRect(); // Get the bounding rectangle of the image container
+
+    const imgAspectRatio = image.width / image.height;
+    const previewAspectRatio = rect.width / rect.height;
+
+    let previewWidth = rect.width;
+    let previewHeight = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (imgAspectRatio > previewAspectRatio) { // Image is wider than the preview container
+        previewHeight = rect.width / imgAspectRatio;
+        offsetY = (rect.height - previewHeight) / 2;
+    } else { // Image is taller than the preview container
+        previewWidth = rect.height * imgAspectRatio;
+        offsetX = (rect.width - previewWidth) / 2;
+    }
+
+    const clickX = event.clientX - rect.left - (offsetX || 0);
+    const boundedClickX = Math.min(Math.max(clickX, 0), previewWidth || rect.width);
+
+    const clickY = event.clientY - rect.top - (offsetY || 0);
+    const boundedClickY = Math.min(Math.max(clickY, 0), previewHeight || rect.height);
+
+    return {
+        x: Math.round((boundedClickX / previewWidth) * image.width),
+        y: Math.round((boundedClickY / previewHeight) * image.height),
+    };
+}
+
+function TaskSelect({value, tasks, onChange}) {
 return (
   <select value={value} onChange={onChange} className="task-select">
     <option value="">Select a task</option>
@@ -108,16 +139,25 @@ function validateDraftTask(task) {
     return errors;
 }
 
-function CoordinateReferencePreview({ image, details }) { // Displays a preview of the reference image with a marker at the specified coordinates
+function CoordinateReferencePreview({ image, details, onSelectCoordinates }) { // Displays a preview of the reference image with a marker at the specified coordinates
     const markerStyle = getMarkerStyle(details, image);
 
     if (!image) {
         return null;
     }
 
+    function handlePreviewClick(event) { // When the user clicks on the preview, we calculate the coordinates based on the click position and update the details
+        if (!image) return;
+
+        const coordinates = getCoordinateFromPreview(event, image);
+        if (onSelectCoordinates) {
+            onSelectCoordinates(coordinates);
+        }
+    }
+
     return (
         <div className="coordinate-preview">
-            <div className="coordinate-preview-screen">
+            <div className="coordinate-preview-screen" onClick={handlePreviewClick}>
                 {image.src ? (
                     <img src={image.src} alt={image.label}/>
                 ) : (
@@ -197,7 +237,10 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                             ))}
                         </select>   
 
-                        <CoordinateReferencePreview image={selectedReferenceImage} details={taskDescription.details} />
+                        <CoordinateReferencePreview image={selectedReferenceImage} details={taskDescription.details} onSelectCoordinates={(coordinates) => {
+                            onChangeDetail("x", coordinates.x);
+                            onChangeDetail("y", coordinates.y);
+                        }} />
                         
                             <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
                             onChange={(e) => onChangeDetail("x", e.target.value) } />
@@ -364,7 +407,7 @@ export default function CreateATask() {
     }   
 
     function onChangeDetail(key, value) {
-        setTaskDescription({ ...taskDescription, details: { ...taskDescription.details, [key]: value } });
+        setTaskDescription((current) => ({ ...current, details: { ...current.details, [key]: value } }));
     }
 
     function buildPlan() {

@@ -233,9 +233,10 @@
     height: 100%;
     object-fit: contain;
     display: block;
+    cursor: pointer;
 }
 
-.reference-image-placeholderr {
+.reference-image-placeholder {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -252,6 +253,7 @@
     background-color: red;
     border-radius: 50%;
     transform: translate(-50%, -50%);
+    pointer-events: none;
 }
 
 .click-fields {
