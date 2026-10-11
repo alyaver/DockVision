@@ -301,3 +301,26 @@
     grid-template-columns: 1fr;
   }
 }
+
+.TestPage__notice{
+  max-width: 1200px;
+  margin: 0 auto 20px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background-color: #d8f0dd;
+  color: #207245;
+}
+
+.TestPage__statusBadge.status-cancelling{
+  background-color: #fff;
+  color: #8a5b00;
+}
+.TestPage__statusBadge.status-cancelled{
+  background-color: #fff;
+  color: #374161;
+}
+
+.TestPage__heroActions button:disabled{
+  opacity:0.6;
+  cursor: not-allowed;
+}
