@@ -95,3 +95,11 @@
 .Button-primary:hover {
   opacity: 0.85;
 }
+
+.Auth-Check {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 75vh;
+  font-family: sans-serif;
+}

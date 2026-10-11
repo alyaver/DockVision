@@ -88,8 +88,34 @@ const Confirmation = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [progressMessage, setProgressMessage] = useState("");
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const pending = useRef(null);
   useEffect(() => () => pending.current?.abort(), []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    //prevents users from bypassing sign in when adding "/confirmation" in the address bar
+    async function verifyAuthentication() {
+      try {
+        const response = await fetch("/api/auth/me", {
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          navigate("/", { replace: true });
+          return;
+        }
+      } catch {
+        navigate("/", { replace: true });
+      } finally {
+        if (isMounted) setIsAuthLoading(false);
+      }
+    }
+
+    verifyAuthentication();
+    return () => { isMounted = false; };
+  }, [navigate]);
 
   async function handleConfirm() {
     if (pending.current) return;
@@ -160,6 +186,17 @@ const Confirmation = () => {
         setProgressMessage("");
       }
     }
+  }
+
+  if (isAuthLoading) {
+    return (
+      <>
+        <Navigation />
+        <main className="Auth-Check">
+          <p role="status" aria-live="polite">Checking your session...</p>
+        </main>
+      </>
+    );
   }
 
   return (

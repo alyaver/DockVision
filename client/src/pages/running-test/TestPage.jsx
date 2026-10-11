@@ -310,12 +310,12 @@ function TestPage() {
 
   const iterationLabel =
     progress.currentIteration != null && progress.totalIterations != null
-      ? `${progress.currentIteration} / ${progress.totalIterations}`
+      ? `${progress.currentIteration} of ${progress.totalIterations}`
       : "Unknown";
 
   const currentStepLabel =
     progress.currentStepNumber != null && progress.totalSteps != null
-      ? `${progress.currentStepNumber} / ${progress.totalSteps}`
+      ? `${progress.currentStepNumber} of ${progress.totalSteps}`
       : "Unknown";
 
   const elapsedTime = run?.startedUtc

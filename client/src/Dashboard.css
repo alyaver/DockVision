@@ -633,3 +633,11 @@ body, #root {
   gap: 50px;
   margin: 0 0 20px;
 }
+
+.Auth-Check {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 75vh;
+  font-family: sans-serif;
+}
