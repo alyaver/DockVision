@@ -78,6 +78,10 @@ function isTerminalStatus(status) {
   return TERMINAL_STATUSES.has(String(status || "").toLowerCase());
 }
 
+function isCancellingStatus(status) {
+  return String(status || "").toLowerCase() === "cancelling";
+}
+
 function isPollingStatus(status) {
   return POLLING_STATUSES.has(String(status || "").toLowerCase());
 }
@@ -135,6 +139,8 @@ function TestPage() {
   const [networkNotice, setNetworkNotice] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelError, setCancelError] = useState("");
+  const cancelPendingRef = useRef(false);
+  const [cancelNotice, setCancelNotice] = useState("");
 
   const pollTimerRef = useRef(null);
   const mountedRef = useRef(false);
@@ -156,6 +162,7 @@ function TestPage() {
       setRun(null);
       setErrorMessage("");
       setNetworkNotice("");
+      setCancelNotice("");
       return undefined;
     }
 
@@ -216,6 +223,7 @@ function TestPage() {
 
         //If the run we are working with has been terminated, stop polling
         if (nextRun && isTerminalStatus(nextRun.status)) {
+          setCancelNotice("");
           scheduleNextPoll(nextRun.status);
           return;
         }
@@ -250,32 +258,51 @@ function TestPage() {
     return () => {
       isMounted = false;
       clearTimer();
+      window.clearInterval(intervalId);
     };
   }, [runId, fallbackTestName]);
 
   async function handleCancel() {
-    if (!runId || isCancelling || isTerminalStatus(run?.status)) {
+    if (!runId ||
+      cancelPendingRef.current || 
+      isCancelling || 
+      isTerminalStatus(run?.status) ||
+      isCancellingStatus(run?.status)
+    ){
       return;
     }
 
+    //setting the ref to prevent duplicate clicks.
+    cancelPendingRef.current = true;
     setIsCancelling(true);
     setCancelError("");
+    setErrorMessage("");
+    setCancelNotice("");
 
     try {
       const data = await cancelRun(runId);
 
       if (data?.run) {
         setRun(data?.run);
+
+        if (isTerminalStatus(data.run.status)){
+          setCancelNotice("");
+        } else {
+          setCancelNotice(data.message || "Cancellation Requested");
+        }
+      } else {
+        setCancelNotice(data?.message || "Cancellation Requested");
       }
     } catch (error) {
       if (error.status === 404) {
-        setErrorMessage("This run is missing or expired. Return to the dashboard.");
+        setErrorMessage("Run not found.\nThis run is missing or expired. Return to the dashboard.");
       } else {
         setCancelError(
           error.message || "Could not request cancellation. Please try again."
         );
       }
     } finally {
+      cancelPendingRef.current = false;
       setIsCancelling(false);
     }
   }
@@ -342,10 +369,12 @@ function TestPage() {
               <button
                 type="button"
                 onClick={handleCancel}
-                disabled={isCancelling}
+                disabled={isCancelling || isCancellingStatus(run?.status)}
                 className="TestPage__cancelButton"
               >
-                {isCancelling ? "Cancelling..." : "Cancel"}
+                {isCancelling || isCancellingStatus(run?.status)
+                ? "Cancelling..."
+                 : "Cancel"}
               </button>
             )}
 
@@ -358,6 +387,7 @@ function TestPage() {
         {errorMessage && <p className="TestPage__error">{errorMessage}</p>}
         {networkNotice && <p className="TestPage__error">{networkNotice}</p>}
         {cancelError && <p className="TestPage__error">{cancelError}</p>}
+        {cancelNotice && <p className = "TestPage__notice" role = "status">{cancelNotice}</p>}
 
         {isLoading && !run ? (
           <div className="TestPage__panel">
