@@ -3,6 +3,12 @@ import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 import { serializeTaskPlan } from "../lib/serializeTaskPlan.mjs";
+import notepadMainImage from "../assets/notepadReferences/Notepad-Main.png";
+import notepadFileImage from "../assets/notepadReferences/Notepad-File.png";
+import notepadEditImage from "../assets/notepadReferences/Notepad-Edit.png";
+import notepadFormatImage from "../assets/notepadReferences/Notepad-Format.png";
+import notepadViewImage from "../assets/notepadReferences/Notepad-View.png";
+import notepadHelpImage from "../assets/notepadReferences/Notepad-Help.png";
 
 const Default_Task = [];
 const Task_Options = ["TYPE", "CLICK"];
@@ -24,23 +30,44 @@ const Notepad_Reference_Images = [ // List of reference images for the notepad s
     {
         id: "notepad_screen_main",
         label: "Notepad Editor",
-        src: "",
-        width: 1280,
-        height: 720,
+        src: notepadMainImage,
+        width: 942,
+        height: 490,
     },
     {
         id: "notepad_screen_file_menu",
         label: "Notepad File Menu",
-        src: "",
-        width: 1280,
-        height: 720,
+        src: notepadFileImage,
+        width: 943,
+        height: 489,
     },
     {
         id: "notepad_screen_edit_menu",
         label: "Notepad Edit Menu",
-        src: "",
-        width: 1280,
-        height: 720,
+        src: notepadEditImage,
+        width: 943,
+        height: 490,
+    },
+    {
+        id: "notepad_screen_format_menu",
+        label: "Notepad Format Menu",
+        src: notepadFormatImage,
+        width: 942,
+        height: 492,
+    },
+    {
+        id: "notepad_screen_view_menu",
+        label: "Notepad View Menu",
+        src: notepadViewImage,
+        width: 943,
+        height: 492,
+    },
+    {
+        id: "notepad_screen_help_menu",
+        label: "Notepad Help Menu",
+        src: notepadHelpImage,
+        width: 943,
+        height: 490,
     }
 ]
 
@@ -150,8 +177,16 @@ function validateDraftTask(task) {
         }
 
         if (task.targetType === "coordinates") {
+            const xPercent = task.details?.xPercent;
+            const yPercent = task.details?.yPercent;
+
             if (!task.details || task.details.xPercent === undefined || task.details.yPercent === undefined || task.details.xPercent === "" || task.details.yPercent === "") {
                 errors.details = "X and Y coordinates are required for CLICK task.";
+            } else if (
+                !Number.isFinite(Number(xPercent)) || !Number.isFinite(Number(yPercent)) ||
+                Number(xPercent) < 0 || Number(xPercent) > 100 || Number(yPercent) < 0 || Number(yPercent) > 100) 
+                {
+                errors.details = "X and Y coordinates must be numbers between 0 and 100.";
             }
         }
     }
@@ -176,7 +211,11 @@ function CoordinateReferencePreview({ image, details, onSelectCoordinates }) { /
 
     return (
         <div className="coordinate-preview">
-            <div className="coordinate-preview-screen" onClick={handlePreviewClick}>
+            <div
+                className="coordinate-preview-screen"
+                style={{ aspectRatio: `${image.width} / ${image.height}` }}
+                onClick={handlePreviewClick}
+            >
                 {image.src ? (
                     <img src={image.src} alt={image.label}/>
                 ) : (
@@ -534,7 +573,7 @@ export default function CreateATask() {
                                             <div>
                                             <span> (X%: {t.details?.xPercent})</span>
                                             <br />
-                                            <span> (Y%: {t.details.yPercent})</span>
+                                            <span> (Y%: {t.details?.yPercent})</span>
                 
                                             </div>
                                             )}
