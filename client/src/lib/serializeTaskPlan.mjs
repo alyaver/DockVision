@@ -23,9 +23,10 @@ function taskToSteps(task) {
             id: task.id,
             action: "CLICK",
             target: {
-                type: "screenPoint",
-                x: Number(task.details?.x),
-                y: Number(task.details?.y),
+                type: "namedControl",
+                name: "editor",
+                xPercent: Number(task.details?.xPercent),
+                yPercent: Number(task.details?.yPercent),
             },
             button: "left",
             clickCount: 1,

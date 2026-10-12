@@ -6,39 +6,47 @@ import parser from '../server/lib/test-script/readTestScript.js';
 const app = { name: 'notepad', executable: 'notepad.exe' };
 
 for (const legacy of [false, true]) {
+  // Run the same checks for the current plan shape and the older plan shape.
   const envelope = task => legacy
     ? { schemaVersion: 'dockvision.plan.v1', targetApp: app, steps: [task] }
     : plan([task]);
   const prefix = legacy ? 'steps[0]' : 'tasks[0]';
   for (const target of ['editor', 'notepad.editor', { type: 'namedControl', name: 'editor' }]) {
     test(`normalizes demo percentages (legacy=${legacy}, ${JSON.stringify(target)})`, () => {
+      // Parse a supported target that uses the older top-level percentage fields.
       const result = parse(envelope({ ...click, target, xPercent: 0, yPercent: 100 }));
+      // The parser moves the percentages into the canonical target object.
       assert.deepEqual(result.tasks[0], { ...click,
         target: { type: 'namedControl', name: 'editor', xPercent: 0, yPercent: 100 } });
+      // Parsing the normalized plan again should not change it.
       assert.deepEqual(parse(result), result);
     });
   }
-  test(`merges matching and complementary percentages (legacy=${legacy})`, () => {
-    const result = parse(envelope({ ...click,
-      target: { type: 'namedControl', name: 'editor', xPercent: 25 }, xPercent: 25, yPercent: 75 }));
-    assert.deepEqual(result.tasks[0], { ...click,
-      target: { type: 'namedControl', name: 'editor', xPercent: 25, yPercent: 75 } });
+  test(`rejects duplicate nested and top-level percentages (legacy=${legacy})`, () => {
+    // A supplied top-level percentage competes with its normalized target form;
+    // the parser reports the original conflicting field for this case.
+    rejects(envelope({ ...click,
+      target: { type: 'namedControl', name: 'editor', xPercent: 25 }, xPercent: 25, yPercent: 75 }), `${prefix}.xPercent`, 'click');
   });
   for (const field of ['xPercent', 'yPercent']) {
     test(`rejects conflicting ${field} (legacy=${legacy})`, () => {
+      // Do not allow two different values for the same percentage.
       rejects(envelope({ ...click, target: { type: 'namedControl', name: 'editor', [field]: 20 }, [field]: 30 }), `${prefix}.${field}`, 'click');
     });
     for (const value of [-1, 101, '50', null, false]) {
       test(`rejects invalid task ${field}=${JSON.stringify(value)} (legacy=${legacy})`, () => {
-        rejects(envelope({ ...click, [field]: value }), `${prefix}.${field}`, 'click');
+        // Top-level demo coordinates are normalized under target before range validation.
+        rejects(envelope({ ...click, [field]: value }), `${prefix}.target.${field}`, 'click');
       });
     }
     for (const target of [{ type: 'screenPoint', x: 1, y: 2 }, { type: 'windowPoint', x: 1, y: 2 }]) {
       test(`rejects task ${field} on ${target.type} (legacy=${legacy})`, () => {
-        rejects(envelope({ ...click, target, [field]: 50 }), `${prefix}.${field}`, 'click');
+        // Point targets use x/y coordinates and cannot use percentage fields.
+        rejects(envelope({ ...click, target, [field]: 50 }), `${prefix}.target`, 'click');
       });
     }
     test(`rejects ${field} on TYPE (legacy=${legacy})`, () => {
+      // TYPE tasks do not have a click target.
       rejects(envelope({ ...type, [field]: 50 }), `${prefix}.${field}`, 'type');
     });
   }
@@ -67,7 +75,7 @@ test('builder exports canonical JSON that round-trips with order, IDs and litera
   const drafts = [
     { id: 'click', task: 'CLICK', targetType: 'named', target: 'editor' },
     { id: 'type', task: 'TYPE', text },
-    { id: 'point', task: 'CLICK', targetType: 'coordinates', details: { x: '350', y: '240' } },
+    { id: 'point', task: 'CLICK', targetType: 'coordinates', details: { xPercent: '42.5', yPercent: '33.21' } },
   ];
   for (const ordered of [drafts, [...drafts].reverse()]) {
     const content = serializeTaskPlan(' Example ', ordered);
@@ -78,7 +86,7 @@ test('builder exports canonical JSON that round-trips with order, IDs and litera
     assert.equal(Object.hasOwn(exported, 'steps'), false);
     assert.deepEqual(exported.tasks.map(t => t.id), ordered.map(t => t.id));
     assert.equal(exported.tasks.find(t => t.id === 'type').text, text);
-    assert.deepEqual(exported.tasks.find(t => t.id === 'point').target, { type: 'screenPoint', x: 350, y: 240 });
+    assert.deepEqual(exported.tasks.find(t => t.id === 'point').target, { type: 'namedControl', name: 'editor', xPercent: 42.5, yPercent: 33.21 });
     assert.deepEqual(parser.readTestScript({ fileName: 'plan.json', content }), exported);
   }
 });

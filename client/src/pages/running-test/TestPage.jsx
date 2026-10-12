@@ -11,6 +11,7 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const POLLING_STATUSES = new Set(["queued", "running", "cancelling"]);
 
 function readStoredRun() {
+  // restore the most recently viewed run when the page is opened without route state
   try {
     const rawValue = sessionStorage.getItem(CURRENT_RUN_STORAGE_KEY);
     return rawValue ? JSON.parse(rawValue) : null;
@@ -45,6 +46,7 @@ function formatStatus(value) {
 }
 
 function formatElapsedTime(startUtc, endUtc = null) {
+  // convert a run's timestamps into the short elapsed-time label displayed by the page
   if (!startUtc) {
     return "Not started";
   }
@@ -76,6 +78,10 @@ function formatElapsedTime(startUtc, endUtc = null) {
 
 function isTerminalStatus(status) {
   return TERMINAL_STATUSES.has(String(status || "").toLowerCase());
+}
+
+function isCancellingStatus(status) {
+  return String(status || "").toLowerCase() === "cancelling";
 }
 
 function isPollingStatus(status) {
@@ -119,6 +125,18 @@ function LogPanel({ title, lines, emptyMessage }) {
   );
 }
 
+function flattenArtifactEntries(artifacts) {
+  return Object.entries(artifacts || {}).flatMap(([name, artifact]) => {
+    const values = Array.isArray(artifact) ? artifact : [artifact];
+
+    return values.map((value, index) => ({
+      name: values.length > 1 ? `${name} ${index + 1}` : name,
+      key: `${name}-${index}`,
+      artifact: value || {},
+    }));
+  });
+}
+
 function TestPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -135,6 +153,8 @@ function TestPage() {
   const [networkNotice, setNetworkNotice] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelError, setCancelError] = useState("");
+  const cancelPendingRef = useRef(false);
+  const [cancelNotice, setCancelNotice] = useState("");
 
   const pollTimerRef = useRef(null);
   const mountedRef = useRef(false);
@@ -156,6 +176,7 @@ function TestPage() {
       setRun(null);
       setErrorMessage("");
       setNetworkNotice("");
+      setCancelNotice("");
       return undefined;
     }
 
@@ -214,13 +235,14 @@ function TestPage() {
         setErrorMessage("");
         setNetworkNotice("");
 
-        //If the run we are working with has been terminated, stop polling
+        // terminal runs stop scheduling new polls because their final result is already available
         if (nextRun && isTerminalStatus(nextRun.status)) {
+          setCancelNotice("");
           scheduleNextPoll(nextRun.status);
           return;
         }
 
-        //if run isn't yet terminated, continue polling
+        // queued and active runs continue polling so the page shows their latest state
         scheduleNextPoll(nextRun?.status || "queued");
       } catch (error) {
         if (!isMounted) {
@@ -250,32 +272,51 @@ function TestPage() {
     return () => {
       isMounted = false;
       clearTimer();
+      window.clearInterval(intervalId);
     };
   }, [runId, fallbackTestName]);
 
   async function handleCancel() {
-    if (!runId || isCancelling || isTerminalStatus(run?.status)) {
+    if (!runId ||
+      cancelPendingRef.current || 
+      isCancelling || 
+      isTerminalStatus(run?.status) ||
+      isCancellingStatus(run?.status)
+    ){
       return;
     }
 
+    //setting the ref to prevent duplicate clicks.
+    cancelPendingRef.current = true;
     setIsCancelling(true);
     setCancelError("");
+    setErrorMessage("");
+    setCancelNotice("");
 
     try {
       const data = await cancelRun(runId);
 
       if (data?.run) {
         setRun(data?.run);
+
+        if (isTerminalStatus(data.run.status)){
+          setCancelNotice("");
+        } else {
+          setCancelNotice(data.message || "Cancellation Requested");
+        }
+      } else {
+        setCancelNotice(data?.message || "Cancellation Requested");
       }
     } catch (error) {
       if (error.status === 404) {
-        setErrorMessage("This run is missing or expired. Return to the dashboard.");
+        setErrorMessage("Run not found.\nThis run is missing or expired. Return to the dashboard.");
       } else {
         setCancelError(
           error.message || "Could not request cancellation. Please try again."
         );
       }
     } finally {
+      cancelPendingRef.current = false;
       setIsCancelling(false);
     }
   }
@@ -297,10 +338,18 @@ function TestPage() {
 
   const statusLabel = formatStatus(run?.status);
   const statusClass = run?.status ? `status-${String(run.status).toLowerCase()}` : "status-unknown";
+<<<<<<< HEAD
   const screenshotArtifact = run?.artifacts?.screenshot || null;
   const artifactEntries = Object.entries(run?.artifacts || {}).filter(
     ([name]) => name !== "screenshot"
   );
+=======
+  const screenshotArtifacts = run?.artifacts?.screenshots;
+  const screenshotArtifact =
+    run?.artifacts?.screenshot ||
+    (Array.isArray(screenshotArtifacts) ? screenshotArtifacts.at(-1) : null);
+  const artifactEntries = flattenArtifactEntries(run?.artifacts);
+>>>>>>> origin/main
   const logLines = run?.logs?.task || [];
   const taskLogs = Array.isArray(run?.logs?.task) ? run.logs.task : [];
   const stdoutLogs = Array.isArray(run?.logs?.stdout) ? run.logs.stdout : [];
@@ -344,10 +393,12 @@ function TestPage() {
               <button
                 type="button"
                 onClick={handleCancel}
-                disabled={isCancelling}
+                disabled={isCancelling || isCancellingStatus(run?.status)}
                 className="TestPage__cancelButton"
               >
-                {isCancelling ? "Cancelling..." : "Cancel"}
+                {isCancelling || isCancellingStatus(run?.status)
+                ? "Cancelling..."
+                 : "Cancel"}
               </button>
             )}
 
@@ -360,6 +411,7 @@ function TestPage() {
         {errorMessage && <p className="TestPage__error">{errorMessage}</p>}
         {networkNotice && <p className="TestPage__error">{networkNotice}</p>}
         {cancelError && <p className="TestPage__error">{cancelError}</p>}
+        {cancelNotice && <p className = "TestPage__notice" role = "status">{cancelNotice}</p>}
 
         {isLoading && !run ? (
           <div className="TestPage__panel">
@@ -526,10 +578,17 @@ function TestPage() {
 
               {artifactEntries.length ? (
                 <ul className="TestPage__artifactList">
+<<<<<<< HEAD
                   {artifactEntries.map(([name, artifact]) => (
                     <li key={name}>
                       <strong>{artifact.fileName || name}</strong>
                       <span>{artifact.relativePath || artifact.rawPath || "Not available"}</span>
+=======
+                  {artifactEntries.map(({ key, name, artifact }) => (
+                    <li key={key}>
+                      <strong>{name}</strong>
+                      <span>{artifact.fileName || artifact.rawPath || "Not available"}</span>
+>>>>>>> origin/main
                       {artifact.url ? (
                         <a href={artifact.url} target="_blank" rel="noreferrer">
                           Open

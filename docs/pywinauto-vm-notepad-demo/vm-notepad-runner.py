@@ -35,20 +35,38 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import getpass
 import json
+import os
+import platform
 import re
+import shutil
+import socket
+import subprocess
 import sys
 import time
 from ctypes import wintypes
-from datetime import datetime
-from pathlib import Path
-from typing import Any
+from datetime import datetime, timezone
+from pathlib import Path, PureWindowsPath
+from typing import Any, Callable
 
 
 # The demo is intentionally self-contained. All relative files, generated
 # Notepad documents, and artifacts live beside this runner.
 SCRIPT_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = SCRIPT_DIR / "artifacts"
+
+# Agent transport contract. These values preserve the existing shared-folder
+# and heartbeat schema while this Python file runs the VM agent.
+AGENT_NAME = "DockVision Guest Agent"
+AGENT_VERSION = "0.5.2"
+HEARTBEAT_INTERVAL_SECONDS = 15
+SHARED_ROOT_CANDIDATES = (
+    Path(r"\\host.lan\Data"),
+    Path(r"C:\Users\Docker\Desktop\Shared"),
+    Path(r"C:\Users\Public\Desktop\Shared"),
+)
+SHARED_ROOT_FALLBACK = Path(r"C:\DockVision\shared-fallback")
 
 # Internal app-specific target registry for the DockVision Windows VM.
 #
@@ -135,6 +153,887 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
         json.dump(value, handle, indent=2)
 
 
+def write_json_atomically(path: Path, value: dict[str, Any]) -> None:
+    """Publish JSON by replacement so readers do not observe a partial file."""
+
+    # write a complete temporary file first, then replace the public file in one step
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2)
+            handle.write("\n")
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink(missing_ok=True)
+
+
+def utc_timestamp() -> str:
+    """Return the ISO-8601 UTC representation used by agent-facing files."""
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def resolve_shared_root(
+    candidates: tuple[Path, ...] = SHARED_ROOT_CANDIDATES,
+    fallback: Path = SHARED_ROOT_FALLBACK,
+) -> Path:
+    """Find the guest/host share using the established DockVision path order."""
+
+    # use the first mounted share that exists, and create a local fallback only when none do
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def agent_paths(shared_root: Path) -> dict[str, Path]:
+    """Return the shared transport paths owned by the long-running agent."""
+
+    return {
+        "sharedRoot": shared_root,
+        "activeRoot": shared_root / "active",
+        "runsRoot": shared_root / "runs",
+        "heartbeatPath": shared_root / "agent-heartbeat.json",
+        "installLogPath": shared_root / "agent-install-log.txt",
+        "currentRunPointerPath": shared_root / "active" / "current-run.json",
+    }
+
+
+def ensure_agent_shared_layout(shared_root: Path) -> dict[str, Path]:
+    """Create only the durable shared transport directories required by the agent."""
+
+    # create the common, active-channel, and run-history folders before writing agent files
+    paths = agent_paths(shared_root)
+    for key in ("sharedRoot", "activeRoot", "runsRoot"):
+        paths[key].mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def append_agent_install_log(shared_root: Path, message: str) -> None:
+    """Append an agent diagnostic without coupling it to run-specific logging."""
+
+    paths = ensure_agent_shared_layout(shared_root)
+    with paths["installLogPath"].open("a", encoding="utf-8") as handle:
+        handle.write(f"[{utc_timestamp()}] {message}\n")
+
+
+def build_agent_heartbeat(
+    shared_root: Path,
+    status: str = "idle",
+    task_name: str = "waiting_for_task",
+    run_id: str = "",
+) -> dict[str, Any]:
+    """Build the heartbeat schema consumed by server/lib/guestReadiness.js."""
+
+    # keep the agent state and machine details together in the file read by guest readiness checks
+    return {
+        "agent": {
+            "name": AGENT_NAME,
+            "version": AGENT_VERSION,
+            "status": status,
+            "taskName": task_name,
+            "runId": run_id,
+            "intervalSeconds": HEARTBEAT_INTERVAL_SECONDS,
+        },
+        "machine": {
+            "computerName": socket.gethostname(),
+            "username": getpass.getuser(),
+            "timestampUtc": utc_timestamp(),
+            "sharedRoot": str(shared_root),
+            "platform": platform.platform(),
+        },
+        "prototype": {
+            "notes": [
+                "Guest agent is running inside the Windows VM.",
+                "Shared folder was detected successfully.",
+                "Heartbeat is being written on a recurring loop.",
+            ]
+        },
+    }
+
+
+def write_agent_heartbeat(
+    shared_root: Path,
+    status: str = "idle",
+    task_name: str = "waiting_for_task",
+    run_id: str = "",
+) -> None:
+    """Write a fresh agent heartbeat to the shared-root contract location."""
+
+    # reuse the shared layout and atomic writer so the server never reads a half-written heartbeat
+    paths = ensure_agent_shared_layout(shared_root)
+    write_json_atomically(
+        paths["heartbeatPath"],
+        build_agent_heartbeat(shared_root, status=status, task_name=task_name, run_id=run_id),
+    )
+
+
+def read_json_if_present(path: Path) -> dict[str, Any] | None:
+    """Read an optional JSON object; reject empty, scalar, and array payloads."""
+
+    # a missing or blank optional file means there is no active value to process
+    if not path.is_file():
+        return None
+
+    with path.open("r", encoding="utf-8-sig") as handle:
+        raw = handle.read().strip()
+
+    if not raw:
+        return None
+
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected a JSON object in {path}.")
+    return value
+
+
+def path_within(path: Path, parent: Path) -> bool:
+    """Return whether a normalized path is contained by the normalized parent."""
+
+    try:
+        path.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def require_path_within(path: Path, parent: Path, description: str) -> Path:
+    """Normalize a path and reject values that escape the expected directory."""
+
+    resolved_path = path.resolve(strict=False)
+    if not path_within(resolved_path, parent):
+        raise ValueError(f"{description} is outside the active run folder: {path}")
+    return resolved_path
+
+
+def get_run_context(shared_root: Path, run_id: str) -> dict[str, Path | str]:
+    """Build the default filesystem contract for one validated active run."""
+
+    # validate the host-provided ID before using it to construct any filesystem path
+    if not re.fullmatch(r"run-[A-Za-z0-9-]+", run_id):
+        raise ValueError(f"Active run pointer has an invalid runId: {run_id!r}")
+
+    paths = ensure_agent_shared_layout(shared_root)
+    run_root = require_path_within(paths["runsRoot"] / run_id, paths["runsRoot"], "Run root")
+    logs_root = run_root / "logs"
+    return {
+        "runId": run_id,
+        "runRoot": run_root,
+        "metaPath": run_root / "meta.json",
+        "taskPath": run_root / "task.json",
+        "resultPath": run_root / "result.json",
+        "logsRoot": logs_root,
+        "taskLogPath": logs_root / "task.log",
+        "screenshotsRoot": run_root / "screenshots",
+        "artifactsRoot": run_root / "artifacts",
+        "cancelRequestPath": run_root / "cancel-request.json",
+        "cancelMarkerPath": run_root / "cancel.json",
+    }
+
+
+def resolve_active_channel_path(
+    shared_root: Path,
+    run_context: dict[str, Path | str],
+    path_value: Any,
+    description: str,
+) -> Path:
+    """Resolve a pointer channel path while constraining it to its active run."""
+
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError(f"Active pointer {description} must be a non-empty string.")
+
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = shared_root / candidate
+    return require_path_within(candidate, Path(run_context["runRoot"]), description)
+
+
+def read_current_run_pointer(shared_root: Path) -> dict[str, Any] | None:
+    """Read the host-published active-run pointer without changing its state."""
+
+    pointer_path = agent_paths(shared_root)["currentRunPointerPath"]
+    try:
+        return read_json_if_present(pointer_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        append_agent_install_log(shared_root, f"Failed to parse current run pointer: {exc}")
+        return None
+
+
+def resolve_active_run_context(shared_root: Path) -> dict[str, Path | str] | None:
+    """Resolve the current pointer into validated paths for its one active run."""
+
+    pointer = read_current_run_pointer(shared_root)
+    if pointer is None:
+        return None
+
+    run_id = pointer.get("runId")
+    if not isinstance(run_id, str) or not run_id.strip():
+        append_agent_install_log(shared_root, "Active run pointer did not contain a usable runId.")
+        return None
+
+    try:
+        context = get_run_context(shared_root, run_id)
+        channel = pointer.get("channel")
+        if channel is not None:
+            if not isinstance(channel, dict):
+                raise ValueError("Active run pointer channel must be a JSON object.")
+
+            channel_paths = {
+                "taskPath": "taskPath",
+                "resultPath": "resultPath",
+                "logsDir": "logsRoot",
+                "screenshotsDir": "screenshotsRoot",
+                "artifactsDir": "artifactsRoot",
+            }
+            for channel_key, context_key in channel_paths.items():
+                if channel_key in channel and channel[channel_key] is not None:
+                    context[context_key] = resolve_active_channel_path(
+                        shared_root,
+                        context,
+                        channel[channel_key],
+                        f"Active pointer channel.{channel_key}",
+                    )
+
+            context["taskLogPath"] = Path(context["logsRoot"]) / "task.log"
+
+        return context
+    except (OSError, ValueError) as exc:
+        append_agent_install_log(shared_root, f"Failed to resolve active run context: {exc}")
+        return None
+
+
+def read_active_task(shared_root: Path) -> tuple[dict[str, Path | str], dict[str, Any]] | None:
+    """Read the task addressed by the active pointer and normalize its run ID."""
+
+    context = resolve_active_run_context(shared_root)
+    if context is None:
+        return None
+
+    try:
+        task = read_json_if_present(Path(context["taskPath"]))
+        if task is None:
+            return None
+        task.setdefault("runId", context["runId"])
+        if task["runId"] != context["runId"]:
+            raise ValueError("Active task runId does not match current-run.json.")
+        return context, task
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        append_agent_install_log(shared_root, f"Failed to parse active task file: {exc}")
+        return None
+
+
+def is_run_cancellation_requested(run_context: dict[str, Path | str], shared_root: Path) -> bool:
+    """Return true for either supported run-scoped cancellation marker."""
+
+    try:
+        request = read_json_if_present(Path(run_context["cancelRequestPath"]))
+        if request is not None and request.get("status") == "requested":
+            return True
+
+        # The established PowerShell contract uses cancel-request.json. The
+        # current /cancel2 backend endpoint also writes cancel.json, whose
+        # runId is required to match the already validated active run context.
+        marker = read_json_if_present(Path(run_context["cancelMarkerPath"]))
+        return marker is not None and marker.get("runId") == run_context["runId"]
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        append_agent_install_log(shared_root, f"Cancellation marker could not be read: {exc}")
+        return False
+
+
+class AgentTaskCancelled(RuntimeError):
+    """Signal a supported cancellation outcome to the task lifecycle boundary."""
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
+
+
+class AgentTaskTimedOut(RuntimeError):
+    """Signal a configured iteration timeout to the task lifecycle boundary."""
+
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
+
+
+class AgentTaskExecutionError(RuntimeError):
+    """Expose runner diagnostics to the lifecycle failure result formatter."""
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
+
+
+AGENT_TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
+
+
+def configured_iteration_timeout_seconds(task: dict[str, Any]) -> int:
+    """Read the backend's per-iteration deadline, separate from plan UIA timeouts."""
+
+    options = task.get("runOptions")
+    if not isinstance(options, dict):
+        options = task.get("settings")
+    value = options.get("iterationTimeoutSeconds") if isinstance(options, dict) else None
+    return max(int_value(value, 300), 1)
+
+
+def make_execution_abort_check(
+    run_context: dict[str, Path | str], task: dict[str, Any], shared_root: Path
+) -> Callable[[], None]:
+    """Build a cooperative cancellation and configured-deadline checkpoint."""
+
+    timeout_seconds = configured_iteration_timeout_seconds(task)
+    deadline = time.monotonic() + timeout_seconds
+
+    def check() -> None:
+        if is_run_cancellation_requested(run_context, shared_root):
+            raise AgentTaskCancelled("Cancellation was requested while task execution was active.")
+        if time.monotonic() >= deadline:
+            raise AgentTaskTimedOut(
+                f"Task exceeded its configured iteration timeout of {timeout_seconds} seconds."
+            )
+
+    return check
+
+
+def terminate_child_process_tree(process: subprocess.Popen[Any], grace_seconds: float = 5.0) -> bool:
+    """Terminate a future custom-runner process tree without leaking descendants."""
+
+    if process.poll() is not None:
+        return True
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=max(grace_seconds, 1.0),
+            )
+        else:
+            process.terminate()
+        process.wait(timeout=max(grace_seconds, 0.1))
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            process.kill()
+            process.wait(timeout=max(grace_seconds, 0.1))
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return process.poll() is not None
+
+
+def ensure_run_output_layout(run_context: dict[str, Path | str]) -> None:
+    """Create the active run's output directories before publishing lifecycle files."""
+
+    for context_key in ("runRoot", "logsRoot", "screenshotsRoot", "artifactsRoot"):
+        Path(run_context[context_key]).mkdir(parents=True, exist_ok=True)
+
+
+def append_run_log(run_context: dict[str, Path | str], message: str) -> None:
+    """Append a timestamped diagnostic to the active run's task log."""
+
+    ensure_run_output_layout(run_context)
+    with Path(run_context["taskLogPath"]).open("a", encoding="utf-8") as handle:
+        handle.write(f"[{utc_timestamp()}] {message}\n")
+
+
+def write_active_task(run_context: dict[str, Path | str], task: dict[str, Any]) -> None:
+    """Atomically publish task status changes to the active channel task path."""
+
+    ensure_run_output_layout(run_context)
+    write_json_atomically(Path(run_context["taskPath"]), task)
+
+
+def write_active_result(run_context: dict[str, Path | str], result: dict[str, Any]) -> None:
+    """Atomically publish a terminal result to the active channel result path."""
+
+    ensure_run_output_layout(run_context)
+    write_json_atomically(Path(run_context["resultPath"]), result)
+
+
+def mark_active_task_running(run_context: dict[str, Path | str], task: dict[str, Any]) -> None:
+    """Persist the queued-to-running transition before task execution begins."""
+
+    task["status"] = "running"
+    task["startedUtc"] = utc_timestamp()
+    write_active_task(run_context, task)
+
+
+def mark_active_task_finished(
+    run_context: dict[str, Path | str], task: dict[str, Any], status: str
+) -> None:
+    """Persist a backend-supported terminal task state and completion timestamp."""
+
+    if status not in AGENT_TERMINAL_TASK_STATUSES:
+        raise ValueError(f"Unsupported terminal task status: {status!r}")
+
+    task["status"] = status
+    task["completedUtc"] = utc_timestamp()
+    write_active_task(run_context, task)
+
+
+def build_active_result(
+    run_context: dict[str, Path | str],
+    task: dict[str, Any],
+    status: str,
+    message: str,
+    execution_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Normalize a task outcome to the result.json contract used by the backend."""
+
+    if status not in AGENT_TERMINAL_TASK_STATUSES:
+        raise ValueError(f"Unsupported terminal result status: {status!r}")
+
+    execution_result = execution_result or {}
+    artifacts = execution_result.get("artifacts")
+    details = execution_result.get("details")
+    reserved_fields = {"runId", "taskId", "status", "finishedUtc", "message", "artifacts", "details"}
+    additional_details = {
+        key: value for key, value in execution_result.items() if key not in reserved_fields
+    }
+
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    if not isinstance(details, dict):
+        details = {}
+    if additional_details:
+        details = {**details, **additional_details}
+
+    result: dict[str, Any] = {
+        "runId": run_context["runId"],
+        "taskId": str(task.get("taskId") or "unknown-task"),
+        "status": status,
+        "finishedUtc": utc_timestamp(),
+        "message": message,
+        "artifacts": artifacts,
+    }
+    if details:
+        result["details"] = details
+    return result
+
+
+def execute_agent_task(
+    run_context: dict[str, Path | str], task: dict[str, Any], shared_root: Path
+) -> dict[str, Any]:
+    """Dispatch implemented agent workloads without accepting unsupported work."""
+
+    # check cancellation before selecting a workload so cancelled runs never start UI or child processes
+    if is_run_cancellation_requested(run_context, shared_root):
+        raise AgentTaskCancelled("Cancellation was requested before task execution began.")
+
+    abort_check = make_execution_abort_check(run_context, task, shared_root)
+    abort_check()
+
+    # route each supported task type to its isolated execution path
+    task_type = str(task.get("taskType") or "unknown")
+    if task_type == "noop":
+        return {
+            "status": "completed",
+            "message": "No-op task completed.",
+            "artifacts": {},
+            "details": {"taskType": task_type},
+        }
+
+    if task_type == "task_sequence":
+        return execute_task_sequence_task(run_context, task, abort_check=abort_check)
+
+    if task_type == "script_runner":
+        return execute_script_runner_task(run_context, task, shared_root)
+
+    raise RuntimeError(f"Task type '{task_type}' execution is not configured yet.")
+
+
+def read_task_sequence_plan(run_context: dict[str, Path | str], task: dict[str, Any]) -> dict[str, Any]:
+    """Read a built-in plan from its normalized payload or active run task-plan file."""
+
+    # prefer the server-normalized payload, then support older runs that stored task-plan.json
+    payload = task.get("payload")
+    if isinstance(payload, dict):
+        return payload
+
+    plan_path = Path(run_context["runRoot"]) / "task-plan.json"
+    try:
+        plan = read_json(plan_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not read built-in task plan at '{plan_path}': {exc}") from exc
+
+    if not isinstance(plan, dict):
+        raise RuntimeError(f"Built-in task plan at '{plan_path}' must be a JSON object.")
+    return plan
+
+
+def execute_task_sequence_task(
+    run_context: dict[str, Path | str],
+    task: dict[str, Any],
+    abort_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Run one normalized built-in Notepad plan in the active run directories."""
+
+    # give the Notepad worker only paths that belong to this run so its artifacts stay isolated
+    plan = read_task_sequence_plan(run_context, task)
+    task_id = str(task.get("taskId") or "unknown-task")
+    execution = dispatch_builtin_notepad_task(
+        plan,
+        artifact_dir=Path(run_context["artifactsRoot"]),
+        artifact_relative_root=Path(run_context["runRoot"]),
+        file_dir=Path(run_context["artifactsRoot"]),
+        screenshot_dir=Path(run_context["screenshotsRoot"]),
+        screenshot_name=f"notepad-{task_id}.png",
+        capture_screenshot=bool_value(plan.get("captureScreenshot"), True),
+        abort_check=abort_check,
+    )
+    # summarize the worker's detailed steps into the result fields used by the backend and UI
+    steps = execution.get("steps")
+    if not isinstance(steps, list):
+        steps = []
+
+    typed_steps = [step for step in steps if isinstance(step, dict) and step.get("action") == "TYPE"]
+    clicked_steps = [step for step in steps if isinstance(step, dict) and step.get("action") == "CLICK"]
+    details: dict[str, Any] = {
+        "taskType": "task_sequence",
+        "automationBackend": execution.get("automationBackend", "python-pywinauto-uia"),
+        "planName": execution.get("planName"),
+        "totalStepCount": len(steps),
+        "typedStepCount": len(typed_steps),
+        "clickedStepCount": len(clicked_steps),
+        "typedCharacterCount": sum(int_value(step.get("typedCharacterCount"), 0) for step in typed_steps),
+        "steps": steps,
+        "startup": execution.get("startup"),
+        "openedFile": execution.get("openedFile"),
+    }
+    if execution.get("screenshotWarning"):
+        details["screenshotWarning"] = execution["screenshotWarning"]
+
+    return {
+        "status": "completed",
+        "message": (
+            f"Completed {len(typed_steps)} TYPE and {len(clicked_steps)} CLICK task(s) "
+            "through Python UI automation."
+        ),
+        "artifacts": execution.get("artifacts") if isinstance(execution.get("artifacts"), dict) else {},
+        "details": details,
+    }
+
+
+def execute_script_runner_task(
+    run_context: dict[str, Path | str], task: dict[str, Any], shared_root: Path
+) -> dict[str, Any]:
+    """Launch and supervise one uploaded Python or PowerShell runner process."""
+
+    # validate the uploaded paths and build the language-specific command before starting a child process
+    language, runner_path, config_path = resolve_custom_runner_inputs(run_context, task)
+    task_id = str(task.get("taskId") or "unknown-task")
+    command = custom_runner_command(language, runner_path, config_path)
+    ensure_run_output_layout(run_context)
+
+    stdout_path = Path(run_context["logsRoot"]) / f"{task_id}-stdout.txt"
+    stderr_path = Path(run_context["logsRoot"]) / f"{task_id}-stderr.txt"
+    started_utc = utc_timestamp()
+    started_monotonic = time.monotonic()
+    timeout_seconds = configured_iteration_timeout_seconds(task)
+    capture_interval_seconds = configured_capture_interval_seconds(task)
+    next_capture = started_monotonic + capture_interval_seconds
+    process: subprocess.Popen[Any] | None = None
+    screenshot_paths: list[str] = []
+    screenshot_warnings: list[str] = []
+
+    append_run_log(run_context, f"Executing uploaded {language} runner: {runner_path}")
+    append_run_log(
+        run_context,
+        f"Worker supervision settings: timeout={timeout_seconds}s, capture interval={capture_interval_seconds:g}s.",
+    )
+    try:
+        with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
+            process = subprocess.Popen(
+                command,
+                cwd=str(Path(run_context["runRoot"])),
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+            )
+            append_run_log(run_context, f"Worker process started with PID {process.pid}.")
+
+            # supervise the child until it exits, checking cancellation, timeout, and screenshot capture
+            while process.poll() is None:
+                now_monotonic = time.monotonic()
+                if is_run_cancellation_requested(run_context, shared_root):
+                    append_run_log(run_context, f"Cancellation requested. Terminating worker PID {process.pid}.")
+                    terminated = terminate_child_process_tree(process)
+                    raise AgentTaskCancelled(
+                        "Run was cancelled.",
+                        {
+                            "process": build_custom_runner_process_details(
+                                language,
+                                runner_path,
+                                config_path,
+                                run_context,
+                                process,
+                                started_utc,
+                                stdout_path,
+                                stderr_path,
+                                terminated=terminated,
+                            )
+                        },
+                    )
+                if now_monotonic - started_monotonic >= timeout_seconds:
+                    append_run_log(
+                        run_context,
+                        f"Worker PID {process.pid} exceeded iteration timeout of {timeout_seconds}s.",
+                    )
+                    terminated = terminate_child_process_tree(process)
+                    raise AgentTaskTimedOut(
+                        f"Uploaded runner exceeded iteration timeout of {timeout_seconds}s.",
+                        {
+                            "process": build_custom_runner_process_details(
+                                language,
+                                runner_path,
+                                config_path,
+                                run_context,
+                                process,
+                                started_utc,
+                                stdout_path,
+                                stderr_path,
+                                terminated=terminated,
+                            )
+                        },
+                    )
+                if now_monotonic >= next_capture:
+                    capture_name = f"{task_id}-{timestamp()}.png"
+                    try:
+                        capture_path = capture_custom_runner_screenshot(run_context, task_id, capture_name)
+                        screenshot_paths.append(capture_path)
+                        append_run_log(run_context, f"Captured periodic screenshot: {capture_path}")
+                    except Exception as exc:
+                        warning = f"Periodic screenshot capture unavailable: {exc}"
+                        screenshot_warnings.append(warning)
+                        append_run_log(run_context, warning)
+                    next_capture = now_monotonic + capture_interval_seconds
+                time.sleep(0.25)
+
+            exit_code = process.wait()
+    except Exception:
+        if process is not None and process.poll() is None:
+            terminate_child_process_tree(process)
+        raise
+
+    # the child exited normally, so record completion details and make one final best-effort screenshot
+    completed_utc = utc_timestamp()
+    try:
+        capture_path = capture_custom_runner_screenshot(
+            run_context, task_id, f"{task_id}-complete-{timestamp()}.png"
+        )
+        screenshot_paths.append(capture_path)
+        append_run_log(run_context, f"Captured completion screenshot: {capture_path}")
+    except Exception as exc:
+        warning = f"Completion screenshot capture unavailable: {exc}"
+        screenshot_warnings.append(warning)
+        append_run_log(run_context, warning)
+
+    stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
+    stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+    process_details = build_custom_runner_process_details(
+        language,
+        runner_path,
+        config_path,
+        run_context,
+        process,
+        started_utc,
+        stdout_path,
+        stderr_path,
+        exit_code=exit_code,
+        completed_utc=completed_utc,
+    )
+    # a non-zero process or invalid result contract is a terminal agent failure, not a successful run
+    if exit_code != 0:
+        raise AgentTaskExecutionError(
+            f"Uploaded runner failed with exit code {exit_code}. {stderr_text} {stdout_text}".strip(),
+            {"process": process_details},
+        )
+
+    try:
+        runner_result = parse_runner_output_json(stdout_text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise AgentTaskExecutionError(
+            f"Uploaded runner completed but did not return valid JSON. Output: {stdout_text}",
+            {"process": process_details},
+        ) from exc
+
+    runner_status = runner_result.get("status")
+    if runner_status is not None and str(runner_status).casefold() != "completed":
+        raise AgentTaskExecutionError(
+            f"Uploaded runner reported status '{runner_status}'.", {"process": process_details}
+        )
+
+    artifacts = runner_result.get("artifacts")
+    if artifacts is None:
+        artifacts = {}
+    if not isinstance(artifacts, dict):
+        raise AgentTaskExecutionError(
+            "Uploaded runner result artifacts must be an object.", {"process": process_details}
+        )
+    runner_details = runner_result.get("details")
+    if runner_details is None:
+        runner_details = {}
+    if not isinstance(runner_details, dict):
+        raise AgentTaskExecutionError(
+            "Uploaded runner result details must be an object.", {"process": process_details}
+        )
+    result_artifacts = dict(artifacts)
+    if screenshot_paths:
+        result_artifacts["screenshots"] = screenshot_paths
+        result_artifacts["screenshot"] = screenshot_paths[-1]
+    result_details = {**runner_details, "taskType": "script_runner", "process": process_details}
+    if screenshot_warnings:
+        result_details["screenshotWarnings"] = screenshot_warnings
+    append_run_log(run_context, f"Worker process PID {process.pid} completed with exit code {exit_code}.")
+    return {
+        "status": "completed",
+        "message": str(runner_result.get("message") or "Uploaded runner completed."),
+        "artifacts": result_artifacts,
+        "details": result_details,
+    }
+
+
+def build_custom_runner_process_details(
+    language: str,
+    runner_path: Path,
+    config_path: Path,
+    run_context: dict[str, Path | str],
+    process: subprocess.Popen[Any],
+    started_utc: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    *,
+    exit_code: int | None = None,
+    completed_utc: str | None = None,
+    terminated: bool | None = None,
+) -> dict[str, Any]:
+    """Build result-safe runner diagnostics from run-confined log files."""
+
+    # report only paths relative to the active run so host file locations are not exposed in results
+    run_root = Path(run_context["runRoot"])
+    details: dict[str, Any] = {
+        "language": language,
+        "runnerPath": str(runner_path.relative_to(run_root)).replace("\\", "/"),
+        "configPath": str(config_path.relative_to(run_root)).replace("\\", "/"),
+        "processId": process.pid,
+        "startedUtc": started_utc,
+        "stdoutPath": str(stdout_path.relative_to(run_root)).replace("\\", "/"),
+        "stderrPath": str(stderr_path.relative_to(run_root)).replace("\\", "/"),
+    }
+    if exit_code is not None:
+        details["exitCode"] = exit_code
+    if completed_utc is not None:
+        details["completedUtc"] = completed_utc
+    if terminated is not None:
+        details["processTreeTerminated"] = terminated
+    if stderr_path.is_file():
+        stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+        if stderr_text:
+            details["stderr"] = stderr_text
+    return details
+
+
+def process_queued_active_task(
+    shared_root: Path,
+    executor: Callable[[dict[str, Path | str], dict[str, Any], Path], dict[str, Any]] = execute_agent_task,
+) -> bool:
+    """Process one queued active task and always publish a terminal outcome.
+
+    Returns true only when this call claimed a queued task. The caller may use the
+    return value for polling diagnostics; terminal and non-queued tasks are never
+    executed again.
+    """
+
+    # read and claim only one queued task; missing, malformed, and terminal tasks are left alone
+    active_task = read_active_task(shared_root)
+    if active_task is None:
+        return False
+
+    run_context, task = active_task
+    if task.get("status") != "queued":
+        return False
+
+    task_id = str(task.get("taskId") or "unknown-task")
+    task_type = str(task.get("taskType") or "unknown")
+    append_agent_install_log(
+        shared_root, f"Handling task '{task_id}' of type '{task_type}' for run '{run_context['runId']}'."
+    )
+    # publish running state before execution so the server can observe that the agent owns this task
+    mark_active_task_running(run_context, task)
+    write_agent_heartbeat(shared_root, status="running", task_name=task_type, run_id=str(run_context["runId"]))
+    append_run_log(run_context, f"Task '{task_id}' started ({task_type}).")
+
+    final_status = "failed"
+    result: dict[str, Any]
+    # convert every execution outcome into a supported terminal result without stopping the agent loop
+    try:
+        if is_run_cancellation_requested(run_context, shared_root):
+            raise AgentTaskCancelled("Cancellation was requested before task execution began.")
+
+        execution_result = executor(run_context, task, shared_root)
+        requested_status = str(execution_result.get("status") or "completed").lower()
+        if requested_status not in AGENT_TERMINAL_TASK_STATUSES:
+            raise RuntimeError(f"Task executor returned unsupported terminal status '{requested_status}'.")
+
+        final_status = requested_status
+        message = str(execution_result.get("message") or "Task completed.")
+        result = build_active_result(run_context, task, final_status, message, execution_result)
+    except AgentTaskCancelled as exc:
+        final_status = "cancelled"
+        result = build_active_result(run_context, task, final_status, str(exc), {"details": exc.details})
+        append_agent_install_log(shared_root, f"Task '{task_id}' cancelled: {exc}")
+    except AgentTaskTimedOut as exc:
+        final_status = "failed"
+        result = build_active_result(
+            run_context,
+            task,
+            final_status,
+            str(exc),
+            {"details": {"errorType": type(exc).__name__, "timedOut": True, **exc.details}},
+        )
+        append_agent_install_log(shared_root, f"Task '{task_id}' timed out: {exc}")
+    except Exception as exc:
+        final_status = "failed"
+        failure_details = {"errorType": type(exc).__name__}
+        if isinstance(exc, AgentTaskExecutionError):
+            failure_details.update(exc.details)
+        result = build_active_result(
+            run_context,
+            task,
+            final_status,
+            str(exc),
+            {"details": failure_details},
+        )
+        append_agent_install_log(shared_root, f"Task '{task_id}' failed: {exc}")
+    finally:
+        # always publish the result, terminal task state, and idle heartbeat even after an exception
+        try:
+            write_active_result(run_context, result)
+            mark_active_task_finished(run_context, task, final_status)
+            append_run_log(run_context, f"Task '{task_id}' finished with status '{final_status}'.")
+        finally:
+            write_agent_heartbeat(shared_root, status="idle", task_name="waiting_for_task")
+
+    return True
+
+
+def resolve_run_relative_path(run_context: dict[str, Path | str], path_value: str) -> Path:
+    """Resolve an uploaded runner/config path and confine it to the active run."""
+
+    if not path_value or not path_value.strip():
+        raise ValueError("Run-relative path must be a non-empty string.")
+
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = Path(run_context["runRoot"]) / candidate
+    return require_path_within(candidate, Path(run_context["runRoot"]), "Resolved path")
+
+
 # Convert loose JSON input into a real bool. This keeps the runner forgiving if
 # future UI code sends "true" as a string instead of true as a JSON boolean.
 def bool_value(value: Any, default: bool = False) -> bool:
@@ -163,6 +1062,116 @@ def float_value(value: Any, default: float) -> float:
         return default
 
 
+def configured_capture_interval_seconds(task: dict[str, Any]) -> float:
+    """Read the server's periodic screenshot interval with a safe default."""
+
+    options = task.get("runOptions")
+    value = options.get("captureIntervalSeconds") if isinstance(options, dict) else None
+    return max(float_value(value, 5.0), 0.1)
+
+
+def capture_custom_runner_screenshot(
+    run_context: dict[str, Path | str], task_id: str, file_name: str
+) -> str:
+    """Capture a best-effort screen artifact for an externally supervised runner."""
+
+    from PIL import ImageGrab
+
+    ensure_run_output_layout(run_context)
+    screenshot_path = require_path_within(
+        Path(run_context["screenshotsRoot"]) / file_name,
+        Path(run_context["runRoot"]),
+        "Custom runner screenshot",
+    )
+    ImageGrab.grab().save(screenshot_path, "PNG")
+    return str(screenshot_path.relative_to(Path(run_context["runRoot"]))).replace("\\", "/")
+
+
+def parse_runner_output_json(output_text: str) -> dict[str, Any]:
+    """Mirror ConvertFrom-RunnerOutputJson's brace-delimited JSON behavior."""
+
+    # ignore ordinary runner logging around the first complete JSON object returned on stdout
+    if not output_text or not output_text.strip():
+        raise ValueError("Runner produced no output.")
+
+    start_index = output_text.find("{")
+    end_index = output_text.rfind("}")
+    if start_index < 0 or end_index < start_index:
+        raise ValueError(f"Runner output did not contain a JSON object. Output: {output_text}")
+
+    result = json.loads(output_text[start_index : end_index + 1])
+    if not isinstance(result, dict):
+        raise ValueError("Runner output JSON must be an object.")
+    return result
+
+
+def resolve_custom_runner_inputs(
+    run_context: dict[str, Path | str], task: dict[str, Any]
+) -> tuple[str, Path, Path]:
+    """Validate the task payload and its run-confined uploaded input files."""
+
+    # read the server-provided file references before resolving them inside this run's folder
+    payload = task.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("script_runner task requires an object payload.")
+
+    runner_value = payload.get("runnerPath")
+    config_value = payload.get("configPath")
+    language_value = payload.get("runnerScriptLanguage")
+    if not isinstance(runner_value, str) or not runner_value.strip():
+        raise ValueError("script_runner task requires payload.runnerPath.")
+    if not isinstance(config_value, str) or not config_value.strip():
+        raise ValueError("script_runner task requires payload.configPath.")
+    if not isinstance(language_value, str) or not language_value.strip():
+        raise ValueError("script_runner task requires payload.runnerScriptLanguage.")
+
+    # resolve both paths through the run boundary, then require the expected script language and extension
+    runner_path = resolve_run_relative_path(run_context, runner_value)
+    config_path = resolve_run_relative_path(run_context, config_value)
+    if not runner_path.is_file():
+        raise FileNotFoundError(f"Uploaded runner was not found at {runner_path}")
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Uploaded task plan was not found at {config_path}")
+
+    language = language_value.strip().casefold()
+    expected_extension = {"python": ".py", "powershell": ".ps1"}.get(language)
+    if expected_extension is None:
+        raise ValueError(f"Unsupported uploaded runner language '{language_value}'.")
+    if runner_path.suffix.casefold() != expected_extension:
+        raise ValueError(
+            f"Uploaded {language} runner must use the '{expected_extension}' extension: {runner_path.name}"
+        )
+    return language, runner_path, config_path
+
+
+def custom_runner_command(language: str, runner_path: Path, config_path: Path) -> list[str]:
+    """Return the established command-line contract for an uploaded runner."""
+
+    # keep Python and PowerShell invocation flags compatible with the existing uploaded-runner contract
+    if language == "python":
+        python_executable = Path(sys.executable) if sys.executable else None
+        if python_executable is None or not python_executable.is_file():
+            raise RuntimeError("Python is not available inside the Windows guest.")
+        return [str(python_executable), str(runner_path), "--plan", str(config_path)]
+
+    if language == "powershell":
+        powershell_executable = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell_executable:
+            raise RuntimeError("PowerShell is not available inside the Windows guest.")
+        return [
+            powershell_executable,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(runner_path),
+            "-ConfigPath",
+            str(config_path),
+        ]
+
+    raise ValueError(f"Unsupported uploaded runner language '{language}'.")
+
+
 # Timestamp helper used to create fresh demo filenames.
 def timestamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
@@ -184,6 +1193,19 @@ def resolve_demo_path(path_value: str | None) -> Path | None:
     if path.is_absolute():
         return path
     return SCRIPT_DIR / path
+
+
+def resolve_notepad_file_path(file_name: Any, file_dir: Path | None = None) -> Path | None:
+    """Resolve a standalone demo file or constrain an agent file to its run."""
+
+    if not file_name:
+        return None
+    if file_dir is not None:
+        # Task plans can originate on Windows hosts and therefore may contain
+        # either slash convention. PureWindowsPath consistently strips both
+        # parent components before the filename is placed in this run's output.
+        return file_dir / PureWindowsPath(str(file_name)).name
+    return resolve_demo_path(str(file_name))
 
 
 # Convert pywinauto's rectangle object into plain JSON-friendly numbers.
@@ -285,7 +1307,9 @@ def list_visible_top_level_windows() -> list[dict[str, Any]]:
     return windows
 
 
-def write_top_level_windows_snapshot(output_path: Path, title: str) -> dict[str, Any]:
+def write_top_level_windows_snapshot(
+    output_path: Path, title: str, relative_root: Path | None = None
+) -> dict[str, Any]:
     """Write visible top-level Win32 windows when UIA cannot see a dialog."""
 
     windows = list_visible_top_level_windows()
@@ -309,12 +1333,20 @@ def write_top_level_windows_snapshot(output_path: Path, title: str) -> dict[str,
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
-        "path": str(output_path.relative_to(SCRIPT_DIR)),
+        "path": artifact_path(output_path, relative_root),
         "windowCount": len(windows),
     }
 
 
-def wait_for_win32_font_dialog(timeout_seconds: int) -> dict[str, Any] | None:
+def artifact_path(output_path: Path, relative_root: Path | None = None) -> str:
+    """Return an artifact reference relative to its current execution boundary."""
+
+    return str(output_path.relative_to(relative_root or SCRIPT_DIR)).replace("\\", "/")
+
+
+def wait_for_win32_font_dialog(
+    timeout_seconds: int, abort_check: Callable[[], None] | None = None
+) -> dict[str, Any] | None:
     """
     Find the classic Font dialog through Win32 instead of UIA.
 
@@ -323,22 +1355,26 @@ def wait_for_win32_font_dialog(timeout_seconds: int) -> dict[str, Any] | None:
     path is better for classic Windows dialogs.
     """
 
-    deadline = time.time() + max(timeout_seconds, 1)
-    while time.time() < deadline:
+    deadline = time.monotonic() + max(timeout_seconds, 1)
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
         for window in list_visible_top_level_windows():
             if window["title"].casefold() == "font" and window["className"] == "#32770":
                 return window
-        time.sleep(0.2)
+        interruptible_sleep(0.2, abort_check)
 
     return None
 
 
-def focus_win32_window(hwnd: int) -> None:
+def focus_win32_window(hwnd: int, abort_check: Callable[[], None] | None = None) -> None:
     """Bring a native window to the foreground before sending keyboard input."""
 
+    if abort_check is not None:
+        abort_check()
     ctypes.windll.user32.ShowWindow(hwnd, 9)
     ctypes.windll.user32.SetForegroundWindow(hwnd)
-    time.sleep(0.2)
+    interruptible_sleep(0.2, abort_check)
 
 
 def is_win32_window_visible(hwnd: int) -> bool:
@@ -381,7 +1417,9 @@ def safe_control_line(index: int, control: Any) -> str:
 
 # Write every visible descendant control under the active Notepad window.
 # This file is the discovery tool for creating future namedTargets entries.
-def write_control_tree(window: Any, output_path: Path, limit: int = 300) -> dict[str, Any]:
+def write_control_tree(
+    window: Any, output_path: Path, limit: int = 300, relative_root: Path | None = None
+) -> dict[str, Any]:
     controls = window.descendants()
     lines = [
         "DockVision pywinauto/UI Automation control tree",
@@ -400,12 +1438,18 @@ def write_control_tree(window: Any, output_path: Path, limit: int = 300) -> dict
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
-        "path": str(output_path.relative_to(SCRIPT_DIR)),
+        "path": artifact_path(output_path, relative_root),
         "controlCount": len(controls),
     }
 
 
-def write_control_snapshot(root_control: Any, output_path: Path, title: str, limit: int = 300) -> dict[str, Any]:
+def write_control_snapshot(
+    root_control: Any,
+    output_path: Path,
+    title: str,
+    limit: int = 300,
+    relative_root: Path | None = None,
+) -> dict[str, Any]:
     """
     Write a focused UIA snapshot for temporary windows such as the Font dialog.
 
@@ -437,7 +1481,7 @@ def write_control_snapshot(root_control: Any, output_path: Path, title: str, lim
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
-        "path": str(output_path.relative_to(SCRIPT_DIR)),
+        "path": artifact_path(output_path, relative_root),
         "controlCount": len(controls),
     }
 
@@ -492,7 +1536,11 @@ def control_matches_candidate(control: Any, candidate: dict[str, Any]) -> bool:
     return True
 
 
-def find_global_control_by_candidate(candidate: dict[str, Any], timeout_seconds: int) -> Any | None:
+def find_global_control_by_candidate(
+    candidate: dict[str, Any],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> Any | None:
     """
     Search all top-level UIA windows for a transient control.
 
@@ -504,12 +1552,16 @@ def find_global_control_by_candidate(candidate: dict[str, Any], timeout_seconds:
     from pywinauto.keyboard import send_keys
 
     found_index = int_value(candidate.get("foundIndex"), 0)
-    deadline = time.time() + max(timeout_seconds, 1)
+    deadline = time.monotonic() + max(timeout_seconds, 1)
 
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
         try:
             matches: list[Any] = []
             for top_window in Desktop(backend="uia").windows():
+                if abort_check is not None:
+                    abort_check()
                 controls = [top_window]
                 try:
                     controls.extend(top_window.descendants())
@@ -530,31 +1582,40 @@ def find_global_control_by_candidate(candidate: dict[str, Any], timeout_seconds:
         except Exception:
             pass
 
-        time.sleep(0.25)
+        interruptible_sleep(0.25, abort_check)
 
     return None
 
 
-def find_control_by_candidates(window: Any, candidates: list[dict[str, Any]], timeout_seconds: int) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
+def find_control_by_candidates(
+    window: Any,
+    candidates: list[dict[str, Any]],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
     """Try several UIA candidate shapes and report exactly what was attempted."""
 
     attempted: list[dict[str, Any]] = []
     for candidate in candidates:
         attempted.append(candidate)
-        control = find_control_by_candidate(window, candidate, timeout_seconds)
+        control = find_control_by_candidate(window, candidate, timeout_seconds, abort_check)
         if control is not None:
             return control, candidate, attempted
 
     return None, None, attempted
 
 
-def find_global_control_by_candidates(candidates: list[dict[str, Any]], timeout_seconds: int) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
+def find_global_control_by_candidates(
+    candidates: list[dict[str, Any]],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[Any | None, dict[str, Any] | None, list[dict[str, Any]]]:
     """Try several desktop-wide UIA candidates for pop-up menus and dialogs."""
 
     attempted: list[dict[str, Any]] = []
     for candidate in candidates:
         attempted.append(candidate)
-        control = find_global_control_by_candidate(candidate, timeout_seconds)
+        control = find_global_control_by_candidate(candidate, timeout_seconds, abort_check)
         if control is not None:
             return control, candidate, attempted
 
@@ -579,11 +1640,18 @@ def click_control_center(control: Any, button: str = "left") -> dict[str, Any]:
 # Search the active window for the first control matching a candidate. A named
 # target can define several candidates, and each candidate can choose foundIndex
 # if multiple controls match the same pattern.
-def find_control_by_candidate(window: Any, candidate: dict[str, Any], timeout_seconds: int) -> Any | None:
+def find_control_by_candidate(
+    window: Any,
+    candidate: dict[str, Any],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> Any | None:
     found_index = int_value(candidate.get("foundIndex"), 0)
-    deadline = time.time() + max(timeout_seconds, 1)
+    deadline = time.monotonic() + max(timeout_seconds, 1)
 
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
         try:
             matches = [
                 control
@@ -598,14 +1666,20 @@ def find_control_by_candidate(window: Any, candidate: dict[str, Any], timeout_se
         except Exception:
             pass
 
-        time.sleep(0.25)
+        interruptible_sleep(0.25, abort_check)
 
     return None
 
 
 # Resolve a user-facing target name such as "notepad.fileMenu" to a real
 # pywinauto control. This is the heart of the named-control architecture.
-def resolve_named_control(window: Any, named_targets: dict[str, Any], target_name: str, timeout_seconds: int) -> tuple[Any, dict[str, Any]]:
+def resolve_named_control(
+    window: Any,
+    named_targets: dict[str, Any],
+    target_name: str,
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> tuple[Any, dict[str, Any]]:
     target_definition = named_targets.get(target_name)
     if not target_definition:
         raise ValueError(f"Unknown named target: {target_name}")
@@ -617,7 +1691,7 @@ def resolve_named_control(window: Any, named_targets: dict[str, Any], target_nam
     attempted: list[dict[str, Any]] = []
     for candidate in candidates:
         attempted.append(candidate)
-        control = find_control_by_candidate(window, candidate, timeout_seconds)
+        control = find_control_by_candidate(window, candidate, timeout_seconds, abort_check)
         if control is not None:
             return control, {
                 "name": target_name,
@@ -644,7 +1718,13 @@ def calculate_point_in_rect(rect: dict[str, int], x_percent: float, y_percent: f
 # Resolve a CLICK target from task-plan.json into a final screen coordinate.
 # namedControl is the goal architecture, while windowPoint and screenPoint are
 # kept as lower-level fallbacks for debugging or edge cases.
-def resolve_click_target(active_window: Any, named_targets: dict[str, Any], target: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
+def resolve_click_target(
+    active_window: Any,
+    named_targets: dict[str, Any],
+    target: dict[str, Any],
+    timeout_seconds: int,
+    abort_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
     target_type = str(target.get("type") or "namedControl")
 
     if target_type == "namedControl":
@@ -652,7 +1732,9 @@ def resolve_click_target(active_window: Any, named_targets: dict[str, Any], targ
         if not target_name:
             raise ValueError("CLICK target.type 'namedControl' requires target.name.")
 
-        control, target_info = resolve_named_control(active_window, named_targets, target_name, timeout_seconds)
+        control, target_info = resolve_named_control(
+            active_window, named_targets, target_name, timeout_seconds, abort_check
+        )
         control_rect = rectangle_to_dict(control.rectangle())
         default_point = target_info.get("defaultPoint") or {}
 
@@ -725,12 +1807,30 @@ def click_target_from_step(step: dict[str, Any]) -> dict[str, Any]:
 # Send text through pywinauto in small pieces. Special characters need escaping
 # because pywinauto's send_keys uses a syntax where braces and modifier symbols
 # have special meanings.
-def send_text_human_like(text: str, delay_ms: int) -> None:
+def interruptible_sleep(seconds: float, abort_check: Callable[[], None] | None = None) -> None:
+    """Sleep in short slices so cancellation and timeout are observed promptly."""
+
+    remaining = max(seconds, 0.0)
+    while remaining > 0:
+        if abort_check is not None:
+            abort_check()
+        interval = min(remaining, 0.1)
+        time.sleep(interval)
+        remaining -= interval
+    if abort_check is not None:
+        abort_check()
+
+
+def send_text_human_like(
+    text: str, delay_ms: int, abort_check: Callable[[], None] | None = None
+) -> None:
     from pywinauto.keyboard import send_keys
 
     delay_seconds = max(delay_ms, 0) / 1000.0
 
     for character in text:
+        if abort_check is not None:
+            abort_check()
         if character == "\r":
             continue
         if character == "\n":
@@ -749,7 +1849,7 @@ def send_text_human_like(text: str, delay_ms: int) -> None:
         send_keys(keys, with_spaces=True)
 
         if delay_seconds:
-            time.sleep(delay_seconds)
+            interruptible_sleep(delay_seconds, abort_check)
 
 
 def set_classic_notepad_font_style(
@@ -757,6 +1857,9 @@ def set_classic_notepad_font_style(
     named_targets: dict[str, Any],
     style: str,
     timeout_seconds: int,
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
+    abort_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """
     Drive classic Notepad's Format -> Font... dialog and choose a font style.
@@ -776,15 +1879,18 @@ def set_classic_notepad_font_style(
 
     dialog_lookup_timeout = max(1, min(timeout_seconds, 2))
 
+    if abort_check is not None:
+        abort_check()
     active_window.set_focus()
     format_control, format_target_info = resolve_named_control(
         active_window,
         named_targets,
         "formatMenu",
         timeout_seconds,
+        abort_check,
     )
     format_click = click_control_center(format_control)
-    time.sleep(0.25)
+    interruptible_sleep(0.25, abort_check)
 
     font_menu_item, font_menu_candidate, font_menu_attempted = find_global_control_by_candidates(
         [
@@ -792,8 +1898,11 @@ def set_classic_notepad_font_style(
             {"titleRegex": r"^Font"},
         ],
         dialog_lookup_timeout,
+        abort_check,
     )
     if font_menu_item is None:
+        if abort_check is not None:
+            abort_check()
         send_keys("f")
         font_menu_click = {
             "fallback": "formatMenuAccessKey",
@@ -801,15 +1910,18 @@ def set_classic_notepad_font_style(
             "attempted": font_menu_attempted,
         }
     else:
+        if abort_check is not None:
+            abort_check()
         font_menu_click = click_control_center(font_menu_item)
         font_menu_click["matchedCandidate"] = font_menu_candidate
 
-    time.sleep(0.5)
+    interruptible_sleep(0.5, abort_check)
 
-    dialog_window = wait_for_win32_font_dialog(dialog_lookup_timeout + 3)
+    dialog_window = wait_for_win32_font_dialog(dialog_lookup_timeout + 3, abort_check)
     top_level_snapshot = write_top_level_windows_snapshot(
-        ARTIFACT_DIR / f"top-level-windows-before-font-{normalized_style.casefold().replace(' ', '-')}.txt",
+        artifact_dir / f"top-level-windows-before-font-{normalized_style.casefold().replace(' ', '-')}.txt",
         f"DockVision top-level windows before selecting {normalized_style}",
+        artifact_relative_root,
     )
 
     if dialog_window is None:
@@ -825,7 +1937,7 @@ def set_classic_notepad_font_style(
             "reason": "Font dialog handle was not found.",
         }
     else:
-        focus_win32_window(int(dialog_window["hwnd"]))
+        focus_win32_window(int(dialog_window["hwnd"]), abort_check)
         dialog_focus = {
             "hwnd": dialog_window["hwnd"],
             "title": dialog_window["title"],
@@ -834,11 +1946,14 @@ def set_classic_notepad_font_style(
         }
 
         try:
+            if abort_check is not None:
+                abort_check()
             font_dialog = Desktop(backend="uia").window(handle=int(dialog_window["hwnd"])).wrapper_object()
             dialog_snapshot = write_control_snapshot(
                 font_dialog,
-                ARTIFACT_DIR / f"font-dialog-{normalized_style.casefold().replace(' ', '-')}.txt",
+                artifact_dir / f"font-dialog-{normalized_style.casefold().replace(' ', '-')}.txt",
                 f"DockVision Font dialog snapshot before selecting {normalized_style}",
+                relative_root=artifact_relative_root,
             )
         except Exception as exc:
             dialog_snapshot = {
@@ -851,14 +1966,16 @@ def set_classic_notepad_font_style(
     # Alt+O activates OK. This is closer to a user-operated dialog than poking
     # individual child controls, and it avoids the UIA timeout seen in the VM.
     keys_sent = ["%y", "^a", normalized_style, "%o"]
+    if abort_check is not None:
+        abort_check()
     send_keys("%y")
-    time.sleep(0.1)
+    interruptible_sleep(0.1, abort_check)
     send_keys("^a")
-    time.sleep(0.05)
+    interruptible_sleep(0.05, abort_check)
     send_keys(normalized_style, with_spaces=True)
-    time.sleep(0.1)
+    interruptible_sleep(0.1, abort_check)
     send_keys("%o")
-    time.sleep(0.4)
+    interruptible_sleep(0.4, abort_check)
 
     ok_confirm = {
         "method": "keyboardAccessKeys",
@@ -866,14 +1983,18 @@ def set_classic_notepad_font_style(
     }
 
     if dialog_window is not None and is_win32_window_visible(int(dialog_window["hwnd"])):
+        if abort_check is not None:
+            abort_check()
         send_keys("{ENTER}")
         ok_confirm["fallback"] = "enterAfterAltO"
         ok_confirm["fallbackKey"] = "{ENTER}"
-        time.sleep(0.4)
+        interruptible_sleep(0.4, abort_check)
 
     if dialog_window is not None and is_win32_window_visible(int(dialog_window["hwnd"])):
         raise RuntimeError(f"Font dialog did not close after selecting {normalized_style}.")
 
+    if abort_check is not None:
+        abort_check()
     active_window.set_focus()
     return {
         "fontStyle": normalized_style,
@@ -897,11 +2018,18 @@ def set_classic_notepad_font_style(
 # Execute OPEN_APP. For this demo, that means preparing a fresh Notepad file,
 # launching Notepad, finding the correct window by title, and making the window
 # predictable before later CLICK steps run.
-def open_app(step: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
+def open_app(
+    step: dict[str, Any],
+    timeout_seconds: int,
+    file_dir: Path | None = None,
+    abort_check: Callable[[], None] | None = None,
+    opened_window_callback: Callable[[Any], None] | None = None,
+) -> dict[str, Any]:
     from pywinauto import Application, Desktop
 
     executable = str(step.get("executable") or "notepad.exe")
-    target_file = resolve_demo_path(step.get("fileName"))
+    file_name = step.get("fileName")
+    target_file = resolve_notepad_file_path(file_name, file_dir=file_dir)
 
     if target_file is not None:
         if bool_value(step.get("uniqueFilePerRun")):
@@ -920,19 +2048,45 @@ def open_app(step: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
         command_line = executable
         title_regex = r".*Notepad.*"
 
+    if abort_check is not None:
+        abort_check()
     Application(backend="uia").start(command_line)
 
     window_spec = Desktop(backend="uia").window(title_re=title_regex)
-    window_spec.wait("exists visible ready", timeout=timeout_seconds)
-    window = window_spec.wrapper_object()
+    deadline = time.monotonic() + max(timeout_seconds, 1)
+    window = None
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        if abort_check is not None:
+            abort_check()
+        try:
+            if window_spec.exists(timeout=0.1):
+                window = window_spec.wrapper_object()
+                if window.is_visible() and window.is_enabled():
+                    break
+                window = None
+        except Exception as exc:
+            last_error = exc
+            window = None
+        interruptible_sleep(0.1, abort_check)
+
+    if window is None:
+        detail = f": {type(last_error).__name__}: {last_error}" if last_error is not None else ""
+        raise RuntimeError(f"Notepad window did not become visible and ready within {timeout_seconds} seconds{detail}")
+    if opened_window_callback is not None:
+        opened_window_callback(window)
 
     bounds = step.get("windowBounds") or {}
     if bounds:
+        if abort_check is not None:
+            abort_check()
         move_window_with_win32(window, bounds)
-        time.sleep(0.5)
+        interruptible_sleep(0.5, abort_check)
 
+    if abort_check is not None:
+        abort_check()
     window.set_focus()
-    time.sleep(0.3)
+    interruptible_sleep(0.3, abort_check)
 
     return {
         "window": window,
@@ -969,10 +2123,20 @@ def named_targets_for_app(app_config: dict[str, Any]) -> dict[str, dict[str, Any
     raise RuntimeError(f"No named target registry exists for app '{app_name}'.")
 
 
-# Main interpreter loop. Each JSON step becomes one concrete runner action.
-# This mirrors the architecture we eventually want in the DockVision inner
-# agent: read a plan, execute each task, and collect structured results.
-def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
+# Built-in Notepad worker. Each JSON step becomes one concrete runner action.
+# The long-lived agent owns shared-root polling and lifecycle publication; this
+# worker cooperates with its cancellation and iteration-timeout checkpoints.
+def _execute_notepad_plan(
+    plan: dict[str, Any],
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
+    file_dir: Path | None = None,
+    screenshot_dir: Path | None = None,
+    screenshot_name: str | None = None,
+    capture_screenshot: bool | None = None,
+    abort_check: Callable[[], None] | None = None,
+    opened_window_callback: Callable[[Any], None] | None = None,
+) -> dict[str, Any]:
     from pywinauto import mouse
     from pywinauto.keyboard import send_keys
 
@@ -982,13 +2146,30 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
     typing_delay_ms = int_value(settings.get("typingDelayMs"), 25)
     app_config = app_config_from_plan(plan)
     named_targets = named_targets_for_app(app_config)
+    active_window: Any | None = None
 
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    def check_abort() -> None:
+        if abort_check is None:
+            return
+        try:
+            abort_check()
+        except (AgentTaskCancelled, AgentTaskTimedOut):
+            raise
+
+    artifact_dir.mkdir(parents=True, exist_ok=True)
 
     # Startup is runner-owned now. The user-authored JSON task list should not
     # have to include OPEN_APP or INSPECT just to make CLICK/TYPE possible.
-    opened = open_app(app_config, timeout_seconds)
+    check_abort()
+    opened = open_app(
+        app_config,
+        timeout_seconds,
+        file_dir=file_dir,
+        abort_check=check_abort,
+        opened_window_callback=opened_window_callback,
+    )
     active_window = opened["window"]
+    check_abort()
     opened_file = opened["file"]
     steps_result: list[dict[str, Any]] = []
     artifacts: dict[str, str] = {}
@@ -1001,12 +2182,15 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
 
     # Always inspect after startup. This keeps debugging information available
     # without making INSPECT a user-facing task in task-plan.json.
-    control_tree_path = ARTIFACT_DIR / "control-tree.txt"
-    inspect_result = write_control_tree(active_window, control_tree_path)
+    control_tree_path = artifact_dir / "control-tree.txt"
+    inspect_result = write_control_tree(
+        active_window, control_tree_path, relative_root=artifact_relative_root
+    )
     artifacts["controlTree"] = inspect_result["path"]
     startup_result["inspect"] = inspect_result
 
     for step in plan.get("tasks") or plan.get("steps") or []:
+        check_abort()
         # Normalize the step identity early so every result object has a stable
         # id/action pair regardless of whether a later operation fails.
         step_id = str(step.get("id") or "step")
@@ -1026,15 +2210,17 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
                 named_targets=named_targets,
                 target=click_target_from_step(step),
                 timeout_seconds=timeout_seconds,
+                abort_check=check_abort,
             )
             button = str(step.get("button") or "left").lower()
             click_count = max(int_value(step.get("clickCount"), 1), 1)
             coords = (resolved["point"]["x"], resolved["point"]["y"])
 
             for index in range(click_count):
+                check_abort()
                 mouse.click(button=button, coords=coords)
                 if index < click_count - 1:
-                    time.sleep(0.1)
+                    interruptible_sleep(0.1, check_abort)
 
             step_result["button"] = button
             step_result["clickCount"] = click_count
@@ -1046,7 +2232,7 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
             # separate so Task-i-fy can generate them independently.
             active_window.set_focus()
             text = str(step.get("text") or "")
-            send_text_human_like(text, typing_delay_ms)
+            send_text_human_like(text, typing_delay_ms, abort_check=check_abort)
             step_result["typedCharacterCount"] = len(text)
 
         elif action == "SET_FONT_STYLE":
@@ -1062,6 +2248,9 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
                 named_targets=named_targets,
                 style=style,
                 timeout_seconds=timeout_seconds,
+                artifact_dir=artifact_dir,
+                artifact_relative_root=artifact_relative_root,
+                abort_check=check_abort,
             )
 
         elif action == "KEY":
@@ -1078,7 +2267,7 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
             # WAIT exists mostly for humans watching the demo. It gives menus
             # and context menus time to be visibly open before the next step.
             delay_ms = int_value(step.get("delayMs"), step_delay_ms)
-            time.sleep(max(delay_ms, 0) / 1000.0)
+            interruptible_sleep(max(delay_ms, 0) / 1000.0, check_abort)
             step_result["delayMs"] = delay_ms
 
         else:
@@ -1087,9 +2276,9 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
         steps_result.append(step_result)
 
         if step_delay_ms > 0:
-            time.sleep(step_delay_ms / 1000.0)
+            interruptible_sleep(step_delay_ms / 1000.0, check_abort)
 
-    return {
+    result: dict[str, Any] = {
         "status": "completed",
         "planName": plan.get("name"),
         "finishedAt": datetime.now().isoformat(),
@@ -1100,25 +2289,209 @@ def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
         "steps": steps_result,
     }
 
+    should_capture_screenshot = bool_value(
+        plan.get("captureScreenshot"), True
+    ) if capture_screenshot is None else capture_screenshot
+    if should_capture_screenshot and screenshot_dir is not None:
+        check_abort()
+        screenshot_path = screenshot_dir / (screenshot_name or "notepad.png")
+        try:
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            active_window.capture_as_image().save(screenshot_path)
+            artifacts["screenshot"] = artifact_path(screenshot_path, artifact_relative_root)
+        except Exception as exc:
+            result["screenshotWarning"] = f"{type(exc).__name__}: {exc}"
 
-# CLI boundary. The runner defaults to the task plan beside itself, but accepts
-# --plan so teammates can try alternate contracts without editing this file.
+    return result
+
+
+def execute_notepad_plan(
+    plan: dict[str, Any],
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
+    file_dir: Path | None = None,
+    screenshot_dir: Path | None = None,
+    screenshot_name: str | None = None,
+    capture_screenshot: bool | None = None,
+    abort_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Run a plan and close only its run-owned Notepad window after a failure."""
+
+    # remember the window opened for this plan so error cleanup cannot close an unrelated Notepad window
+    opened_window: Any | None = None
+
+    def remember_opened_window(window: Any) -> None:
+        nonlocal opened_window
+        opened_window = window
+
+    try:
+        return _execute_notepad_plan(
+            plan,
+            artifact_dir=artifact_dir,
+            artifact_relative_root=artifact_relative_root,
+            file_dir=file_dir,
+            screenshot_dir=screenshot_dir,
+            screenshot_name=screenshot_name,
+            capture_screenshot=capture_screenshot,
+            abort_check=abort_check,
+            opened_window_callback=remember_opened_window,
+        )
+    except Exception:
+        if opened_window is not None:
+            try:
+                opened_window.close()
+            except Exception:
+                pass
+        raise
+
+
+# Compatibility boundary for existing direct callers and uploaded copies of this
+# runner. New runtime code should call dispatch_builtin_notepad_task() instead.
+def execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    return execute_notepad_plan(plan)
+
+
+def dispatch_builtin_notepad_task(
+    plan: dict[str, Any],
+    artifact_dir: Path = ARTIFACT_DIR,
+    artifact_relative_root: Path | None = None,
+    file_dir: Path | None = None,
+    screenshot_dir: Path | None = None,
+    screenshot_name: str | None = None,
+    capture_screenshot: bool | None = None,
+    abort_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Dispatch DockVision's built-in task-plan workload to the Notepad worker."""
+
+    # keep the agent-facing built-in dispatch boundary separate from the lower-level Notepad executor
+    return execute_notepad_plan(
+        plan,
+        artifact_dir=artifact_dir,
+        artifact_relative_root=artifact_relative_root,
+        file_dir=file_dir,
+        screenshot_dir=screenshot_dir,
+        screenshot_name=screenshot_name,
+        capture_screenshot=capture_screenshot,
+        abort_check=abort_check,
+    )
+
+
+def dispatch_custom_python_runner(runner_path: Path, config_path: Path) -> dict[str, Any]:
+    """
+    Reserved custom-Python runner dispatch boundary.
+
+    The agent implementation must provide run-scoped path validation, process
+    lifecycle/cancellation, output capture, and timeout handling before an
+    uploaded program can be launched. Keeping that work out of the Notepad
+    worker prevents a partially implemented agent mode from executing arbitrary
+    uploads without supervision.
+    """
+
+    raise RuntimeError(
+        "Custom Python runner dispatch is not configured yet "
+        f"(runner={runner_path}, config={config_path})."
+    )
+
+
+def dispatch_custom_powershell_runner(runner_path: Path, config_path: Path) -> dict[str, Any]:
+    """Reserved custom-PowerShell runner dispatch boundary; see Python equivalent."""
+
+    raise RuntimeError(
+        "Custom PowerShell runner dispatch is not configured yet "
+        f"(runner={runner_path}, config={config_path})."
+    )
+
+
+def dispatch_custom_runner(language: str, runner_path: Path, config_path: Path) -> dict[str, Any]:
+    """Route an uploaded runner to its language-specific dispatch boundary."""
+
+    normalized_language = language.strip().casefold()
+    if normalized_language == "python":
+        return dispatch_custom_python_runner(runner_path, config_path)
+    if normalized_language == "powershell":
+        return dispatch_custom_powershell_runner(runner_path, config_path)
+
+    raise RuntimeError(f"Unsupported custom runner language: {language or '(missing)'}")
+
+
+def run_agent_loop(
+    shared_root: Path | None = None,
+    heartbeat_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    max_heartbeats: int | None = None,
+    task_executor: Callable[[dict[str, Path | str], dict[str, Any], Path], dict[str, Any]] = execute_agent_task,
+) -> int:
+    """
+    Run the long-lived agent polling loop.
+
+    Each polling cycle publishes idle availability, claims at most one queued
+    active task, and restores idle state after its terminal result is published.
+    The injectable executor keeps lifecycle tests independent from VM UI work.
+    """
+
+    # resolve and initialize the shared transport once before the recurring polling work starts
+    resolved_shared_root = shared_root or resolve_shared_root()
+    ensure_agent_shared_layout(resolved_shared_root)
+    append_agent_install_log(resolved_shared_root, "Python agent startup begin.")
+    append_agent_install_log(resolved_shared_root, f"Resolved shared root to: {resolved_shared_root}")
+    append_agent_install_log(resolved_shared_root, "Agent polling loop starting.")
+
+    emitted_heartbeats = 0
+    # each cycle advertises idle availability, processes at most one task, and then waits for the next cycle
+    while max_heartbeats is None or emitted_heartbeats < max_heartbeats:
+        write_agent_heartbeat(
+            resolved_shared_root,
+            status="idle",
+            task_name="waiting_for_task",
+        )
+        try:
+            process_queued_active_task(resolved_shared_root, executor=task_executor)
+        except Exception as exc:
+            append_agent_install_log(resolved_shared_root, f"Agent task polling error: {exc}")
+            write_agent_heartbeat(
+                resolved_shared_root,
+                status="idle",
+                task_name="waiting_for_task",
+            )
+        emitted_heartbeats += 1
+
+        if max_heartbeats is None or emitted_heartbeats < max_heartbeats:
+            sleep(max(heartbeat_interval_seconds, 0.0))
+
+    return 0
+
+
+def run_agent() -> int:
+    """Production CLI entry for the agent polling loop."""
+
+    return run_agent_loop()
+
+
+# CLI boundary. --plan preserves the established standalone worker contract;
+# --agent is the explicit future long-running DockVision runtime entry point.
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run DockVision pywinauto named-control demo.")
+    # accept either the long-running agent mode or the established standalone plan mode
+    parser = argparse.ArgumentParser(
+        description="Run the DockVision Notepad worker or the DockVision VM agent runtime."
+    )
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Run the long-lived DockVision VM agent instead of the standalone Notepad worker.",
+    )
     parser.add_argument("--plan", default=str(SCRIPT_DIR / "task-plan.json"), help="Path to task-plan.json")
     return parser.parse_args()
 
 
-# Program entry point. Always write result.json, even on failure, because the
-# failure artifact is usually the fastest way to understand what went wrong.
-def main() -> int:
-    args = parse_args()
-    plan_path = Path(args.plan)
+# Standalone worker entry. Always write result.json, even on failure, because
+# the failure artifact is usually the fastest way to understand what went wrong.
+def run_standalone_notepad_worker(plan_path: Path) -> int:
+    # keep standalone success and failure results in the same artifact location for manual diagnosis
     result_path = ARTIFACT_DIR / "result.json"
 
     try:
         plan = read_json(plan_path)
-        result = execute_plan(plan)
+        result = dispatch_builtin_notepad_task(plan)
         write_json(result_path, result)
         print(json.dumps(result, indent=2))
         return 0
@@ -1133,6 +2506,26 @@ def main() -> int:
         write_json(result_path, result)
         print(json.dumps(result, indent=2))
         return 1
+
+
+def main() -> int:
+    # choose agent mode only when explicitly requested; otherwise preserve the standalone worker behavior
+    args = parse_args()
+    if args.agent:
+        try:
+            return run_agent()
+        except Exception as exc:
+            result = {
+                "status": "failed",
+                "finishedAt": datetime.now().isoformat(),
+                "runtimeMode": "agent",
+                "message": str(exc),
+                "errorType": type(exc).__name__,
+            }
+            print(json.dumps(result, indent=2))
+            return 1
+
+    return run_standalone_notepad_worker(Path(args.plan))
 
 
 if __name__ == "__main__":

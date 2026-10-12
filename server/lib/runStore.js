@@ -240,6 +240,14 @@ async function writeCurrentRunPointer(pointer) {
   return pointer;
 }
 
+async function clearActiveChannel() {
+  // Remove the old active-run pointer before starting a new run.
+  // This keeps the shared folder pointed at only one run.
+  await ensureBaseLayout();
+  // Do not fail if there is no old pointer to remove.
+  await fs.rm(CURRENT_RUN_POINTER_PATH, { force: true });
+}
+
 async function readJsonIfExists(filePath) {
   try {
     const rawValue = await fs.readFile(filePath, "utf8");
@@ -503,14 +511,20 @@ function buildArtifactMap(runId, artifacts = {}) {
   const mappedArtifacts = {};
 
   for (const [name, rawPath] of Object.entries(artifacts)) {
-    const relativePath = normalizeArtifactRelativePath(runId, rawPath);
+    const mapArtifact = (artifactPath) => {
+      const relativePath = normalizeArtifactRelativePath(runId, artifactPath);
 
-    mappedArtifacts[name] = {
-      rawPath,
-      relativePath,
-      url: relativePath ? buildRunFileUrl(runId, relativePath) : null,
-      fileName: relativePath ? path.posix.basename(relativePath) : null,
+      return {
+        rawPath: artifactPath,
+        relativePath,
+        url: relativePath ? buildRunFileUrl(runId, relativePath) : null,
+        fileName: relativePath ? path.posix.basename(relativePath) : null,
+      };
     };
+
+    mappedArtifacts[name] = Array.isArray(rawPath)
+      ? rawPath.map(mapArtifact)
+      : mapArtifact(rawPath);
   }
 
   return mappedArtifacts;
@@ -771,6 +785,355 @@ async function readRun(runId) {
   };
 }
 
+<<<<<<< HEAD
+=======
+async function failAbandonedRun(run) {
+  // Convert an orphaned in-flight run into a terminal failure and clear the
+  // active pointer so future runs are not blocked behind stale shared state.
+  const runId = run.runId;
+  const runPaths = await ensureRunLayout(runId);
+  const finishedUtc = nowIso();
+  const observedHealth = await getObservedRunHealth(run);
+  const message = buildAbandonedRunMessage(run, observedHealth);
+  const task = {
+    ...(run.task || {}),
+    runId,
+    taskId: run.taskId || run.task?.taskId || `${runId}-task`,
+    status: "failed",
+    completedUtc: finishedUtc,
+  };
+
+  await Promise.all([
+    writeTaskFile(runId, task),
+    writeJson(runPaths.resultPath, {
+      runId,
+      taskId: task.taskId,
+      status: "failed",
+      finishedUtc,
+      message,
+      artifacts: {},
+      details: {
+        source: "backend-heartbeat-recovery",
+        heartbeatStatus: run.heartbeat?.agent?.status || null,
+        heartbeatRunId: run.heartbeat?.agent?.runId || null,
+        heartbeatTimestampUtc: run.heartbeat?.machine?.timestampUtc || null,
+        heartbeatFileUpdatedUtc: observedHealth.heartbeatMtimeUtc,
+        lastObservedRunActivityUtc: observedHealth.observedRunActivityUtc,
+      },
+    }),
+    updateMetaFile(runId, {
+      status: "failed",
+      finishedUtc,
+    }),
+  ]);
+
+  await appendRunLog(
+    runId,
+    "Run was marked failed because its guest heartbeat became stale or mismatched."
+  );
+
+  const currentRunPointer = await readCurrentRunPointer();
+  if (currentRunPointer?.runId === runId) {
+    await clearActiveChannel();
+  }
+
+  return readRun(runId);
+}
+
+async function getBlockingActiveRun() {
+  const currentRunPointer = await readCurrentRunPointer();
+  if (!currentRunPointer?.runId) {
+    return null;
+  }
+
+  const currentRun = await readRun(currentRunPointer.runId);
+  if (!currentRun) {
+    await clearActiveChannel();
+    return null;
+  }
+
+  if (isTerminalStatus(currentRun.status)) {
+    await clearActiveChannel();
+    return null;
+  }
+
+  // Self-heal abandoned runs before enforcing the single-active-run rule.
+  if (await shouldRecoverAbandonedRun(currentRun)) {
+    await failAbandonedRun(currentRun);
+    return null;
+  }
+
+  return currentRun;
+}
+
+async function archiveQueuedRun(run) {
+  const runId = run.runId;
+  const runPaths = await ensureRunLayout(runId);
+  const finishedUtc = nowIso();
+  const task = {
+    ...(run.task || {}),
+    runId,
+    status: "cancelled",
+    completedUtc: finishedUtc,
+  };
+
+  await Promise.all([
+    writeTaskFile(runId, task),
+    writeJson(runPaths.resultPath, {
+      runId,
+      taskId: run.taskId || task.taskId || `${runId}-task`,
+      status: "cancelled",
+      finishedUtc,
+      message: "Queued run was superseded by a newer run before execution.",
+      artifacts: {},
+      details: {
+        source: "backend-run-replacement",
+      },
+    }),
+    updateMetaFile(runId, {
+      status: "cancelled",
+      finishedUtc,
+    }),
+  ]);
+
+  await appendRunLog(
+    runId,
+    "Queued run was archived because a newer run replaced the active channel."
+  );
+}
+
+async function createRunRecord(options = {}) {
+  const preparedRunner = prepareRunnerScript(options);
+
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const activeRun = await getBlockingActiveRun();
+  if (activeRun) {
+    if (activeRun.status === "queued") {
+      await archiveQueuedRun(activeRun);
+    } else {
+      const error = new Error(
+        `Run '${activeRun.runId}' is still ${activeRun.status}. Wait for it to finish before starting a new one.`
+      );
+      error.code = "RUN_ACTIVE";
+      error.activeRunId = activeRun.runId;
+      throw error;
+    }
+  }
+
+  await clearActiveChannel();
+
+  const runId = buildRunId();
+  const taskId = `${runId}-task`;
+  const createdUtc = nowIso();
+  const runPaths = await ensureRunLayout(runId);
+  const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
+
+  const task = {
+    runId,
+    taskId,
+    taskType,
+    status: "queued",
+    createdUtc,
+    payload: uploadedInputs
+        ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
+        : preparedRunner.plan,
+  };
+
+  const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
+
+  const meta = {
+    runId,
+    taskId,
+    testName: options.testName || "Untitled Test Run",
+    runnerScriptName: preparedRunner?.fileName || options.runnerScriptName || null, runnerScriptPath,
+    taskPlanPath: preparedRunner ? "task-plan.json" : null,
+    configFileName: options.configFileName || null,
+    runnerScriptLanguage: uploadedInputs?.language || options.runnerScriptLanguage || null,
+    taskType: task.taskType,
+    status: "queued",
+    createdUtc,
+    updatedUtc: createdUtc,
+    containerId: null,
+    cleanupPolicy: describeCleanupPolicy(),
+  };
+
+  const currentRunPointer = buildCurrentRunPointer(runId, createdUtc);
+
+  const pendingWrites = [
+    writeJson(runPaths.metaPath, meta),
+    writeJson(runPaths.taskPath, task),
+    writeJson(CURRENT_RUN_POINTER_PATH, currentRunPointer),
+  ];
+
+  if (preparedRunner) {
+    pendingWrites.push(
+      fs.writeFile(
+        path.join(runPaths.scriptsRoot, preparedRunner.fileName),
+        preparedRunner.content,
+        "utf8"
+      ),
+      writeJson(runPaths.taskPlanPath, preparedRunner.plan)
+    );
+  }
+
+  await Promise.all(pendingWrites);
+
+  await appendRunLog(runId, "Run created and queued in the active channel.");
+
+  return {
+    runId,
+    taskId,
+    meta,
+    task,
+    paths: runPaths,
+  };
+}
+// The alternate launch endpoint uses the same parsed task-plan contract.
+async function createRunRecord2(options = {}) {
+  // create an alternate-route run using the same shared-folder lifecycle contract as the primary creator
+  const preparedRunner = prepareRunnerScript(options);
+
+  await ensureBaseLayout();
+  await pruneCompletedRuns();
+
+  const activeRun = await getBlockingActiveRun();
+  if (activeRun) {
+    if (activeRun.status === "queued") {
+      await archiveQueuedRun(activeRun);
+    } else {
+      const error = new Error(
+        `Run '${activeRun.runId}' is still ${activeRun.status}. Wait for it to finish before starting a new one.`
+      );
+      error.code = "RUN_ACTIVE";
+      error.activeRunId = activeRun.runId;
+      throw error;
+    }
+  }
+
+  await clearActiveChannel();
+
+  const runId = buildRunId();
+  const taskId = `${runId}-task`;
+  const createdUtc = nowIso();
+  const runPaths = await ensureRunLayout(runId);
+  const settings = normalizeRunSettings(options);                                                   //normalize iteration, timeout, and screenshot-capture settings for this run
+  const uploadedInputs = await writeUploadedScriptRunnerInputs(runPaths, options);
+
+
+  const taskType = uploadedInputs ? "script_runner" : "task_sequence";
+  const payload = uploadedInputs
+    ? buildUploadedScriptRunnerPayload(uploadedInputs, options)
+    : preparedRunner.plan;
+
+  const task = {
+    runId,
+    taskId,
+    taskType,
+    status: "queued",
+    createdUtc,
+    settings,
+    runOptions: settings,
+    payload,
+  };
+
+  const runnerScriptPath = preparedRunner ? path.posix.join("scripts", preparedRunner.fileName) : null;
+
+  const meta = {
+    runId,
+    taskId,
+    testName: options.testName || "Untitled Test Run",
+    runnerScriptName: preparedRunner?.fileName || options.runnerScriptName || null,
+    runnerScriptPath,
+    taskPlanPath: preparedRunner ? "task-plan.json" : null,
+    configFileName: options.configFileName || null,
+    taskType: task.taskType,
+    settings,
+    runOptions: settings,
+    iterationState: {
+      total: settings.iterations,
+      current: 0,
+      completed: 0,
+      failed: 0,
+    },
+    status: "queued",
+    createdUtc,
+    updatedUtc: createdUtc,
+    containerId: null,
+    cleanupPolicy: describeCleanupPolicy(),
+  };
+
+  const FIRST_ITERATION_NUMBER = 1;
+  const currentRunPointer = buildIterationRunPointer( runId, createdUtc, FIRST_ITERATION_NUMBER);
+  const pendingWrites = [
+    writeJson(runPaths.metaPath, meta),
+    writeJson(runPaths.taskPath, task),
+    writeJson(CURRENT_RUN_POINTER_PATH, currentRunPointer),
+  ];
+
+  if (preparedRunner) {
+    pendingWrites.push(
+      fs.writeFile(
+        path.join(runPaths.scriptsRoot, preparedRunner.fileName),
+        preparedRunner.content,
+        "utf8"
+      ),
+      writeJson(runPaths.taskPlanPath, preparedRunner.plan)
+    );
+  }
+
+  await Promise.all(pendingWrites);
+
+  await appendRunLog(runId, "Run created and queued in the active channel.");
+
+  return {
+    runId,
+    taskId,
+    meta,
+    task,
+    paths: runPaths,
+  };
+}
+
+async function attachContainerId(runId, containerId) {
+  const nextMeta = await updateMetaFile(runId, {
+    containerId,
+  });
+
+  await appendRunLog(runId, `Launcher container attached to run: ${containerId}`);
+
+  return nextMeta;
+}
+
+async function markRunLaunchFailure(runId, message) {
+  const runPaths = await ensureRunLayout(runId);
+  const meta = (await readJsonIfExists(runPaths.metaPath)) || { runId };
+  const finishedUtc = nowIso();
+
+  await Promise.all([
+    writeJson(runPaths.resultPath, {
+      runId,
+      taskId: meta.taskId || `${runId}-task`,
+      status: "failed",
+      finishedUtc,
+      message,
+      artifacts: {},
+      details: {
+        source: "backend-launch",
+      },
+    }),
+    updateMetaFile(runId, {
+      status: "failed",
+      finishedUtc,
+    }),
+  ]);
+
+  await appendRunLog(runId, `Run failed before agent execution: ${message}`);
+}
+
+>>>>>>> origin/main
 async function resolveRunFilePath(runId, relativePath) {
   const normalizedRelativePath = path.normalize(relativePath);
   const runPaths = getRunPaths(runId);
@@ -920,6 +1283,13 @@ function runSortTimestamp(run) {
 
 module.exports = {
   SHARED_ROOT,
+<<<<<<< HEAD
+=======
+  buildContainerName,
+  // Keep these older run creators available for the older server routes.
+  createRunRecord,
+  createRunRecord2,
+>>>>>>> origin/main
   readRun,
   requestRunCancellation,
   listRuns,
@@ -935,6 +1305,10 @@ module.exports = {
   assertRunStatusTransition,
   readCancellationRequest,
   requestRunCancellation2,
+<<<<<<< HEAD
   readCurrentRunPointer,
   isTerminalStatus,
+=======
+  buildArtifactMap,
+>>>>>>> origin/main
 };
