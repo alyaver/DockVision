@@ -7,6 +7,7 @@ import {
 } from "../components/Icons";
 import "../Dashboard.css";
 import "../NavBar.css";
+import RunInstructions from "../components/RunInstructions.jsx";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -574,8 +575,7 @@ const Dashboard = () => {
   }
 
   // update selected mode and remember the mode even after page refresh
-  function handleModeChange(event) {
-    const mode = event.target.value;
+  function handleModeChange(mode) {
     setExecutionMode(mode);
     writeStoredRun({ executionMode: mode });
   }
@@ -627,25 +627,11 @@ const Dashboard = () => {
               />
               {testNameError && <p className="error-text">{testNameError}</p>}
 
-              <div className="runner-modes">
-                <label>
-                  <input type="radio"
-                        name="mode"
-                        value="custom"
-                        checked={executionMode === "custom"}
-                        onChange={handleModeChange}
-                        /> Custom Runner
-                </label>
-                
-                <label>
-                  <input type="radio"
-                        name="mode"
-                        value="builtin"
-                        checked={executionMode === "builtin"}
-                        onChange={handleModeChange}
-                        /> Built-In Notepad
-                </label>
-              </div>
+              <RunInstructions
+                mode={executionMode}
+                location="dashboard"
+                onModeChange={handleModeChange}
+              />
 
               <div className="form-stack">
                 {/* checks the what mode is selected and displays which container based on the mode */}

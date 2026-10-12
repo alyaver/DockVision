@@ -50,7 +50,11 @@ if defined PYTHON_RUNTIME_SOURCE (
   powershell -NoProfile -ExecutionPolicy Bypass -File "C:\DockVision\agent\ensure-python-runtime.ps1" -SharedRoot "%~dp0."
   if errorlevel 1 (
     echo DockVision Python runtime setup failed. Check agent-install-log.txt for details.
+    exit /b 1
   )
+) else (
+  echo DockVision Python runtime setup script is missing. Cannot start the guest agent.
+  exit /b 1
 )
 
 rem Stop the scheduled task and any already-running agent process so the guest

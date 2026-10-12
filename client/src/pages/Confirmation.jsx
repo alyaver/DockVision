@@ -5,6 +5,7 @@ import "../confirmationPage.css";
 import { startTestRun } from "../lib/api";
 import { launchWhenReady } from "../lib/launchWhenReady.mjs";
 import { config } from "dotenv";
+import RunInstructions from "../components/RunInstructions.jsx";
 
 /**
  * Confirmation rehydrates from sessionStorage so a refresh or direct navigation
@@ -179,6 +180,8 @@ const Confirmation = () => {
             <strong>Execution Mode: </strong>
             {executionMode === "builtin" ? "Built-in Notepad" : "Custom Runner"}
           </p>
+
+          <RunInstructions mode={executionMode} location="confirmation" />
 
           {/* Shows the users saved settings, uses default values for missing settings */}
           <div className="run-settings">
