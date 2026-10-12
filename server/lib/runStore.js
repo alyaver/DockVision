@@ -1279,8 +1279,6 @@ function runSortTimestamp(run) {
 }
 
 module.exports = {
-  SHARED_ROOT,
-  buildContainerName,
   // Keep these older run creators available for the older server routes.
   createRunRecord,
   createRunRecord2,
