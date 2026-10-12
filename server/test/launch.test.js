@@ -122,6 +122,17 @@ test("invalid requests and malformed JSON fail before readiness or storage", asy
   assert.deepEqual(await fs.readdir(f.root), []);
 });
 
+test("launch routes accept uploads above Express's default limit and reject uploads above 10 MB", async (t) => {
+  const f = await fixture(t);
+  const accepted = await f.post({ ...custom(), runnerScriptContent: "#".repeat(150 * 1024) });
+  assert.equal(accepted.status, 202);
+
+  const rejected = await f.post({ ...custom(), runnerScriptContent: "#".repeat(10 * 1024 * 1024) });
+  assert.equal(rejected.status, 413);
+  assert.equal(rejected.body.code, "REQUEST_TOO_LARGE");
+  assert.match(rejected.body.message, /10 MB/i);
+});
+
 test("built-in validation reports task fields; legacy targetApp and steps normalize", async (t) => {
   const f = await fixture(t);
   const invalid = plan();

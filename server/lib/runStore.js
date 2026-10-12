@@ -296,6 +296,14 @@ async function writeCurrentRunPointer(pointer) {
   return pointer;
 }
 
+async function clearActiveChannel() {
+  // Remove the old active-run pointer before starting a new run.
+  // This keeps the shared folder pointed at only one run.
+  await ensureBaseLayout();
+  // Do not fail if there is no old pointer to remove.
+  await fs.rm(CURRENT_RUN_POINTER_PATH, { force: true });
+}
+
 async function readJsonIfExists(filePath) {
   try {
     const rawValue = await fs.readFile(filePath, "utf8");
@@ -724,14 +732,20 @@ function buildArtifactMap(runId, artifacts = {}) {
   const mappedArtifacts = {};
 
   for (const [name, rawPath] of Object.entries(artifacts)) {
-    const relativePath = normalizeArtifactRelativePath(runId, rawPath);
+    const mapArtifact = (artifactPath) => {
+      const relativePath = normalizeArtifactRelativePath(runId, artifactPath);
 
-    mappedArtifacts[name] = {
-      rawPath,
-      relativePath,
-      url: relativePath ? buildRunFileUrl(runId, relativePath) : null,
-      fileName: relativePath ? path.posix.basename(relativePath) : null,
+      return {
+        rawPath: artifactPath,
+        relativePath,
+        url: relativePath ? buildRunFileUrl(runId, relativePath) : null,
+        fileName: relativePath ? path.posix.basename(relativePath) : null,
+      };
     };
+
+    mappedArtifacts[name] = Array.isArray(rawPath)
+      ? rawPath.map(mapArtifact)
+      : mapArtifact(rawPath);
   }
 
   return mappedArtifacts;
@@ -1107,6 +1121,7 @@ async function createRunRecord(options = {}) {
 }
 // The alternate launch endpoint uses the same parsed task-plan contract.
 async function createRunRecord2(options = {}) {
+  // create an alternate-route run using the same shared-folder lifecycle contract as the primary creator
   const preparedRunner = prepareRunnerScript(options);
 
   await ensureBaseLayout();
@@ -1367,6 +1382,9 @@ function runSortTimestamp(run) {
 module.exports = {
   SHARED_ROOT,
   buildContainerName,
+  // Keep these older run creators available for the older server routes.
+  createRunRecord,
+  createRunRecord2,
   readRun,
   requestRunCancellation,
   listRuns,
@@ -1382,4 +1400,5 @@ module.exports = {
   assertRunStatusTransition,
   readCancellationRequest,
   requestRunCancellation2,
+  buildArtifactMap,
 };
