@@ -1,6 +1,7 @@
 const express = require("express");
 const { createLaunchService } = require("../lib/launchService");
 const { pruneCompletedRuns } = require("../lib/runStore");
+const { superviseRun } = require("../lib/runSupervisior");
 
 //uploaded scripts can be bigger than the normal request limit
 //only allow bigger uploads on the test run routes
@@ -24,7 +25,10 @@ function launchErrorHandler(error, req, res, next) {
   return res.status(status).json(body);
 }
 
-function createRunLaunchRouter({ launch = createLaunchService({ beforePublish: pruneCompletedRuns }) } = {}) {
+function createRunLaunchRouter({
+  launch = createLaunchService({ beforePublish: pruneCompletedRuns }),
+  supervise = superviseRun,
+} = {}) {
   const router = express.Router();
   //parse here, before the application's general parser, so aliases share JSON errors too.
   router.post(["/api/runs/start", "/api/runs/start2", "/api/docker/start-smoke"],
@@ -32,6 +36,12 @@ function createRunLaunchRouter({ launch = createLaunchService({ beforePublish: p
     express.json({ limit: RUN_LAUNCH_JSON_LIMIT }), async (req, res, next) => {
       try {
         const accepted = await launch(req.body);
+        // Supervision continues after the 202 response and advances the active
+        // pointer through each iteration. Admission has already published the
+        // first iteration, so starting supervision here cannot expose root paths.
+        supervise(accepted.runId).catch((error) => {
+          console.error("RUN SUPERVISOR ERROR:", error);
+        });
         return res.status(202).json({ success: true, ...accepted });
       } catch (error) {
         return next(error);

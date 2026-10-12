@@ -338,11 +338,18 @@ function TestPage() {
 
   const statusLabel = formatStatus(run?.status);
   const statusClass = run?.status ? `status-${String(run.status).toLowerCase()}` : "status-unknown";
+<<<<<<< HEAD
+  const screenshotArtifact = run?.artifacts?.screenshot || null;
+  const artifactEntries = Object.entries(run?.artifacts || {}).filter(
+    ([name]) => name !== "screenshot"
+  );
+=======
   const screenshotArtifacts = run?.artifacts?.screenshots;
   const screenshotArtifact =
     run?.artifacts?.screenshot ||
     (Array.isArray(screenshotArtifacts) ? screenshotArtifacts.at(-1) : null);
   const artifactEntries = flattenArtifactEntries(run?.artifacts);
+>>>>>>> origin/main
   const logLines = run?.logs?.task || [];
   const taskLogs = Array.isArray(run?.logs?.task) ? run.logs.task : [];
   const stdoutLogs = Array.isArray(run?.logs?.stdout) ? run.logs.stdout : [];
@@ -354,12 +361,12 @@ function TestPage() {
 
   const iterationLabel =
     progress.currentIteration != null && progress.totalIterations != null
-      ? `${progress.currentIteration} / ${progress.totalIterations}`
+      ? `${progress.currentIteration} of ${progress.totalIterations}`
       : "Unknown";
 
   const currentStepLabel =
     progress.currentStepNumber != null && progress.totalSteps != null
-      ? `${progress.currentStepNumber} / ${progress.totalSteps}`
+      ? `${progress.currentStepNumber} of ${progress.totalSteps}`
       : "Unknown";
 
   const elapsedTime = run?.startedUtc
@@ -571,10 +578,17 @@ function TestPage() {
 
               {artifactEntries.length ? (
                 <ul className="TestPage__artifactList">
+<<<<<<< HEAD
+                  {artifactEntries.map(([name, artifact]) => (
+                    <li key={name}>
+                      <strong>{artifact.fileName || name}</strong>
+                      <span>{artifact.relativePath || artifact.rawPath || "Not available"}</span>
+=======
                   {artifactEntries.map(({ key, name, artifact }) => (
                     <li key={key}>
                       <strong>{name}</strong>
                       <span>{artifact.fileName || artifact.rawPath || "Not available"}</span>
+>>>>>>> origin/main
                       {artifact.url ? (
                         <a href={artifact.url} target="_blank" rel="noreferrer">
                           Open

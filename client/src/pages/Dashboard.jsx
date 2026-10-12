@@ -121,6 +121,7 @@ const Dashboard = () => {
   const [notifications, setNotifications] = useState([]);
   const [user, setUser] = useState(null);
   const [isPreparingRun, setIsPreparingRun] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [executionMode, setExecutionMode] = useState("custom")
 
   // Explicit loading/error flags so the history card can render all three
@@ -182,24 +183,23 @@ const Dashboard = () => {
     try {
       /**
        * If auth is available and the user is signed in, use that.
-       * If not, fall back to demo data so the Dashboard still works during development.
+       * If not, redirect the user to the landing page.
        */
       const response = await fetch("/api/auth/me", {
         credentials: "include",
       });
 
+      //prevents users from bypassing sign in when adding "/dashboard" in the address bar
       if (!response.ok) {
-        setUser({
-          name: "Leo",
-          email: "leo@leomail.com",
-        });
-        return;
+        navigate("/", { replace: true });
       }
 
       const data = await response.json();
       setUser(data.user || data);
     } catch {
-      setUser(null);
+      navigate("/", { replace: true });
+    } finally {
+      setIsAuthLoading(false);
     }
   }
 
@@ -599,6 +599,17 @@ const Dashboard = () => {
 
   const displayName = user?.name || user?.fname || "";
 
+  if (isAuthLoading) {
+    return (
+      <>
+        <Navigation />
+        <main className="Auth-Check">
+          <p>Checking your session...</p>
+        </main>
+      </>
+    );
+  }
+
   return (
     <>
       <Navigation />
@@ -872,6 +883,10 @@ const Dashboard = () => {
                         <div className="run-meta">
                           <span className="run-mode">
                             {formatRunLabel(run.taskType) || "Unknown"}
+                          </span>
+                          <span className="run-mode">
+                            {run.totalIterations ?? 1} iteration
+                            {(run.totalIterations ?? 1) === 1 ? "" : "s"}
                           </span>
                           <span
                             className={`run-status run-status--${String(
