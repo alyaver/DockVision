@@ -73,8 +73,8 @@ export default function Register() {
         error.serverMessage = data.message;
         throw error;
       }
-
-      navigate("/login", { state: { message: "Account created successfully. Please log in." } });
+      navigate("/dashboard");
+      //navigate("/login", { state: { message: "Account created successfully. Please log in." } });
     } catch (error) {
       setErrorMessage(getRegistrationErrorMessage(error));
       throw error;
