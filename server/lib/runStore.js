@@ -785,8 +785,6 @@ async function readRun(runId) {
   };
 }
 
-<<<<<<< HEAD
-=======
 async function failAbandonedRun(run) {
   // Convert an orphaned in-flight run into a terminal failure and clear the
   // active pointer so future runs are not blocked behind stale shared state.
@@ -1133,7 +1131,6 @@ async function markRunLaunchFailure(runId, message) {
   await appendRunLog(runId, `Run failed before agent execution: ${message}`);
 }
 
->>>>>>> origin/main
 async function resolveRunFilePath(runId, relativePath) {
   const normalizedRelativePath = path.normalize(relativePath);
   const runPaths = getRunPaths(runId);
@@ -1282,14 +1279,9 @@ function runSortTimestamp(run) {
 }
 
 module.exports = {
-  SHARED_ROOT,
-<<<<<<< HEAD
-=======
-  buildContainerName,
   // Keep these older run creators available for the older server routes.
   createRunRecord,
   createRunRecord2,
->>>>>>> origin/main
   readRun,
   requestRunCancellation,
   listRuns,
@@ -1305,10 +1297,7 @@ module.exports = {
   assertRunStatusTransition,
   readCancellationRequest,
   requestRunCancellation2,
-<<<<<<< HEAD
   readCurrentRunPointer,
   isTerminalStatus,
-=======
   buildArtifactMap,
->>>>>>> origin/main
 };
