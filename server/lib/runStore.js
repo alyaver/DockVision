@@ -551,6 +551,64 @@ async function findLatestScreenshotArtifact(runId, screenshotsRoot, iterationNum
   }
 }
 
+async function listIterationScreenshotArtifacts(runId, iterationsRoot) {
+  let iterationEntries;
+
+  try {
+    iterationEntries = await fs.readdir(iterationsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {};
+    }
+
+    throw error;
+  }
+
+  const artifacts = {};
+  const iterationNumbers = iterationEntries
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .map((entry) => Number(entry.name))
+    .sort((left, right) => left - right);
+
+  for (const iterationNumber of iterationNumbers) {
+    const screenshotsRoot = path.join(
+      iterationsRoot,
+      String(iterationNumber),
+      "screenshots"
+    );
+    let screenshotEntries;
+
+    try {
+      screenshotEntries = await fs.readdir(screenshotsRoot, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        continue;
+      }
+
+      throw error;
+    }
+
+    const screenshotNames = screenshotEntries
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".png"))
+      .map((entry) => entry.name)
+      .sort();
+
+    for (const fileName of screenshotNames) {
+      const relativePath = `iterations/${iterationNumber}/screenshots/${fileName}`;
+      const artifactKey = `screenshot-${iterationNumber}-${fileName}`;
+
+      artifacts[artifactKey] = {
+        rawPath: relativePath,
+        relativePath,
+        url: buildRunFileUrl(runId, relativePath),
+        fileName,
+      };
+    }
+  }
+
+  return artifacts;
+}
+
 async function syncMetaFromRunState(runId, snapshot) {
   if (!snapshot.meta) {
     return snapshot;
@@ -643,6 +701,10 @@ async function readRun(runId) {
     screenshotsRoot,
     selectedIterationNumber
   );
+  const iterationScreenshotArtifacts = await listIterationScreenshotArtifacts(
+    runId,
+    runPaths.iterationsRoot
+  );
 
   const baseMeta = snapshot.meta || meta || {};
   const progress = deriveRunProgress(
@@ -685,6 +747,7 @@ async function readRun(runId) {
       : null,
     artifacts: {
       ...buildArtifactMap(runId, snapshot.result?.artifacts),
+      ...iterationScreenshotArtifacts,
       ...(latestScreenshot
         ? { screenshot: latestScreenshot }
         : {}),
@@ -818,7 +881,7 @@ async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
 
     const status = normalizeAggregateStatus(
       meta,
-      result?.status || task?.status || meta?.status || "queued"
+      meta?.status || result?.status || task?.status || "queued"
     );
 
     const totalIterations =

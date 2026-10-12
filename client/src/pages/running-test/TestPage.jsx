@@ -298,7 +298,9 @@ function TestPage() {
   const statusLabel = formatStatus(run?.status);
   const statusClass = run?.status ? `status-${String(run.status).toLowerCase()}` : "status-unknown";
   const screenshotArtifact = run?.artifacts?.screenshot || null;
-  const artifactEntries = Object.entries(run?.artifacts || {});
+  const artifactEntries = Object.entries(run?.artifacts || {}).filter(
+    ([name]) => name !== "screenshot"
+  );
   const logLines = run?.logs?.task || [];
   const taskLogs = Array.isArray(run?.logs?.task) ? run.logs.task : [];
   const stdoutLogs = Array.isArray(run?.logs?.stdout) ? run.logs.stdout : [];
@@ -526,8 +528,8 @@ function TestPage() {
                 <ul className="TestPage__artifactList">
                   {artifactEntries.map(([name, artifact]) => (
                     <li key={name}>
-                      <strong>{name}</strong>
-                      <span>{artifact.fileName || artifact.rawPath || "Not available"}</span>
+                      <strong>{artifact.fileName || name}</strong>
+                      <span>{artifact.relativePath || artifact.rawPath || "Not available"}</span>
                       {artifact.url ? (
                         <a href={artifact.url} target="_blank" rel="noreferrer">
                           Open

@@ -31,6 +31,11 @@ async function writeJson(filePath, value) {
   await fs.writeFile(filePath, JSON.stringify(value), "utf8");
 }
 
+async function writeFile(filePath, value = "png") {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, value, "utf8");
+}
+
 function pointerFor(runId, iterationNumber) {
   return {
     runId,
@@ -84,6 +89,63 @@ test("readRun maps iteration metadata and custom result steps into progress", as
     currentStepId: "verify",
   });
   assert.equal(run.paths.resultPath, path.join(iterationRoot, "result.json"));
+});
+
+test("readRun exposes screenshots from every iteration while preserving the latest screenshot", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runId = "run-progress-screenshots";
+  const runRoot = path.join(sharedRoot, "runs", runId);
+
+  await Promise.all([
+    writeJson(path.join(runRoot, "meta.json"), {
+      runId,
+      status: "completed",
+      iterationState: { total: 2, current: 2, completed: 2, failed: 0 },
+    }),
+    writeJson(path.join(runRoot, "task.json"), { runId, status: "queued" }),
+    writeJson(path.join(runRoot, "iterations", "1", "task.json"), {
+      runId,
+      status: "completed",
+      iterationNumber: 1,
+    }),
+    writeJson(path.join(runRoot, "iterations", "2", "task.json"), {
+      runId,
+      status: "completed",
+      iterationNumber: 2,
+    }),
+    writeFile(
+      path.join(runRoot, "iterations", "1", "screenshots", "notepad-run-1-iteration-1.png")
+    ),
+    writeFile(
+      path.join(runRoot, "iterations", "2", "screenshots", "notepad-run-2-iteration-2.png")
+    ),
+    writeFile(
+      path.join(runRoot, "iterations", "2", "screenshots", "notepad-run-2-iteration-2.txt"),
+      "not an image"
+    ),
+  ]);
+
+  const run = await store.readRun(runId);
+  const screenshotArtifacts = Object.entries(run.artifacts)
+    .filter(([name, artifact]) =>
+      name !== "screenshot" && artifact.relativePath?.includes("/screenshots/")
+    )
+    .map(([, artifact]) => artifact);
+  const fileNames = screenshotArtifacts.map((artifact) => artifact.fileName).sort();
+
+  assert.deepEqual(fileNames, [
+    "notepad-run-1-iteration-1.png",
+    "notepad-run-2-iteration-2.png",
+  ]);
+  assert.match(
+    screenshotArtifacts.find((artifact) => artifact.fileName === "notepad-run-1-iteration-1.png").url,
+    /iterations\/1\/screenshots\/notepad-run-1-iteration-1\.png$/
+  );
+  assert.match(
+    screenshotArtifacts.find((artifact) => artifact.fileName === "notepad-run-2-iteration-2.png").url,
+    /iterations\/2\/screenshots\/notepad-run-2-iteration-2\.png$/
+  );
+  assert.equal(run.artifacts.screenshot.fileName, "notepad-run-2-iteration-2.png");
 });
 
 test("readRun supports built-in details.steps on the active iteration", async (t) => {
