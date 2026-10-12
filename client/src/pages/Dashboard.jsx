@@ -884,6 +884,10 @@ const Dashboard = () => {
                           <span className="run-mode">
                             {formatRunLabel(run.taskType) || "Unknown"}
                           </span>
+                          <span className="run-mode">
+                            {run.totalIterations ?? 1} iteration
+                            {(run.totalIterations ?? 1) === 1 ? "" : "s"}
+                          </span>
                           <span
                             className={`run-status run-status--${String(
                               run.status || "unknown"

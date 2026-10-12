@@ -127,8 +127,8 @@ function isTerminalStatus(status) {
   return TERMINAL_STATUSES.has(String(status || "").toLowerCase());
 }
 
-function getRunPaths(runId) {
-  const runRoot = path.join(RUNS_ROOT, runId);
+function getRunPaths(runId, runsRoot = RUNS_ROOT) {
+  const runRoot = path.join(runsRoot, runId);
   const logsRoot = path.join(runRoot, "logs");
   const screenshotsRoot = path.join(runRoot, "screenshots");
   const artifactsRoot = path.join(runRoot, "artifacts");
@@ -152,11 +152,15 @@ function getRunPaths(runId) {
   };
 }
 
-async function ensureBaseLayout() {
+async function ensureBaseLayout({
+  sharedRoot = SHARED_ROOT,
+  activeRoot = ACTIVE_ROOT,
+  runsRoot = RUNS_ROOT,
+} = {}) {
   await Promise.all([
-    fs.mkdir(SHARED_ROOT, { recursive: true }),
-    fs.mkdir(ACTIVE_ROOT, { recursive: true }),
-    fs.mkdir(RUNS_ROOT, { recursive: true }),
+    fs.mkdir(sharedRoot, { recursive: true }),
+    fs.mkdir(activeRoot, { recursive: true }),
+    fs.mkdir(runsRoot, { recursive: true }),
   ]);
 }
 
@@ -314,9 +318,14 @@ function normalizeAggregateStatus(meta, candidateStatus) {
   return normalizedStatus;
 }
 
-async function readCurrentRunPointer() {
-  await ensureBaseLayout();
-  return readJsonIfExists(CURRENT_RUN_POINTER_PATH);
+async function readCurrentRunPointer({
+  sharedRoot = SHARED_ROOT,
+  activeRoot = ACTIVE_ROOT,
+  runsRoot = RUNS_ROOT,
+  currentRunPointerPath = CURRENT_RUN_POINTER_PATH,
+} = {}) {
+  await ensureBaseLayout({ sharedRoot, activeRoot, runsRoot });
+  return readJsonIfExists(currentRunPointerPath);
 }
 
 function deriveRunStatus(meta, task, result, heartbeat, isActiveRun) {
@@ -712,11 +721,21 @@ async function resolveRunFilePath(runId, relativePath) {
   return resolvedPath;
 }
 
-async function pruneCompletedRuns() {
-  await ensureBaseLayout();
+async function pruneCompletedRuns({
+  sharedRoot = SHARED_ROOT,
+  activeRoot = ACTIVE_ROOT,
+  runsRoot = RUNS_ROOT,
+  currentRunPointerPath = CURRENT_RUN_POINTER_PATH,
+} = {}) {
+  await ensureBaseLayout({ sharedRoot, activeRoot, runsRoot });
 
-  const entries = await fs.readdir(RUNS_ROOT, { withFileTypes: true });
-  const currentRunPointer = await readCurrentRunPointer();
+  const entries = await fs.readdir(runsRoot, { withFileTypes: true });
+  const currentRunPointer = await readCurrentRunPointer({
+    sharedRoot,
+    activeRoot,
+    runsRoot,
+    currentRunPointerPath,
+  });
   const currentRunId = currentRunPointer?.runId || null;
   const expiryCutoff = Date.now() - CLEANUP_POLICY.maxAgeDays * 24 * 60 * 60 * 1000;
   const completedRuns = [];
@@ -730,7 +749,7 @@ async function pruneCompletedRuns() {
       continue;
     }
 
-    const runPaths = getRunPaths(entry.name);
+    const runPaths = getRunPaths(entry.name, runsRoot);
     const [meta, result] = await Promise.all([
       readJsonIfExists(runPaths.metaPath),
       readJsonIfExists(runPaths.resultPath),
@@ -761,18 +780,24 @@ async function pruneCompletedRuns() {
       continue;
     }
 
-    const runPaths = getRunPaths(candidate.runId);
+    const runPaths = getRunPaths(candidate.runId, runsRoot);
     await fs.rm(runPaths.runRoot, { recursive: true, force: true });
   }
 }
 
-async function listRuns() {
-  await ensureBaseLayout();
-  await pruneCompletedRuns();
+async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  const activeRoot = path.join(resolvedSharedRoot, "active");
+  const runsRoot = path.join(resolvedSharedRoot, "runs");
+  const currentRunPointerPath = path.join(activeRoot, "current-run.json");
+  const storagePaths = { sharedRoot: resolvedSharedRoot, activeRoot, runsRoot, currentRunPointerPath };
 
-  const currentRunPointer = await readCurrentRunPointer();
+  await ensureBaseLayout(storagePaths);
+  await pruneCompletedRuns(storagePaths);
+
+  const currentRunPointer = await readCurrentRunPointer(storagePaths);
   const activeRunId = currentRunPointer?.runId || null;
-  const entries = await fs.readdir(RUNS_ROOT, { withFileTypes: true });
+  const entries = await fs.readdir(runsRoot, { withFileTypes: true });
   const runs = [];
 
   for (const entry of entries) {
@@ -780,7 +805,7 @@ async function listRuns() {
       continue;
     }
 
-    const runPaths = getRunPaths(entry.name);
+    const runPaths = getRunPaths(entry.name, runsRoot);
     const [meta, task, result] = await Promise.all([
       readJsonIfExists(runPaths.metaPath),
       readJsonIfExists(runPaths.taskPath),
@@ -796,12 +821,20 @@ async function listRuns() {
       result?.status || task?.status || meta?.status || "queued"
     );
 
+    const totalIterations =
+      Number(meta?.iterationState?.total) ||
+      Number(meta?.settings?.iterations) ||
+      Number(task?.runOptions?.iterations) ||
+      Number(task?.settings?.iterations) ||
+      1;
+
     runs.push({
       runId: entry.name,
       testName: meta?.testName || "Untitled Test Run",
       taskType: task?.taskType || meta?.taskType || "unknown",
       status,
       active: activeRunId === entry.name,
+      totalIterations,
       createdUtc: meta?.createdUtc || task?.createdUtc || null,
       startedUtc: meta?.startedUtc || task?.startedUtc || null,
       finishedUtc: isTerminalStatus(status)
