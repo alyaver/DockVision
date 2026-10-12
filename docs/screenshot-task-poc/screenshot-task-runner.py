@@ -128,9 +128,19 @@ def send_text_human_like(text: str, delay_ms: int) -> None:
             time.sleep(delay_ms / 1000)
 
 
-def take_screenshot(window: Any, file_name: str) -> None:
+def take_screenshot(file_name: str) -> None:
     """Add screenshot capture and PNG saving here. No files are created yet."""
-    pass
+
+    from PIL import ImageGrab
+
+    screenshot = ImageGrab.grab()
+
+    print(f"Image object: {screenshot}")
+    print(f"Image size: {screenshot.size}")
+    print(f"Image format: {screenshot.mode}")
+    print(f"Target file: {file_name}")
+
+    screenshot.save(file_name, format="PNG")
 
 
 def execute_plan(plan: dict[str, Any]) -> None:
@@ -152,8 +162,7 @@ def execute_plan(plan: dict[str, Any]) -> None:
         elif action == "WAIT":
             time.sleep(max(int(step.get("delayMs", step_delay_ms)), 0) / 1000)
         elif action == "SCREENSHOT":
-            take_screenshot(window, step["fileName"])
-            print(f"  Screenshot not implemented; requested: {step['fileName']}")
+            take_screenshot(step["fileName"])
         else:
             raise ValueError(f"Unsupported action '{action}'.")
 
