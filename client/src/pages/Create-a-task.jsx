@@ -46,8 +46,8 @@ const Notepad_Reference_Images = [ // List of reference images for the notepad s
 
 function getCoordinateDetails(details = {}) { // Returns the coordinate details, ensuring x and y are numbers and providing a default reference image ID if not present
     return {
-        x: details.x ?? "",
-        y: details.y ?? "",
+        xPercent: details.xPercent ?? "",
+        yPercent: details.yPercent ?? "",
         referenceImageId: details.referenceImageId || Notepad_Reference_Images[0]?.id || "",
     };
 }
@@ -62,20 +62,20 @@ function getSelectedReferenceImage(referenceImages, referenceImageId) { // Retur
 }
 
 function getMarkerStyle(details, image) { // Returns the style for the marker based on the coordinates and reference image, since the coordinates are relative to the reference image, we need to calculate the percentage position of the marker based on the image dimensions
-    if (!image || details?.x === "" || details?.y === "" || details?.x === undefined || details?.y === undefined) {
+    if (!image || details?.xPercent === "" || details?.yPercent === "" || details?.xPercent === undefined || details?.yPercent === undefined) {
         return null;
     }
     
-    const x = Number(details?.x);
-    const y = Number(details?.y);
+    const x = Number(details?.xPercent);
+    const y = Number(details?.yPercent);
 
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
         return null;
     }
 
     return {
-        left: `${Math.min(Math.max((x / image.width) * 100, 0), 100)}%`,
-        top: `${Math.min(Math.max((y / image.height) * 100, 0), 100)}%`,
+        left: `${Math.min(Math.max(x, 0), 100)}%`,
+        top: `${Math.min(Math.max(y, 0), 100)}%`,
     }
 }
 
@@ -105,8 +105,8 @@ function getCoordinateFromPreview(event, image) { // Returns the coordinates bas
     const boundedClickY = Math.min(Math.max(clickY, 0), previewHeight || rect.height);
 
     return {
-        x: Math.round((boundedClickX / previewWidth) * image.width),
-        y: Math.round((boundedClickY / previewHeight) * image.height),
+        xPercent: Number(((boundedClickX / previewWidth) * 100).toFixed(2)),
+        yPercent: Number(((boundedClickY / previewHeight) * 100).toFixed(2)),
     };
 }
 
@@ -150,7 +150,7 @@ function validateDraftTask(task) {
         }
 
         if (task.targetType === "coordinates") {
-            if (!task.details || task.details.x === undefined || task.details.y === undefined || task.details.x === "" || task.details.y === "") {
+            if (!task.details || task.details.xPercent === undefined || task.details.yPercent === undefined || task.details.xPercent === "" || task.details.yPercent === "") {
                 errors.details = "X and Y coordinates are required for CLICK task.";
             }
         }
@@ -260,14 +260,14 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                         </div>
 
                         <CoordinateReferencePreview image={selectedReferenceImage} details={taskDescription.details} onSelectCoordinates={(coordinates) => {
-                            onChangeDetail("x", coordinates.x);
-                            onChangeDetail("y", coordinates.y);
+                            onChangeDetail("xPercent", coordinates.xPercent);
+                            onChangeDetail("yPercent", coordinates.yPercent);
                         }} />
                         
-                            <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
-                            onChange={(e) => onChangeDetail("x", e.target.value) } />
-                            <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
-                            onChange={(e) => onChangeDetail("y", e.target.value) } />
+                            <input type="number" placeholder="X percent" className="coordinate-input" value={taskDescription.details?.xPercent ?? ""}
+                            onChange={(e) => onChangeDetail("xPercent", e.target.value) } />
+                            <input type="number" placeholder="Y percent" className="coordinate-input" value={taskDescription.details?.yPercent ?? ""}
+                            onChange={(e) => onChangeDetail("yPercent", e.target.value) } />
 
                             {taskDescription.errors?.details && (
                                 <p className="field-error">{taskDescription.errors.details}</p>
@@ -316,7 +316,7 @@ export default function CreateATask() {
     }
 
     function changeTaskType(newType) {
-        setTaskDescription({ ...taskDescription, task: newType, text: "", details: newType === "CLICK" ? { x: "", y: "" } : {}, targetType: newType === "CLICK" ? "named" : "", target: newType === "CLICK" ? "editor" : "", errors: {} });
+        setTaskDescription({ ...taskDescription, task: newType, text: "", details: newType === "CLICK" ? { xPercent: "", yPercent: "" } : {}, targetType: newType === "CLICK" ? "named" : "", target: newType === "CLICK" ? "editor" : "", errors: {} });
     }
 
     function changeTargetType(targetType) { // // When selecting CLICK task, switch between coordinates and named target types
@@ -532,9 +532,9 @@ export default function CreateATask() {
                                         )}
                                          {t.task === "CLICK" && t.targetType === "coordinates" && (
                                             <div>
-                                            <span> (X: {t.details?.x})</span>
+                                            <span> (X%: {t.details?.xPercent})</span>
                                             <br />
-                                            <span> (Y: {t.details.y})</span>
+                                            <span> (Y%: {t.details.yPercent})</span>
                 
                                             </div>
                                             )}
