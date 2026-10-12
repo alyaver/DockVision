@@ -3,6 +3,12 @@ import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 import { serializeTaskPlan } from "../lib/serializeTaskPlan.mjs";
+import notepadMainImage from "../assets/notepadReferences/Notepad-Main.png";
+import notepadFileImage from "../assets/notepadReferences/Notepad-File.png";
+import notepadEditImage from "../assets/notepadReferences/Notepad-Edit.png";
+import notepadFormatImage from "../assets/notepadReferences/Notepad-Format.png";
+import notepadViewImage from "../assets/notepadReferences/Notepad-View.png";
+import notepadHelpImage from "../assets/notepadReferences/Notepad-Help.png";
 
 const Default_Task = [];
 const Task_Options = ["TYPE", "CLICK"];
@@ -20,8 +26,118 @@ const Notepad_Targets = [ // List of targets for the notepad referenced from doc
     "notepad.viewMenu",
     "notepad.helpMenu",
 ]
+const Notepad_Reference_Images = [ // List of reference images for the notepad screen
+    {
+        id: "notepad_screen_main",
+        label: "Notepad Editor",
+        src: notepadMainImage,
+        width: 942,
+        height: 490,
+    },
+    {
+        id: "notepad_screen_file_menu",
+        label: "Notepad File Menu",
+        src: notepadFileImage,
+        width: 943,
+        height: 489,
+    },
+    {
+        id: "notepad_screen_edit_menu",
+        label: "Notepad Edit Menu",
+        src: notepadEditImage,
+        width: 943,
+        height: 490,
+    },
+    {
+        id: "notepad_screen_format_menu",
+        label: "Notepad Format Menu",
+        src: notepadFormatImage,
+        width: 942,
+        height: 492,
+    },
+    {
+        id: "notepad_screen_view_menu",
+        label: "Notepad View Menu",
+        src: notepadViewImage,
+        width: 943,
+        height: 492,
+    },
+    {
+        id: "notepad_screen_help_menu",
+        label: "Notepad Help Menu",
+        src: notepadHelpImage,
+        width: 943,
+        height: 490,
+    }
+]
 
-function  TaskSelect({value, tasks, onChange}) {
+function getCoordinateDetails(details = {}) { // Returns the coordinate details, ensuring x and y are numbers and providing a default reference image ID if not present
+    return {
+        xPercent: details.xPercent ?? "",
+        yPercent: details.yPercent ?? "",
+        referenceImageId: details.referenceImageId || Notepad_Reference_Images[0]?.id || "",
+    };
+}
+
+function getReferenceImageIndex(referenceImages, referenceImageId) { // Returns the index of the reference image based on the referenceImageId, or 0 if not found
+    const index = referenceImages.findIndex((image) => image.id === referenceImageId);
+    return index >= 0 ? index : 0;
+}
+
+function getSelectedReferenceImage(referenceImages, referenceImageId) { // Returns the selected reference image based on the referenceImageId, or the first image if not found
+    return referenceImages.find((image) => image.id === referenceImageId) || referenceImages[0] || null;
+}
+
+function getMarkerStyle(details, image) { // Returns the style for the marker based on the coordinates and reference image, since the coordinates are relative to the reference image, we need to calculate the percentage position of the marker based on the image dimensions
+    if (!image || details?.xPercent === "" || details?.yPercent === "" || details?.xPercent === undefined || details?.yPercent === undefined) {
+        return null;
+    }
+    
+    const x = Number(details?.xPercent);
+    const y = Number(details?.yPercent);
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+    }
+
+    return {
+        left: `${Math.min(Math.max(x, 0), 100)}%`,
+        top: `${Math.min(Math.max(y, 0), 100)}%`,
+    }
+}
+
+function getCoordinateFromPreview(event, image) { // Returns the coordinates based on the marker style and reference image, since the marker style is in percentage, we need to calculate the absolute position based on the image dimensions
+    const rect = event.currentTarget.getBoundingClientRect(); // Get the bounding rectangle of the image container
+
+    const imgAspectRatio = image.width / image.height;
+    const previewAspectRatio = rect.width / rect.height;
+
+    let previewWidth = rect.width;
+    let previewHeight = rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (imgAspectRatio > previewAspectRatio) { // Image is wider than the preview container
+        previewHeight = rect.width / imgAspectRatio;
+        offsetY = (rect.height - previewHeight) / 2;
+    } else { // Image is taller than the preview container
+        previewWidth = rect.height * imgAspectRatio;
+        offsetX = (rect.width - previewWidth) / 2;
+    }
+
+    const clickX = event.clientX - rect.left - (offsetX || 0);
+    const boundedClickX = Math.min(Math.max(clickX, 0), previewWidth || rect.width);
+
+    const clickY = event.clientY - rect.top - (offsetY || 0);
+    const boundedClickY = Math.min(Math.max(clickY, 0), previewHeight || rect.height);
+
+    return {
+        xPercent: Number(((boundedClickX / previewWidth) * 100).toFixed(2)),
+        yPercent: Number(((boundedClickY / previewHeight) * 100).toFixed(2)),
+    };
+}
+
+function TaskSelect({value, tasks, onChange}) {
 return (
   <select value={value} onChange={onChange} className="task-select">
     <option value="">Select a task</option>
@@ -61,17 +177,65 @@ function validateDraftTask(task) {
         }
 
         if (task.targetType === "coordinates") {
-            if (!task.details || task.details.x === undefined || task.details.y === undefined || task.details.x === "" || task.details.y === "") {
+            const xPercent = task.details?.xPercent;
+            const yPercent = task.details?.yPercent;
+
+            if (!task.details || task.details.xPercent === undefined || task.details.yPercent === undefined || task.details.xPercent === "" || task.details.yPercent === "") {
                 errors.details = "X and Y coordinates are required for CLICK task.";
+            } else if (
+                !Number.isFinite(Number(xPercent)) || !Number.isFinite(Number(yPercent)) ||
+                Number(xPercent) < 0 || Number(xPercent) > 100 || Number(yPercent) < 0 || Number(yPercent) > 100) 
+                {
+                errors.details = "X and Y coordinates must be numbers between 0 and 100.";
             }
         }
     }
     return errors;
 }
 
-function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel, onChangeTargetType, onChangeTarget}) {
+function CoordinateReferencePreview({ image, details, onSelectCoordinates }) { // Displays a preview of the reference image with a marker at the specified coordinates
+    const markerStyle = getMarkerStyle(details, image);
+
+    if (!image) {
+        return null;
+    }
+
+    function handlePreviewClick(event) { // When the user clicks on the preview, we calculate the coordinates based on the click position and update the details
+        if (!image) return;
+
+        const coordinates = getCoordinateFromPreview(event, image);
+        if (onSelectCoordinates) {
+            onSelectCoordinates(coordinates);
+        }
+    }
+
+    return (
+        <div className="coordinate-preview">
+            <div
+                className="coordinate-preview-screen"
+                style={{ aspectRatio: `${image.width} / ${image.height}` }}
+                onClick={handlePreviewClick}
+            >
+                {image.src ? (
+                    <img src={image.src} alt={image.label}/>
+                ) : (
+                    <div className="reference-image-placeholder">{image.label}</div>
+                )}
+
+                {markerStyle && (
+                    <div className="coordinate-marker" style={markerStyle}></div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel, onChangeTargetType, onChangeTarget, referenceImages}) {
     const isClick = taskDescription.task === "CLICK";
     const isTyped = taskDescription.task === "TYPE";
+    const selectedReferenceImageId = taskDescription.details?.referenceImageId || Notepad_Reference_Images[0]?.id || "";
+    const selectedReferenceImage = getSelectedReferenceImage(referenceImages, selectedReferenceImageId);
+    const selectedReferenceImageIndex = getReferenceImageIndex(referenceImages, selectedReferenceImageId);
     return (
         <div className="create-task-container">
             <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
@@ -123,11 +287,26 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                     )}
 
                     {taskDescription.targetType === "coordinates" && (
-                        <>
-                            <input type="number" placeholder="Enter X coordinate" className="coordinate-input" value={taskDescription.details?.x ?? ""}
-                            onChange={(e) => onChangeDetail("x", e.target.value) } />
-                            <input type="number" placeholder="Enter Y coordinate" className="coordinate-input" value={taskDescription.details?.y ?? ""}
-                            onChange={(e) => onChangeDetail("y", e.target.value) } />
+                        <><div className="coordinate-image-navigation">
+                            <select className="reference-image-select" value={selectedReferenceImageId} onChange={(e) => onChangeDetail("referenceImageId", e.target.value)}>
+                                {referenceImages.map((image) => (
+                                    <option key={image.id} value={image.id}>
+                                        {image.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <span className="reference-image-index"> Screen {selectedReferenceImageIndex + 1} of {referenceImages.length}</span>
+                        </div>
+
+                        <CoordinateReferencePreview image={selectedReferenceImage} details={taskDescription.details} onSelectCoordinates={(coordinates) => {
+                            onChangeDetail("xPercent", coordinates.xPercent);
+                            onChangeDetail("yPercent", coordinates.yPercent);
+                        }} />
+                        
+                            <input type="number" placeholder="X percent" className="coordinate-input" value={taskDescription.details?.xPercent ?? ""}
+                            onChange={(e) => onChangeDetail("xPercent", e.target.value) } />
+                            <input type="number" placeholder="Y percent" className="coordinate-input" value={taskDescription.details?.yPercent ?? ""}
+                            onChange={(e) => onChangeDetail("yPercent", e.target.value) } />
 
                             {taskDescription.errors?.details && (
                                 <p className="field-error">{taskDescription.errors.details}</p>
@@ -176,11 +355,11 @@ export default function CreateATask() {
     }
 
     function changeTaskType(newType) {
-        setTaskDescription({ ...taskDescription, task: newType, text: "", details: newType === "CLICK" ? { x: "", y: "" } : {}, targetType: newType === "CLICK" ? "named" : "", target: newType === "CLICK" ? "editor" : "", errors: {} });
+        setTaskDescription({ ...taskDescription, task: newType, text: "", details: newType === "CLICK" ? { xPercent: "", yPercent: "" } : {}, targetType: newType === "CLICK" ? "named" : "", target: newType === "CLICK" ? "editor" : "", errors: {} });
     }
 
     function changeTargetType(targetType) { // // When selecting CLICK task, switch between coordinates and named target types
-        setTaskDescription({ ...taskDescription, targetType: targetType, target: targetType === "named" ? "editor" : "", details: targetType === "coordinates" ? { x: "", y: "" } : {}, errors: {} });
+        setTaskDescription({ ...taskDescription, targetType: targetType, target: targetType === "named" ? "editor" : "", details: targetType === "coordinates" ? getCoordinateDetails(taskDescription.details) : {}, errors: {} });
     }
 
     function changeTarget(target) { // When selecting CLICK task, switch between coordinates and named target types
@@ -221,17 +400,18 @@ export default function CreateATask() {
     // saves a new task or an edited task to the task list
     function saveTask() {
         if(!taskDescription) return;
+        const details = taskDescription.targetType === "coordinates" ? getCoordinateDetails(taskDescription.details) : {};
         const errors = validateDraftTask(taskDescription);
         if (Object.keys(errors).length > 0) { // If there are validation errors, set the errors in the taskDescription state and return
             setTaskDescription({ ...taskDescription, errors });
             return;
         }
         if(taskDescription.mode === "new") {
-            const newTask = { id: `step-${nextID}`, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {}, targetType: taskDescription.targetType, target: taskDescription.target};
+            const newTask = { id: `step-${nextID}`, text: taskDescription.text, task: taskDescription.task, details: details, targetType: taskDescription.targetType, target: taskDescription.target};
             setDefTask([...defTask, newTask]);
             setNextID(nextID + 1);
         } else if(taskDescription.mode === "edit") {
-            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task, details: taskDescription.details || {}, targetType: taskDescription.targetType, target: taskDescription.target } : t));
+            setDefTask(defTask.map(t => t.id === taskDescription.id ? { ...t, text: taskDescription.text, task: taskDescription.task, details: details, targetType: taskDescription.targetType, target: taskDescription.target } : t));
         }
         setTaskDescription(null);  
     }
@@ -288,7 +468,7 @@ export default function CreateATask() {
     }   
 
     function onChangeDetail(key, value) {
-        setTaskDescription({ ...taskDescription, details: { ...taskDescription.details, [key]: value } });
+        setTaskDescription((current) => ({ ...current, details: { ...current.details, [key]: value } }));
     }
 
     function buildPlan() {
@@ -365,7 +545,7 @@ export default function CreateATask() {
                                         key={t.id}
                                         tasks={tasks}
                                         taskDescription={taskDescription}
-
+                                        referenceImages={Notepad_Reference_Images}
                                         onChangeText={(v) => setTaskDescription({ ...taskDescription, text:v })}
                                         onChangeTask={changeTaskType}
                                         onChangeTargetType={changeTargetType}
@@ -391,9 +571,9 @@ export default function CreateATask() {
                                         )}
                                          {t.task === "CLICK" && t.targetType === "coordinates" && (
                                             <div>
-                                            <span> (X: {t.details?.x})</span>
+                                            <span> (X%: {t.details?.xPercent})</span>
                                             <br />
-                                            <span> (Y: {t.details.y})</span>
+                                            <span> (Y%: {t.details?.yPercent})</span>
                 
                                             </div>
                                             )}
@@ -420,6 +600,7 @@ export default function CreateATask() {
                                     onCancel={cancelTask}
                                     onChangeTargetType={changeTargetType}
                                     onChangeTarget={changeTarget}
+                                    referenceImages={Notepad_Reference_Images}
                                 />
                             )}
                         </div>

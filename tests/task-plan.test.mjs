@@ -75,7 +75,7 @@ test('builder exports canonical JSON that round-trips with order, IDs and litera
   const drafts = [
     { id: 'click', task: 'CLICK', targetType: 'named', target: 'editor' },
     { id: 'type', task: 'TYPE', text },
-    { id: 'point', task: 'CLICK', targetType: 'coordinates', details: { x: '350', y: '240' } },
+    { id: 'point', task: 'CLICK', targetType: 'coordinates', details: { xPercent: '42.5', yPercent: '33.21' } },
   ];
   for (const ordered of [drafts, [...drafts].reverse()]) {
     const content = serializeTaskPlan(' Example ', ordered);
@@ -86,7 +86,7 @@ test('builder exports canonical JSON that round-trips with order, IDs and litera
     assert.equal(Object.hasOwn(exported, 'steps'), false);
     assert.deepEqual(exported.tasks.map(t => t.id), ordered.map(t => t.id));
     assert.equal(exported.tasks.find(t => t.id === 'type').text, text);
-    assert.deepEqual(exported.tasks.find(t => t.id === 'point').target, { type: 'screenPoint', x: 350, y: 240 });
+    assert.deepEqual(exported.tasks.find(t => t.id === 'point').target, { type: 'namedControl', name: 'editor', xPercent: 42.5, yPercent: 33.21 });
     assert.deepEqual(parser.readTestScript({ fileName: 'plan.json', content }), exported);
   }
 });
