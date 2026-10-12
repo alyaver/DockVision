@@ -140,7 +140,9 @@ def take_screenshot(file_name: str) -> None:
     print(f"Image format: {screenshot.mode}")
     print(f"Target file: {file_name}")
 
-    screenshot.save(file_name, format="PNG")
+    folder = Path("test-screenshot-pngs")
+    folder.mkdir(exist_ok=True)
+    screenshot.save(folder / file_name, format="PNG")
 
 
 def execute_plan(plan: dict[str, Any]) -> None:
