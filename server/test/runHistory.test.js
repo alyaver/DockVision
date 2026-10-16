@@ -105,6 +105,82 @@ test("listRuns resolves the active pointer from the supplied shared root", async
   assert.equal(inactiveRun?.active, false);
 });
 
+test("listRuns does not mark terminal runs active when a pointer lingers", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const terminalStatuses = ["completed", "failed", "cancelled"];
+
+  //create one run for each terminal aggregate status.
+  await Promise.all(
+    terminalStatuses.map((status) =>
+      writeJson(path.join(sharedRoot, "runs", `run-${status}`, "meta.json"), {
+        runId: `run-${status}`,
+        status,
+        finishedUtc: "2026-10-10T00:00:00.000Z",
+      })
+    )
+  );
+
+  for (const status of terminalStatuses) {
+    //point at each terminal run to verify pointer presence does not set active.
+    await writeJson(path.join(sharedRoot, "active", "current-run.json"), {
+      runId: `run-${status}`,
+    });
+
+    const runs = await store.listRuns({ sharedRoot });
+    assert.equal(runs.find((run) => run.runId === `run-${status}`)?.active, false);
+  }
+});
+
+test("listRuns keeps a multi-iteration run active after an intermediate completion", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runId = "run-intermediate-completion";
+
+  //the aggregate metadata remains running while later iterations are pending.
+  await Promise.all([
+    writeJson(path.join(sharedRoot, "runs", runId, "meta.json"), {
+      runId,
+      status: "running",
+      iterationState: { total: 3, current: 2, completed: 1, failed: 0 },
+    }),
+    writeJson(path.join(sharedRoot, "runs", runId, "iterations", "1", "result.json"), {
+      status: "completed",
+    }),
+    writeJson(path.join(sharedRoot, "active", "current-run.json"), {
+      runId,
+      iterationNumber: 2,
+    }),
+  ]);
+
+  //the pointer still represents an active aggregate run after iteration one finishes.
+  const runs = await store.listRuns({ sharedRoot });
+  assert.equal(runs.find((run) => run.runId === runId)?.active, true);
+});
+
+test("listRuns recalculates active state after a terminal history refresh", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runId = "run-refresh-terminal";
+  const metaPath = path.join(sharedRoot, "runs", runId, "meta.json");
+
+  //start with a pointed aggregate run that is still in progress.
+  await Promise.all([
+    writeJson(metaPath, { runId, status: "running" }),
+    writeJson(path.join(sharedRoot, "active", "current-run.json"), { runId }),
+  ]);
+
+  const runningRun = (await store.listRuns({ sharedRoot })).find((run) => run.runId === runId);
+  assert.equal(runningRun?.active, true);
+
+  //preserve the pointer while the aggregate metadata records terminal completion.
+  await writeJson(metaPath, {
+    runId,
+    status: "completed",
+    finishedUtc: "2026-10-10T00:00:00.000Z",
+  });
+
+  const completedRun = (await store.listRuns({ sharedRoot })).find((run) => run.runId === runId);
+  assert.equal(completedRun?.active, false);
+});
+
 test("listRuns prunes only the supplied shared root and preserves its active run", async (t) => {
   const { store } = await createFixture(t);
   const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-history-prune-a-"));
