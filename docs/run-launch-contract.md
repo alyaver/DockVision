@@ -22,7 +22,7 @@ with the Ticket 1 author when merging; do not introduce a parallel validator.
 2. Acquire the process-local admission queue for the shared directory.
 3. Reject an active or indeterminate run without altering its files.
 4. Check the guest container and a fresh, idle agent heartbeat.
-5. Apply the existing terminal-run retention hook.
+5. Request the terminal-run retention hook. Until per-user ownership scope is available, the hook skips destructive cleanup rather than pruning the shared run directory globally.
 6. Write inputs, metadata (including container ID), task, and initial log.
 7. Write a temporary pointer in `active`, then rename it to `current-run.json`.
 8. Return 202 with `{success:true, runId, containerId}`.

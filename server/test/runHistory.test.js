@@ -105,7 +105,7 @@ test("listRuns resolves the active pointer from the supplied shared root", async
   assert.equal(inactiveRun?.active, false);
 });
 
-test("listRuns prunes only the supplied shared root and preserves its active run", async (t) => {
+test("unscoped history cleanup skips deletion and preserves terminal runs", async (t) => {
   const { store } = await createFixture(t);
   const rootA = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-history-prune-a-"));
   const rootB = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-history-prune-b-"));
@@ -145,10 +145,17 @@ test("listRuns prunes only the supplied shared root and preserves its active run
     }),
   ]);
 
-  await store.listRuns({ sharedRoot: rootA });
+  const runs = await store.listRuns({ sharedRoot: rootA });
+  const cleanup = await store.pruneCompletedRuns({ sharedRoot: rootA });
 
   const remainingRuns = await fs.readdir(path.join(rootA, "runs"));
-  assert.equal(remainingRuns.length, 21);
+  assert.equal(runs.length, 22);
+  assert.deepEqual(cleanup, {
+    skipped: true,
+    reason: "OWNERSHIP_SCOPE_REQUIRED",
+    removedRunIds: [],
+  });
+  assert.equal(remainingRuns.length, 22);
   assert.equal(await pathExists(path.join(rootA, "runs", "active-run")), true);
   assert.equal(await pathExists(path.join(rootB, "runs", "sentinel", "meta.json")), true);
 });

@@ -1149,10 +1149,20 @@ async function pruneCompletedRuns({
   activeRoot = ACTIVE_ROOT,
   runsRoot = RUNS_ROOT,
   currentRunPointerPath = CURRENT_RUN_POINTER_PATH,
+  runIds,
 } = {}) {
+  if (!Array.isArray(runIds)) {
+    return {
+      skipped: true,
+      reason: "OWNERSHIP_SCOPE_REQUIRED",
+      removedRunIds: [],
+    };
+  }
+
   await ensureBaseLayout({ sharedRoot, activeRoot, runsRoot });
 
   const entries = await fs.readdir(runsRoot, { withFileTypes: true });
+  const scopedRunIds = new Set(runIds.filter((runId) => typeof runId === "string"));
   const currentRunPointer = await readCurrentRunPointer({
     sharedRoot,
     activeRoot,
@@ -1162,9 +1172,10 @@ async function pruneCompletedRuns({
   const currentRunId = currentRunPointer?.runId || null;
   const expiryCutoff = Date.now() - CLEANUP_POLICY.maxAgeDays * 24 * 60 * 60 * 1000;
   const completedRuns = [];
+  const removedRunIds = [];
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) {
+    if (!entry.isDirectory() || !scopedRunIds.has(entry.name)) {
       continue;
     }
 
@@ -1205,7 +1216,14 @@ async function pruneCompletedRuns({
 
     const runPaths = getRunPaths(candidate.runId, runsRoot);
     await fs.rm(runPaths.runRoot, { recursive: true, force: true });
+    removedRunIds.push(candidate.runId);
   }
+
+  return {
+    skipped: false,
+    reason: null,
+    removedRunIds,
+  };
 }
 
 async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
