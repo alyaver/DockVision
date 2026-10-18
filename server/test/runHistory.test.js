@@ -22,6 +22,12 @@ async function writeJson(filePath, value) {
   await fs.writeFile(filePath, JSON.stringify(value), "utf8");
 }
 
+async function writeTextFile(filePath, value) {
+  //create parent directories for fixture files that do not contain JSON
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, value, "utf8");
+}
+
 async function pathExists(filePath) {
   //distinguish an expected missing path from an unexpected filesystem failure
   try {
@@ -304,6 +310,84 @@ test("scoped cleanup preserves terminal runs without valid completion timestamps
 
   assert.deepEqual(cleanup.removedRunIds, ["run-valid-30"]);
   assert.equal(await pathExists(path.join(runsRoot, "run-invalid")), true);
+});
+
+//verify recursive cleanup stays inside the selected run directory
+test("scoped cleanup removes every server-managed file from a selected run only", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const hourMs = 60 * 60 * 1000;
+  const selectedRunId = "user-a-expired";
+  const inScopeRecentRunId = "user-a-recent";
+  const outOfScopeRunId = "user-b-expired";
+  const externalExportPath = path.join(sharedRoot, "exports", `${selectedRunId}.zip`);
+
+  await Promise.all([
+    //write an age-eligible user-a run with every server-managed content category
+    writeTerminalRun(runsRoot, selectedRunId, nowMs - 720 * hourMs),
+    writeTerminalRun(runsRoot, inScopeRecentRunId, nowMs),
+    writeTerminalRun(runsRoot, outOfScopeRunId, nowMs - 720 * hourMs),
+    writeJson(path.join(runsRoot, selectedRunId, "task.json"), { runId: selectedRunId }),
+    writeJson(path.join(runsRoot, selectedRunId, "task-plan.json"), { tasks: [] }),
+    writeTextFile(path.join(runsRoot, selectedRunId, "inputs", "config.json"), "{}"),
+    writeTextFile(path.join(runsRoot, selectedRunId, "scripts", "runner.py"), "print('run')"),
+    writeTextFile(path.join(runsRoot, selectedRunId, "logs", "run.log"), "completed"),
+    writeTextFile(path.join(runsRoot, selectedRunId, "screenshots", "screen.png"), "png"),
+    writeTextFile(path.join(runsRoot, selectedRunId, "artifacts", "report.txt"), "report"),
+    writeTextFile(path.join(runsRoot, selectedRunId, "iterations", "1", "result.json"), "{}"),
+    writeTextFile(path.join(runsRoot, selectedRunId, "cancel-request.json"), "{}"),
+    writeTextFile(externalExportPath, "exported copy"),
+  ]);
+
+  //scope cleanup to user-a fixture IDs and leave user-b outside that scope
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds: [selectedRunId, inScopeRecentRunId],
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, [selectedRunId]);
+  assert.equal(await pathExists(path.join(runsRoot, selectedRunId)), false);
+  assert.equal(await pathExists(path.join(runsRoot, inScopeRecentRunId)), true);
+  assert.equal(await pathExists(path.join(runsRoot, outOfScopeRunId)), true);
+  assert.equal(await pathExists(externalExportPath), true);
+});
+
+//verify protected lifecycle records are never selected for deletion
+test("scoped cleanup preserves active and contradictory terminal records", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const expiredUtc = new Date(nowMs - 720 * 60 * 60 * 1000).toISOString();
+  const activeRunId = "active-terminal";
+  const contradictoryRunId = "contradictory-terminal";
+
+  await Promise.all([
+    writeTerminalRun(runsRoot, activeRunId, nowMs - 720 * 60 * 60 * 1000),
+    writeJson(path.join(sharedRoot, "active", "current-run.json"), { runId: activeRunId }),
+    writeJson(path.join(runsRoot, contradictoryRunId, "meta.json"), {
+      runId: contradictoryRunId,
+      status: "completed",
+      finishedUtc: expiredUtc,
+    }),
+    writeJson(path.join(runsRoot, contradictoryRunId, "result.json"), {
+      runId: contradictoryRunId,
+      status: "failed",
+      finishedUtc: expiredUtc,
+    }),
+  ]);
+
+  //submit both protected records so retention must exclude them by lifecycle state
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds: [activeRunId, contradictoryRunId],
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, []);
+  assert.equal(await pathExists(path.join(runsRoot, activeRunId)), true);
+  assert.equal(await pathExists(path.join(runsRoot, contradictoryRunId)), true);
 });
 
 test("retention selection uses run IDs to order equal completion timestamps deterministically", async (t) => {
