@@ -34,6 +34,10 @@ Windows filesystem; deployments using different/network filesystems must verify
 their rename guarantees. This is atomic visibility, not a power-loss durability
 guarantee.
 
+## Terminal history retention
+
+When Task 317 provides a safe per-user ownership scope, retention keeps at most 30 terminal runs for that user. A terminal run becomes age-eligible at 720 elapsed hours from its authoritative terminal completion timestamp. Count and age eligibility apply independently. Terminal runs without a valid completion timestamp are preserved and excluded from count ordering until their completion time can be established reliably.
+
 On Windows, replacement of an existing pointer can fail with `EPERM` on the
 VM-shared directory even when first publication succeeds. `publishPointer` tries
 rename first, then uses Windows `File.Replace` through a noninteractive PowerShell

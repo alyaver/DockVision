@@ -2,8 +2,8 @@ const fs = require("fs/promises");
 const path = require("path");
 
 const CLEANUP_POLICY = {
-  maxCompletedRuns: 20,
-  maxAgeDays: 7,
+  maxTerminalRuns: 30,
+  maxAgeHours: 720,
 };
 
 
@@ -293,7 +293,7 @@ async function readLogLines(filePath, limit = 200) {
 }
 
 function describeCleanupPolicy() {
-  return `Retain the latest ${CLEANUP_POLICY.maxCompletedRuns} completed or failed runs for up to ${CLEANUP_POLICY.maxAgeDays} days. Delete anything older or beyond that cap when a new run starts.`;
+  return `Retain up to ${CLEANUP_POLICY.maxTerminalRuns} terminal runs for ${CLEANUP_POLICY.maxAgeHours} hours from terminal completion when a safe ownership scope is available.`;
 }
 
 function hasRemainingIterations(meta) {
@@ -1146,10 +1146,11 @@ async function resolveRunFilePath(runId, relativePath) {
 
 async function pruneCompletedRuns({
   sharedRoot = SHARED_ROOT,
-  activeRoot = ACTIVE_ROOT,
-  runsRoot = RUNS_ROOT,
-  currentRunPointerPath = CURRENT_RUN_POINTER_PATH,
+  activeRoot,
+  runsRoot,
+  currentRunPointerPath,
   runIds,
+  now = Date.now,
 } = {}) {
   if (!Array.isArray(runIds)) {
     return {
@@ -1159,18 +1160,29 @@ async function pruneCompletedRuns({
     };
   }
 
-  await ensureBaseLayout({ sharedRoot, activeRoot, runsRoot });
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  const storagePaths = {
+    sharedRoot: resolvedSharedRoot,
+    activeRoot: activeRoot || path.join(resolvedSharedRoot, "active"),
+    runsRoot: runsRoot || path.join(resolvedSharedRoot, "runs"),
+  };
+  storagePaths.currentRunPointerPath = currentRunPointerPath || path.join(
+    storagePaths.activeRoot,
+    "current-run.json"
+  );
 
-  const entries = await fs.readdir(runsRoot, { withFileTypes: true });
+  await ensureBaseLayout(storagePaths);
+
+  const nowMs = now();
+  if (!Number.isFinite(nowMs)) {
+    throw new TypeError("Cleanup clock must return a finite timestamp.");
+  }
+
+  const entries = await fs.readdir(storagePaths.runsRoot, { withFileTypes: true });
   const scopedRunIds = new Set(runIds.filter((runId) => typeof runId === "string"));
-  const currentRunPointer = await readCurrentRunPointer({
-    sharedRoot,
-    activeRoot,
-    runsRoot,
-    currentRunPointerPath,
-  });
+  const currentRunPointer = await readCurrentRunPointer(storagePaths);
   const currentRunId = currentRunPointer?.runId || null;
-  const expiryCutoff = Date.now() - CLEANUP_POLICY.maxAgeDays * 24 * 60 * 60 * 1000;
+  const expiryCutoff = nowMs - CLEANUP_POLICY.maxAgeHours * 60 * 60 * 1000;
   const completedRuns = [];
   const removedRunIds = [];
 
@@ -1183,7 +1195,7 @@ async function pruneCompletedRuns({
       continue;
     }
 
-    const runPaths = getRunPaths(entry.name, runsRoot);
+    const runPaths = getRunPaths(entry.name, storagePaths.runsRoot);
     const [meta, result] = await Promise.all([
       readJsonIfExists(runPaths.metaPath),
       readJsonIfExists(runPaths.resultPath),
@@ -1194,13 +1206,20 @@ async function pruneCompletedRuns({
       continue;
     }
 
-    const sortValue =
-      Date.parse(result?.finishedUtc || meta?.finishedUtc || meta?.createdUtc || 0) || 0;
+    const resultFinishedMs = Date.parse(result?.finishedUtc || "");
+    const metaFinishedMs = Date.parse(meta?.finishedUtc || "");
+    const finishedMs = Number.isNaN(resultFinishedMs)
+      ? metaFinishedMs
+      : resultFinishedMs;
+
+    if (Number.isNaN(finishedMs)) {
+      continue;
+    }
 
     completedRuns.push({
       runId: entry.name,
-      finishedMs: sortValue,
-      removeForAge: sortValue > 0 && sortValue < expiryCutoff,
+      finishedMs,
+      removeForAge: finishedMs <= expiryCutoff,
     });
   }
 
@@ -1208,13 +1227,13 @@ async function pruneCompletedRuns({
 
   for (let index = 0; index < completedRuns.length; index += 1) {
     const candidate = completedRuns[index];
-    const removeForCount = index >= CLEANUP_POLICY.maxCompletedRuns;
+    const removeForCount = index >= CLEANUP_POLICY.maxTerminalRuns;
 
     if (!candidate.removeForAge && !removeForCount) {
       continue;
     }
 
-    const runPaths = getRunPaths(candidate.runId, runsRoot);
+    const runPaths = getRunPaths(candidate.runId, storagePaths.runsRoot);
     await fs.rm(runPaths.runRoot, { recursive: true, force: true });
     removedRunIds.push(candidate.runId);
   }

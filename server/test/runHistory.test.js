@@ -32,6 +32,26 @@ async function pathExists(filePath) {
   }
 }
 
+async function writeTerminalRun(runsRoot, runId, finishedMs, options = {}) {
+  const finishedUtc = options.finishedUtc === undefined
+    ? new Date(finishedMs).toISOString()
+    : options.finishedUtc;
+  const status = options.status || "completed";
+  await Promise.all([
+    writeJson(path.join(runsRoot, runId, "meta.json"), {
+      runId,
+      status,
+      createdUtc: options.createdUtc || "2000-01-01T00:00:00.000Z",
+      ...(finishedUtc === undefined ? {} : { finishedUtc }),
+    }),
+    writeJson(path.join(runsRoot, runId, "result.json"), {
+      runId,
+      status,
+      ...(finishedUtc === undefined ? {} : { finishedUtc }),
+    }),
+  ]);
+}
+
 test("listRuns returns configured iteration counts with a legacy single-iteration fallback", async (t) => {
   const { sharedRoot, store } = await createFixture(t);
   const runsRoot = path.join(sharedRoot, "runs");
@@ -158,4 +178,115 @@ test("unscoped history cleanup skips deletion and preserves terminal runs", asyn
   assert.equal(remainingRuns.length, 22);
   assert.equal(await pathExists(path.join(rootA, "runs", "active-run")), true);
   assert.equal(await pathExists(path.join(rootB, "runs", "sentinel", "meta.json")), true);
+});
+
+test("scoped cleanup retains 29 terminal runs", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const runIds = Array.from({ length: 29 }, (_, index) => `run-29-${index}`);
+
+  await Promise.all(runIds.map((runId, index) => (
+    writeTerminalRun(runsRoot, runId, nowMs - index * 1000)
+  )));
+
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, []);
+  assert.equal((await fs.readdir(runsRoot)).length, 29);
+});
+
+test("scoped cleanup retains 30 terminal runs", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const runIds = Array.from({ length: 30 }, (_, index) => `run-30-${index}`);
+
+  await Promise.all(runIds.map((runId, index) => (
+    writeTerminalRun(runsRoot, runId, nowMs - index * 1000)
+  )));
+
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, []);
+  assert.equal((await fs.readdir(runsRoot)).length, 30);
+});
+
+test("scoped cleanup removes the oldest valid completion when 31 terminal runs exist", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const runIds = Array.from({ length: 31 }, (_, index) => `run-${index}`);
+
+  await Promise.all(runIds.map((runId, index) => (
+    writeTerminalRun(runsRoot, runId, nowMs - index * 1000)
+  )));
+
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, ["run-30"]);
+  assert.equal(await pathExists(path.join(runsRoot, "run-30")), false);
+  assert.equal(await pathExists(path.join(runsRoot, "run-29")), true);
+});
+
+test("scoped cleanup expires terminal runs at the 720-hour completion boundary", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const hourMs = 60 * 60 * 1000;
+  const runIds = ["run-boundary", "run-recent", "run-expired"];
+
+  await Promise.all([
+    writeTerminalRun(runsRoot, "run-boundary", nowMs - 720 * hourMs),
+    writeTerminalRun(runsRoot, "run-recent", nowMs - 720 * hourMs + 1),
+    writeTerminalRun(runsRoot, "run-expired", nowMs - 720 * hourMs - 1),
+  ]);
+
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(cleanup.removedRunIds.sort(), ["run-boundary", "run-expired"]);
+  assert.equal(await pathExists(path.join(runsRoot, "run-recent")), true);
+});
+
+test("scoped cleanup preserves terminal runs without valid completion timestamps", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const validRunIds = Array.from({ length: 31 }, (_, index) => `run-valid-${index}`);
+  const runIds = [...validRunIds, "run-invalid"];
+
+  await Promise.all([
+    ...validRunIds.map((runId, index) => (
+      writeTerminalRun(runsRoot, runId, nowMs - index * 1000)
+    )),
+    writeTerminalRun(runsRoot, "run-invalid", nowMs, {
+      finishedUtc: "not-a-timestamp",
+      createdUtc: "2000-01-01T00:00:00.000Z",
+    }),
+  ]);
+
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, ["run-valid-30"]);
+  assert.equal(await pathExists(path.join(runsRoot, "run-invalid")), true);
 });
