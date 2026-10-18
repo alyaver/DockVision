@@ -28,6 +28,16 @@ async function writeTextFile(filePath, value) {
   await fs.writeFile(filePath, value, "utf8");
 }
 
+//create a test-controlled promise for deterministic overlap checks
+function createDeferred() {
+  //control asynchronous deletion order without relying on timing delays
+  let resolve;
+  const promise = new Promise((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 async function pathExists(filePath) {
   //distinguish an expected missing path from an unexpected filesystem failure
   try {
@@ -195,6 +205,8 @@ test("unscoped history cleanup skips deletion and preserves terminal runs", asyn
     skipped: true,
     reason: "OWNERSHIP_SCOPE_REQUIRED",
     removedRunIds: [],
+    failedRunIds: [],
+    deletionFailures: [],
   });
   assert.equal(remainingRuns.length, 22);
   assert.equal(await pathExists(path.join(rootA, "runs", "active-run")), true);
@@ -211,6 +223,7 @@ test("scoped cleanup retains 29 terminal runs", async (t) => {
     writeTerminalRun(runsRoot, runId, nowMs - index * 1000)
   )));
 
+  //fail only the first candidate and allow the second deletion to reach the filesystem
   const cleanup = await store.pruneCompletedRuns({
     sharedRoot,
     runIds,
@@ -388,6 +401,133 @@ test("scoped cleanup preserves active and contradictory terminal records", async
   assert.deepEqual(cleanup.removedRunIds, []);
   assert.equal(await pathExists(path.join(runsRoot, activeRunId)), true);
   assert.equal(await pathExists(path.join(runsRoot, contradictoryRunId)), true);
+});
+
+//verify one deletion failure does not prevent unrelated cleanup or a later retry
+test("scoped cleanup reports deletion failures and retries the failed candidate later", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const runIds = ["expired-failure", "expired-success"];
+
+  await Promise.all(runIds.map((runId) => (
+    writeTerminalRun(runsRoot, runId, nowMs - 720 * 60 * 60 * 1000)
+  )));
+
+  //fail only the first candidate and allow the second deletion to reach the filesystem
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+    removeRun: async (runRoot, options) => {
+      if (runRoot.endsWith("expired-failure")) {
+        const error = new Error("fixture deletion failure");
+        error.code = "EACCES";
+        throw error;
+      }
+      return fs.rm(runRoot, options);
+    },
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, ["expired-success"]);
+  assert.deepEqual(cleanup.failedRunIds, ["expired-failure"]);
+  assert.deepEqual(cleanup.deletionFailures, [{
+    runId: "expired-failure",
+    code: "EACCES",
+    message: "fixture deletion failure",
+  }]);
+  assert.equal(await pathExists(path.join(runsRoot, "expired-failure")), true);
+  assert.equal(await pathExists(path.join(runsRoot, "expired-success")), false);
+
+  //use the normal remover on the next scoped cleanup opportunity
+  const retry = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+  });
+
+  assert.deepEqual(retry.removedRunIds, ["expired-failure"]);
+  assert.deepEqual(retry.failedRunIds, []);
+  assert.equal(await pathExists(path.join(runsRoot, "expired-failure")), false);
+});
+
+//verify overlapping scoped cleanups serialize filesystem deletion and converge safely
+test("overlapping scoped cleanups serialize deletion and tolerate an already removed candidate", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const runIds = ["expired-first", "expired-second"];
+  const firstDeletionStarted = createDeferred();
+  const releaseFirstDeletion = createDeferred();
+  let removeCalls = 0;
+
+  await Promise.all(runIds.map((runId) => (
+    writeTerminalRun(runsRoot, runId, nowMs - 720 * 60 * 60 * 1000)
+  )));
+
+  //hold the first deletion open while a second scoped cleanup joins the same queue
+  const firstCleanup = store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+    removeRun: async (runRoot, options) => {
+      removeCalls += 1;
+      if (removeCalls === 1) {
+        firstDeletionStarted.resolve();
+        await releaseFirstDeletion.promise;
+      }
+      return fs.rm(runRoot, options);
+    },
+  });
+
+  await firstDeletionStarted.promise;
+  const secondCleanup = store.pruneCompletedRuns({ sharedRoot, runIds, now: () => nowMs });
+  const unscopedCleanup = await store.pruneCompletedRuns({ sharedRoot });
+
+  assert.equal(removeCalls, 1);
+  assert.equal(unscopedCleanup.skipped, true);
+  assert.deepEqual(unscopedCleanup.removedRunIds, []);
+
+  //release the first cleanup then confirm the queued call observes the final filesystem state
+  releaseFirstDeletion.resolve();
+  const [firstResult, secondResult] = await Promise.all([firstCleanup, secondCleanup]);
+
+  assert.deepEqual(firstResult.removedRunIds, runIds);
+  assert.deepEqual(secondResult.removedRunIds, []);
+  assert.deepEqual(secondResult.failedRunIds, []);
+  assert.equal(await pathExists(path.join(runsRoot, "expired-first")), false);
+  assert.equal(await pathExists(path.join(runsRoot, "expired-second")), false);
+});
+
+//verify an externally removed selected directory is an idempotent cleanup outcome
+test("scoped cleanup continues after a selected directory is already removed", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runsRoot = path.join(sharedRoot, "runs");
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const runIds = ["expired-missing", "expired-remaining"];
+
+  await Promise.all(runIds.map((runId) => (
+    writeTerminalRun(runsRoot, runId, nowMs - 720 * 60 * 60 * 1000)
+  )));
+
+  //simulate a directory removed after selection while allowing the other candidate to delete
+  const cleanup = await store.pruneCompletedRuns({
+    sharedRoot,
+    runIds,
+    now: () => nowMs,
+    removeRun: async (runRoot, options) => {
+      if (runRoot.endsWith("expired-missing")) {
+        const error = new Error("fixture directory was removed");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return fs.rm(runRoot, options);
+    },
+  });
+
+  assert.deepEqual(cleanup.removedRunIds, runIds);
+  assert.deepEqual(cleanup.failedRunIds, []);
+  assert.equal(await pathExists(path.join(runsRoot, "expired-remaining")), false);
 });
 
 test("retention selection uses run IDs to order equal completion timestamps deterministically", async (t) => {

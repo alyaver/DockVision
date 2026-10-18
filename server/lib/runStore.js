@@ -7,6 +7,9 @@ const CLEANUP_POLICY = {
   maxAgeHours: 720,
 };
 
+//serialize cleanup per shared root without treating this process-local queue as a distributed lock
+const cleanupQueues = new Map();
+
 
 const TERMINAL_STATUSES = new Set([                                         //start of lifecycle definitions
   "completed",
@@ -1195,23 +1198,25 @@ async function resolveRunFilePath(runId, relativePath) {
   return resolvedPath;
 }
 
-async function pruneCompletedRuns({
+//build one process-local queue key for each shared storage root
+function getCleanupQueueKey(sharedRoot) {
+  //normalize windows paths so case-only variants share one cleanup queue
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  return process.platform === "win32"
+    ? resolvedSharedRoot.toLowerCase()
+    : resolvedSharedRoot;
+}
+
+//scan select and delete only records from an explicit cleanup scope
+async function pruneScopedCompletedRuns({
   sharedRoot = SHARED_ROOT,
   activeRoot,
   runsRoot,
   currentRunPointerPath,
   runIds,
   now = Date.now,
+  removeRun = fs.rm,
 } = {}) {
-  //refuse destructive cleanup until a caller provides the run IDs it safely owns
-  if (!Array.isArray(runIds)) {
-    return {
-      skipped: true,
-      reason: "OWNERSHIP_SCOPE_REQUIRED",
-      removedRunIds: [],
-    };
-  }
-
   //resolve dependent storage paths from the supplied root so fixture cleanup never reaches live storage
   const resolvedSharedRoot = path.resolve(sharedRoot);
   const storagePaths = {
@@ -1274,17 +1279,71 @@ async function pruneCompletedRuns({
 
   //keep selection pure and limit this function to scoped record loading plus filesystem deletion
   const selectedRunIds = selectRunsForRetention(retentionRecords, { now });
+  const removedRunIds = [];
+  const failedRunIds = [];
+  const deletionFailures = [];
+
   for (const runId of selectedRunIds) {
     //delete only run directories selected from the explicit scope above
     const runPaths = getRunPaths(runId, storagePaths.runsRoot);
-    await fs.rm(runPaths.runRoot, { recursive: true, force: true });
+    try {
+      await removeRun(runPaths.runRoot, { recursive: true, force: true });
+      removedRunIds.push(runId);
+    } catch (error) {
+      //another cleanup may have removed the selected directory after this operation scanned it
+      if (error?.code === "ENOENT") {
+        removedRunIds.push(runId);
+        continue;
+      }
+
+      //keep failed candidates on disk so a later scoped cleanup can retry them
+      failedRunIds.push(runId);
+      deletionFailures.push({
+        runId,
+        code: error?.code || "CLEANUP_DELETE_FAILED",
+        message: error?.message || "Unable to remove the run directory.",
+      });
+    }
   }
 
   return {
     skipped: false,
     reason: null,
-    removedRunIds: selectedRunIds,
+    removedRunIds,
+    failedRunIds,
+    deletionFailures,
   };
+}
+
+//fail closed for unscoped calls and serialize scoped cleanup by shared root
+async function pruneCompletedRuns(options = {}) {
+  const { sharedRoot = SHARED_ROOT, runIds } = options;
+
+  //refuse destructive cleanup until a caller provides the run IDs it safely owns
+  if (!Array.isArray(runIds)) {
+    return {
+      skipped: true,
+      reason: "OWNERSHIP_SCOPE_REQUIRED",
+      removedRunIds: [],
+      failedRunIds: [],
+      deletionFailures: [],
+    };
+  }
+
+  const key = getCleanupQueueKey(sharedRoot);
+  const previous = cleanupQueues.get(key) || Promise.resolve();
+  //continue after a prior unexpected failure so one cleanup does not permanently block later retries
+  const pending = previous.catch(() => {}).then(() => pruneScopedCompletedRuns(options));
+  cleanupQueues.set(key, pending);
+
+  try {
+    return await pending;
+  } finally {
+    //only remove this queue entry when no newer scoped cleanup is waiting behind it
+    if (cleanupQueues.get(key) === pending) {
+      cleanupQueues.delete(key);
+    }
+  }
 }
 
 async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
