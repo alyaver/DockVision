@@ -1,6 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 
+//define retention limits independently from ownership; callers must still supply a safe scope
 const CLEANUP_POLICY = {
   maxTerminalRuns: 30,
   maxAgeHours: 720,
@@ -293,12 +294,62 @@ async function readLogLines(filePath, limit = 200) {
 }
 
 function describeCleanupPolicy() {
+  //keep the user-facing policy description aligned with the selection constants above
   return `Retain up to ${CLEANUP_POLICY.maxTerminalRuns} terminal runs for ${CLEANUP_POLICY.maxAgeHours} hours from terminal completion when a safe ownership scope is available.`;
 }
 
+function compareRunIds(left, right) {
+  //provide a stable secondary sort order when terminal completion times are identical
+  if (left === right) {
+    return 0;
+  }
+
+  return left < right ? -1 : 1;
+}
+
+function selectRunsForRetention(records, { now = Date.now } = {}) {
+  //select removable run IDs from an already-scoped collection without reading or deleting files
+  const nowMs = now();
+  if (!Number.isFinite(nowMs)) {
+    throw new TypeError("Cleanup clock must return a finite timestamp.");
+  }
+
+  //calculate the inclusive completion-time cutoff from the injected clock for repeatable selection
+  const expiryCutoff = nowMs - CLEANUP_POLICY.maxAgeHours * 60 * 60 * 1000;
+  const completedRuns = records
+    .filter((record) => {
+      //retention only considers confirmed, inactive terminal records from the supplied scope
+      return record &&
+        typeof record.runId === "string" &&
+        !record.active &&
+        !record.indeterminate &&
+        isTerminalStatus(record.status);
+    })
+    .map((record) => ({
+      runId: record.runId,
+      finishedMs: Date.parse(record.finishedUtc || ""),
+    }))
+    .filter((record) => {
+      //missing completion time is indeterminate, so it cannot be age- or count-selected
+      return !Number.isNaN(record.finishedMs);
+    });
+
+  completedRuns.sort((left, right) => {
+    //equal completion times use the run ID so retention selection remains reproducible
+    return right.finishedMs - left.finishedMs || compareRunIds(left.runId, right.runId);
+  });
+
+  return completedRuns
+    .filter((record, index) => {
+      //count and age eligibility are independent: either condition selects the record
+      return record.finishedMs <= expiryCutoff || index >= CLEANUP_POLICY.maxTerminalRuns;
+    })
+    .map((record) => record.runId);
+}
+
 function hasRemainingIterations(meta) {
-  // Metadata is the aggregate source of truth. The selected iteration may have
-  // a terminal result while later requested iterations have not been published.
+  //metadata is the aggregate source of truth. the selected iteration may have
+  //a terminal result while later requested iterations have not been published
   const totalIterations = toPositiveInteger(meta?.iterationState?.total);
   const completedIterations = toNonNegativeInteger(meta?.iterationState?.completed);
   return totalIterations !== null &&
@@ -309,15 +360,15 @@ function normalizeAggregateStatus(meta, candidateStatus) {
   const normalizedStatus = String(candidateStatus || "queued").toLowerCase();
   const metaStatus = String(meta?.status || "").toLowerCase();
 
-  // Cancellation or failure may terminate a sequence before every requested
-  // iteration runs. A completed current iteration must not reopen that run.
+  //cancellation or failure may terminate a sequence before every requested
+  // iteration runs. a completed current iteration must not reopen that run
   if (metaStatus === "cancelled" || metaStatus === "failed") {
     return metaStatus;
   }
 
   if (normalizedStatus === "completed" && hasRemainingIterations(meta)) {
-    // A stale per-iteration success must not make history, retention, or the
-    // launch gate treat the whole sequence as complete during supervisor handoff.
+    //a stale per-iteration success must not make history, retention, or the
+    // launch gate treat the whole sequence as complete during supervisor handoff
     return metaStatus === "cancelling"
       ? "cancelling"
       : "running";
@@ -339,8 +390,8 @@ async function readCurrentRunPointer({
 function deriveRunStatus(meta, task, result, heartbeat, isActiveRun) {
   const resultStatus = String(result?.status || "").toLowerCase();
   if (resultStatus === "completed") {
-    // An iteration result is not the run result. The supervisor advances the
-    // completed count after observing it, and only the final count is terminal.
+    //an iteration result is not the run result. the supervisor advances the
+    // completed count after observing it, and only the final count is terminal
     return normalizeAggregateStatus(meta, resultStatus);
   }
 
@@ -393,19 +444,19 @@ function deriveRunProgress(meta, task, result, selectedIterationNumber) {
     toPositiveInteger(selectedIterationNumber) ||
     toPositiveInteger(task?.iterationNumber);
   // Zero is a valid count before the first iteration finishes; unlike current
-  // and total, completed must not be restricted to positive integers.
+  // and total, completed must not be restricted to positive integers
   const completedIterations = toNonNegativeInteger(iterationState.completed);
 
-  // Custom runners currently emit steps at the result root, while built-in
-  // result writers may nest them under details. This maps persisted telemetry
-  // only; null step fields tell the UI that the runner has not published it.
+  //custom runners currently emit steps at the result root, while built-in
+  // result writers may nest them under details. this maps persisted telemetry
+  // only; null step fields tell the UI that the runner has not published it
   const resultSteps = Array.isArray(result?.steps)
     ? result.steps
     : Array.isArray(result?.details?.steps)
       ? result.details.steps
       : null;
-  // Result writers append steps in observation order, making the final entry
-  // the current step for active runs and the last-observed step after completion.
+  //result writers append steps in observation order, making the final entry
+  // the current step for active runs and the last-observed step after completion
   const lastStep = resultSteps?.length ? resultSteps[resultSteps.length - 1] : null;
 
   return {
@@ -448,7 +499,7 @@ async function requestRunCancellation2(runId) {
   const runPaths = getRunPaths(runId);
   const requestedUtc = nowIso();
 
-  // The guest agent watches this run-scoped marker while executing.
+  //the guest agent watches this run-scoped marker while executing
   await writeJson(path.join(runPaths.runRoot, "cancel.json"), {
     runId,
     requestedUtc,
@@ -1152,6 +1203,7 @@ async function pruneCompletedRuns({
   runIds,
   now = Date.now,
 } = {}) {
+  //refuse destructive cleanup until a caller provides the run IDs it safely owns
   if (!Array.isArray(runIds)) {
     return {
       skipped: true,
@@ -1160,6 +1212,7 @@ async function pruneCompletedRuns({
     };
   }
 
+  //resolve dependent storage paths from the supplied root so fixture cleanup never reaches live storage
   const resolvedSharedRoot = path.resolve(sharedRoot);
   const storagePaths = {
     sharedRoot: resolvedSharedRoot,
@@ -1171,26 +1224,23 @@ async function pruneCompletedRuns({
     "current-run.json"
   );
 
+  //ensure the scoped layout exists before examining candidate run directories
   await ensureBaseLayout(storagePaths);
 
-  const nowMs = now();
-  if (!Number.isFinite(nowMs)) {
-    throw new TypeError("Cleanup clock must return a finite timestamp.");
-  }
-
   const entries = await fs.readdir(storagePaths.runsRoot, { withFileTypes: true });
+  //ignore non-string IDs and use a set for membership checks while scanning disk
   const scopedRunIds = new Set(runIds.filter((runId) => typeof runId === "string"));
   const currentRunPointer = await readCurrentRunPointer(storagePaths);
   const currentRunId = currentRunPointer?.runId || null;
-  const expiryCutoff = nowMs - CLEANUP_POLICY.maxAgeHours * 60 * 60 * 1000;
-  const completedRuns = [];
-  const removedRunIds = [];
+  const retentionRecords = [];
 
   for (const entry of entries) {
+    //never inspect files outside the explicitly supplied scope
     if (!entry.isDirectory() || !scopedRunIds.has(entry.name)) {
       continue;
     }
 
+    //the active pointer always wins over terminal-looking files during lifecycle handoff
     if (entry.name === currentRunId) {
       continue;
     }
@@ -1201,47 +1251,39 @@ async function pruneCompletedRuns({
       readJsonIfExists(runPaths.resultPath),
     ]);
 
+    //normalize aggregate state before selection so incomplete multi-iteration runs remain protected
     const status = normalizeAggregateStatus(meta, result?.status || meta?.status || "queued");
-    if (!isTerminalStatus(status)) {
-      continue;
-    }
-
+    const metaStatus = String(meta?.status || "").toLowerCase();
+    const resultStatus = String(result?.status || "").toLowerCase();
+    const contradictory = Boolean(metaStatus && resultStatus && metaStatus !== resultStatus);
+    //prefer a valid terminal result time, then use terminal metadata when the result time is unavailable
     const resultFinishedMs = Date.parse(result?.finishedUtc || "");
-    const metaFinishedMs = Date.parse(meta?.finishedUtc || "");
-    const finishedMs = Number.isNaN(resultFinishedMs)
-      ? metaFinishedMs
-      : resultFinishedMs;
+    const finishedUtc = Number.isNaN(resultFinishedMs)
+      ? meta?.finishedUtc || null
+      : result.finishedUtc;
 
-    if (Number.isNaN(finishedMs)) {
-      continue;
-    }
-
-    completedRuns.push({
+    retentionRecords.push({
       runId: entry.name,
-      finishedMs,
-      removeForAge: finishedMs <= expiryCutoff,
+      status,
+      active: false,
+      finishedUtc,
+      //a disagreement between persisted lifecycle views must not trigger deletion
+      indeterminate: contradictory,
     });
   }
 
-  completedRuns.sort((left, right) => right.finishedMs - left.finishedMs);
-
-  for (let index = 0; index < completedRuns.length; index += 1) {
-    const candidate = completedRuns[index];
-    const removeForCount = index >= CLEANUP_POLICY.maxTerminalRuns;
-
-    if (!candidate.removeForAge && !removeForCount) {
-      continue;
-    }
-
-    const runPaths = getRunPaths(candidate.runId, storagePaths.runsRoot);
+  //keep selection pure and limit this function to scoped record loading plus filesystem deletion
+  const selectedRunIds = selectRunsForRetention(retentionRecords, { now });
+  for (const runId of selectedRunIds) {
+    //delete only run directories selected from the explicit scope above
+    const runPaths = getRunPaths(runId, storagePaths.runsRoot);
     await fs.rm(runPaths.runRoot, { recursive: true, force: true });
-    removedRunIds.push(candidate.runId);
   }
 
   return {
     skipped: false,
     reason: null,
-    removedRunIds,
+    removedRunIds: selectedRunIds,
   };
 }
 
@@ -1316,7 +1358,7 @@ function runSortTimestamp(run) {
 }
 
 module.exports = {
-  // Keep these older run creators available for the older server routes.
+  //keep these older run creators available for the older server routes.
   createRunRecord,
   createRunRecord2,
   readRun,
@@ -1324,6 +1366,7 @@ module.exports = {
   listRuns,
   resolveRunFilePath,
   pruneCompletedRuns,
+  selectRunsForRetention,
   getIterationPaths,                       //for run supervisior
   buildIterationRunPointer,
   writeCurrentRunPointer,

@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 async function createFixture(t) {
+  //create and register an isolated shared root so each history test owns its storage
   const sharedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-history-"));
   const store = require("../lib/runStore");
 
@@ -16,11 +17,13 @@ async function createFixture(t) {
 }
 
 async function writeJson(filePath, value) {
+  //create parent directories because fixtures model each run as an independent directory tree
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, JSON.stringify(value), "utf8");
 }
 
 async function pathExists(filePath) {
+  //distinguish an expected missing path from an unexpected filesystem failure
   try {
     await fs.access(filePath);
     return true;
@@ -33,6 +36,7 @@ async function pathExists(filePath) {
 }
 
 async function writeTerminalRun(runsRoot, runId, finishedMs, options = {}) {
+  //write matching metadata and result files to model a normally finalized aggregate run
   const finishedUtc = options.finishedUtc === undefined
     ? new Date(finishedMs).toISOString()
     : options.finishedUtc;
@@ -50,6 +54,17 @@ async function writeTerminalRun(runsRoot, runId, finishedMs, options = {}) {
       ...(finishedUtc === undefined ? {} : { finishedUtc }),
     }),
   ]);
+}
+
+function terminalRecord(runId, finishedUtc, options = {}) {
+  //build in-memory scoped records for pure retention selection tests without filesystem setup
+  return {
+    runId,
+    status: options.status || "completed",
+    active: options.active || false,
+    indeterminate: options.indeterminate || false,
+    finishedUtc,
+  };
 }
 
 test("listRuns returns configured iteration counts with a legacy single-iteration fallback", async (t) => {
@@ -289,4 +304,94 @@ test("scoped cleanup preserves terminal runs without valid completion timestamps
 
   assert.deepEqual(cleanup.removedRunIds, ["run-valid-30"]);
   assert.equal(await pathExists(path.join(runsRoot, "run-invalid")), true);
+});
+
+test("retention selection uses run IDs to order equal completion timestamps deterministically", async (t) => {
+  const { store } = await createFixture(t);
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const finishedUtc = new Date(nowMs).toISOString();
+  const records = Array.from({ length: 31 }, (_, index) => (
+    terminalRecord(`run-${String(index).padStart(2, "0")}`, finishedUtc)
+  ));
+
+  const selectedRunIds = store.selectRunsForRetention(records, { now: () => nowMs });
+
+  assert.deepEqual(selectedRunIds, ["run-30"]);
+});
+
+test("retention selection applies count eligibility without age eligibility", async (t) => {
+  const { store } = await createFixture(t);
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const records = Array.from({ length: 31 }, (_, index) => (
+    terminalRecord(`count-only-${String(index).padStart(2, "0")}`, new Date(nowMs - index).toISOString())
+  ));
+
+  const selectedRunIds = store.selectRunsForRetention(records, { now: () => nowMs });
+
+  assert.deepEqual(selectedRunIds, ["count-only-30"]);
+});
+
+test("retention selection applies age eligibility without count eligibility", async (t) => {
+  const { store } = await createFixture(t);
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const hourMs = 60 * 60 * 1000;
+  const records = [
+    terminalRecord("age-only", new Date(nowMs - 720 * hourMs).toISOString()),
+    terminalRecord("recent", new Date(nowMs - 720 * hourMs + 1).toISOString()),
+  ];
+
+  const selectedRunIds = store.selectRunsForRetention(records, { now: () => nowMs });
+
+  assert.deepEqual(selectedRunIds, ["age-only"]);
+});
+
+test("retention selection combines independent age and count eligibility", async (t) => {
+  const { store } = await createFixture(t);
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const hourMs = 60 * 60 * 1000;
+  const recentRecords = Array.from({ length: 31 }, (_, index) => (
+    terminalRecord(`recent-${String(index).padStart(2, "0")}`, new Date(nowMs - index).toISOString())
+  ));
+  const records = [
+    ...recentRecords,
+    terminalRecord("expired", new Date(nowMs - 720 * hourMs).toISOString()),
+  ];
+
+  const selectedRunIds = store.selectRunsForRetention(records, { now: () => nowMs });
+
+  assert.deepEqual(selectedRunIds, ["recent-30", "expired"]);
+});
+
+test("retention selection excludes active and indeterminate records", async (t) => {
+  const { store } = await createFixture(t);
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const expiredUtc = new Date(nowMs - 720 * 60 * 60 * 1000).toISOString();
+  const records = [
+    terminalRecord("expired-terminal", expiredUtc),
+    terminalRecord("active-terminal", expiredUtc, { active: true }),
+    terminalRecord("indeterminate-terminal", expiredUtc, { indeterminate: true }),
+    terminalRecord("running", expiredUtc, { status: "running" }),
+    terminalRecord("missing-finished", null),
+  ];
+
+  const selectedRunIds = store.selectRunsForRetention(records, { now: () => nowMs });
+
+  assert.deepEqual(selectedRunIds, ["expired-terminal"]);
+});
+
+test("retention selection keeps fixture-user scopes independent", async (t) => {
+  const { store } = await createFixture(t);
+  const nowMs = Date.parse("2026-10-18T00:00:00.000Z");
+  const recordsForUserA = Array.from({ length: 31 }, (_, index) => (
+    terminalRecord(`user-a-${String(index).padStart(2, "0")}`, new Date(nowMs - index).toISOString())
+  ));
+  const recordsForUserB = Array.from({ length: 30 }, (_, index) => (
+    terminalRecord(`user-b-${String(index).padStart(2, "0")}`, new Date(nowMs - index).toISOString())
+  ));
+
+  const selectedForUserA = store.selectRunsForRetention(recordsForUserA, { now: () => nowMs });
+  const selectedForUserB = store.selectRunsForRetention(recordsForUserB, { now: () => nowMs });
+
+  assert.deepEqual(selectedForUserA, ["user-a-30"]);
+  assert.deepEqual(selectedForUserB, []);
 });
