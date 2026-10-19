@@ -30,11 +30,16 @@ async function fixture(t, options = {}) {
   let readinessCalls = 0;
   const store = createLaunchStore({ sharedRoot: root, io: options.io || fs });
   const readiness = options.readiness || (async () => { readinessCalls++; return { containerId: "stub-windows" }; });
-  const launch = createLaunchService({ store, readiness });
+  const launchService = createLaunchService({ store, readiness });
+  const launch = (input) => launchService(input, { ownerUserId: 101 });
   const supervisedRuns = [];
   const supervise = options.supervise || (async (runId) => { supervisedRuns.push(runId); });
+  const requireAuthenticatedUser = (req, res, next) => {
+    req.auth = { userId: 101 };
+    next();
+  };
   const app = express();
-  app.use(createRunLaunchRouter({ launch, supervise }));
+  app.use(createRunLaunchRouter({ launch: launchService, supervise, requireAuthenticatedUser }));
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
   });
@@ -63,6 +68,7 @@ test("built-in admission writes a complete normalized envelope before publicatio
     const meta = await json(path.join(run, "meta.json"));
     assert.deepEqual(task.payload, await json(path.join(run, "task-plan.json")));
     assert.equal(meta.containerId, "stub-windows");
+    assert.equal(meta.ownerUserId, 101);
     await fs.access(path.join(run, "uploaded-config.json"));
     await fs.access(path.join(run, "logs/task.log"));
     observed = true;
@@ -147,6 +153,17 @@ test("invalid requests and malformed JSON fail before readiness or storage", asy
     assert.ok(Array.isArray(result.body.fieldErrors));
   }
   assert.equal((await f.post('{"broken":', "/api/runs/start2", true)).status, 400);
+  assert.equal(f.readinessCalls(), 0);
+  assert.deepEqual(await fs.readdir(f.root), []);
+});
+
+test("client-supplied ownership is rejected before readiness or storage", async (t) => {
+  const f = await fixture(t);
+  for (const field of ["ownerUserId", "userId", "owner"]) {
+    const result = await f.post({ ...builtin(), [field]: 999 });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.code, "INVALID_LAUNCH_REQUEST");
+  }
   assert.equal(f.readinessCalls(), 0);
   assert.deepEqual(await fs.readdir(f.root), []);
 });
@@ -407,7 +424,10 @@ test("separate service instances sharing storage use the same admission lock", a
   const f = await fixture(t);
   const other = createLaunchService({ store: createLaunchStore({ sharedRoot: f.root }),
     readiness: async () => ({ containerId: "stub-other" }) });
-  const results = await Promise.allSettled([f.launch(builtin()), other(custom())]);
+  const results = await Promise.allSettled([
+    f.launch(builtin()),
+    other(custom(), { ownerUserId: 202 }),
+  ]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(results.find((result) => result.status === "rejected").reason.code, "RUN_ACTIVE");
 });
@@ -457,11 +477,11 @@ test("cold launch starts the VM without publishing; ready retry admits the run",
     ensureRunning: async () => { starts++; status = { running: true, containerId: "cold-start-stub" }; },
   });
   const launch = createLaunchService({ store: f.store, readiness });
-  await assert.rejects(launch(custom()), { code: "GUEST_STARTING" });
+  await assert.rejects(launch(custom(), { ownerUserId: 101 }), { code: "GUEST_STARTING" });
   assert.deepEqual(await fs.readdir(f.root), []);
-  await assert.rejects(launch(custom()), { code: "AGENT_NOT_READY" });
+  await assert.rejects(launch(custom(), { ownerUserId: 101 }), { code: "AGENT_NOT_READY" });
   await fs.writeFile(path.join(f.root, "agent-heartbeat.json"), JSON.stringify({ agent: { status: "idle", runId: "", intervalSeconds: 15 } }));
-  const accepted = await launch(custom());
+  const accepted = await launch(custom(), { ownerUserId: 101 });
   assert.equal(accepted.containerId, "cold-start-stub");
   assert.equal(starts, 1);
   assert.equal((await f.pointer()).runId, accepted.runId);
@@ -474,7 +494,7 @@ test("VM startup failures produce actionable conflicts without publication", asy
     ensureRunning: async () => { throw new Error("Docker is unavailable"); },
   });
   const launch = createLaunchService({ store: f.store, readiness });
-  await assert.rejects(launch(builtin()), (error) => {
+  await assert.rejects(launch(builtin(), { ownerUserId: 101 }), (error) => {
     assert.equal(error.status, 409);
     assert.equal(error.code, "GUEST_START_FAILED");
     assert.match(error.message, /Docker is unavailable/);

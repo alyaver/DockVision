@@ -208,7 +208,7 @@ const Dashboard = () => {
     setRunsError("");
 
     try {
-      const response = await fetch("/api/runs");
+      const response = await fetch("/api/runs", { credentials: "include" });
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {

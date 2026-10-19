@@ -658,6 +658,55 @@ class VmAgentLifecycleTest(unittest.TestCase):
         self.assertFalse(runner.process_queued_active_task(self.shared_root, executor=executor))
         self.assertFalse(Path(self.context["resultPath"]).exists())
 
+    def test_orphaned_running_task_is_failed_without_reexecution(self) -> None:
+        self.write_task(status="running", task_type="script_runner")
+
+        def executor(context, task, shared_root):
+            self.fail("An orphaned running task must not be re-executed.")
+
+        self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+
+        task = self.read_json(Path(self.context["taskPath"]))
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(task["status"], "failed")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["details"]["errorType"], "AgentInterrupted")
+        self.assertFalse(result["details"]["reexecuted"])
+        self.assertIn("not re-executed", result["message"])
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+
+    def test_orphaned_running_task_honors_existing_cancellation(self) -> None:
+        self.write_task(status="running", task_type="script_runner")
+        Path(self.context["cancelRequestPath"]).write_text(
+            json.dumps({"runId": self.run_id, "status": "requested"}), encoding="utf-8"
+        )
+
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+
+        task = self.read_json(Path(self.context["taskPath"]))
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(task["status"], "cancelled")
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["details"]["errorType"], "AgentInterrupted")
+
+    def test_running_task_with_existing_result_is_not_overwritten(self) -> None:
+        self.write_task(status="running", task_type="script_runner")
+        existing_result = {
+            "runId": self.run_id,
+            "taskId": f"{self.run_id}-task",
+            "status": "completed",
+            "finishedUtc": "2026-10-04T00:01:00Z",
+            "message": "Existing terminal result.",
+            "artifacts": {},
+            "details": {},
+        }
+        runner.write_json_atomically(Path(self.context["resultPath"]), existing_result)
+
+        self.assertFalse(runner.process_queued_active_task(self.shared_root))
+        self.assertEqual(self.read_json(Path(self.context["resultPath"])), existing_result)
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "running")
+
     def test_bounded_agent_loop_claims_and_completes_one_noop_task(self) -> None:
         self.write_task(task_type="noop")
         self.assertEqual(
