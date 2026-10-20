@@ -22,11 +22,15 @@ const Notepad_Targets = [ // List of targets for the notepad referenced from doc
     "notepad.helpMenu",
 ]
 
-function getCoordinateDetails(details = {}) { // Returns the coordinate details, ensuring x and y are numbers and providing a default reference image ID if not present
+function getCoordinateDetails(details = {}) { // Returns the details object with xPercent, yPercent, menuId, and referenceImageId properties, using the provided details or default values if not present
+    const referenceImageId = details?.referenceImageId ?? details?.referenceImageID ?? Notepad_Reference_Images[0]?.id ?? "";
+    const referenceImage = Notepad_Reference_Images.find((image) => image.id === referenceImageId);
+
     return {
-        xPercent: details.xPercent ?? "",
-        yPercent: details.yPercent ?? "",
-        referenceImageId: details.referenceImageId || Notepad_Reference_Images[0]?.id || "",
+        xPercent: details?.xPercent ?? "",
+        yPercent: details?.yPercent ?? "",
+        menuId: details?.menuId ?? details?.menuID ?? referenceImage?.menuID?.[0] ?? "",
+        referenceImageId,
     };
 }
 
@@ -282,14 +286,27 @@ export default function CreateATask() {
     const navigate = useNavigate(); 
     const savedDraft = loadDraftTask("defTask", {name: "", nextID: 1, tasks: Default_Task});
     const [taskDescription, setTaskDescription] = useState(null);
-    const [tasks, setTasks] = useState(Task_Options);
+    const tasks = Task_Options;
     const [newTaskName, setNewTaskName] = useState(savedDraft.name || "");
     const [nextID, setNextID] = useState(savedDraft.nextID || 1);
-    const [defTask, setDefTask] = useState(savedDraft.tasks || Default_Task);
     const [locked, setLocked] = useState(false);
     const [confirmOn, setConfirmOn] = useState(null);
     const [exit, setExit] = useState(false);
     const [createTaskError, setCreateTaskError] = useState(null);
+    const [defTask, setDefTask] = useState(() => { // Load the saved tasks from sessionStorage, or use the default task list if not present
+        const savedTasks = Array.isArray(savedDraft.tasks) ? savedDraft.tasks : Default_Task;
+        return savedTasks.map((task) => {
+            const coordinateClick = task.task === "CLICK" && (task.targetType || "coordinates") === "coordinates";
+
+            if (!coordinateClick) return task;
+
+            return {
+                ...task,
+                targetType: "coordinates",
+                details: getCoordinateDetails(task.details),
+            };
+        });
+    });
 
     useEffect(() => {
         sessionStorage.setItem("defTask", JSON.stringify({name: newTaskName, nextID,tasks: defTask}));
@@ -302,7 +319,9 @@ export default function CreateATask() {
 
     function openEditTask(task) {
         if(locked)  return;
-        setTaskDescription({ mode: "edit", id: task.id, text: task.text, task: task.task, targetType: task.targetType || "coordinates", target: task.target || "editor", details: task.details || {}, errors: {}, });
+        const targetType = task.targetType || "coordinates";
+        setTaskDescription({mode: "edit", id: task.id, text: task.text, task: task.task, targetType, target: task.target || "editor", details: task.task === "CLICK" && targetType === "coordinates" ? getCoordinateDetails(task.details) : task.details || {}, errors: {},
+        });
     }
 
     function changeTaskType(newType) {
@@ -406,20 +425,19 @@ export default function CreateATask() {
         navigate("/dashboard");
     }
 
-
-
-    function updateDetail(key, value) {
-        setDefTask(defTask.map(t => {
-            if (t.details && t.details[key] !== undefined) {
-                return { ...t, details: { ...t.details, [key]: value } };
-
-            }
-            return t;
-        }));
-    }   
-
     function onChangeDetail(key, value) {
-        setTaskDescription((current) => ({ ...current, details: { ...current.details, [key]: value } }));
+        setTaskDescription((current) => { // Update the details of the taskDescription state based on the key and value provided
+            if (!current) return current;
+            const details = { ...getCoordinateDetails(current.details), [key]: value };
+
+            if (key === "referenceImageId") {
+                const referenceImage = Notepad_Reference_Images.find((image) => image.id === value);
+                const menuIds = referenceImage?.menuID ?? [];
+
+                details.menuId = menuIds.includes(details.menuId) ? details.menuId : menuIds[0] ?? "";
+            }
+            return { ...current, details, errors: {}, };
+        });
     }
 
     function buildPlan() {

@@ -56,7 +56,7 @@ export const Notepad_Reference_Images = [
         }
 ]
 
-export function getReferneceMenu(menuID) {
-    const menuImages = Notepad_Refernece_Images.filter((image) => image.menuID.includes(menuID));
+export function getReferenceMenu(menuID) {
+    const menuImages = Notepad_Reference_Images.filter((image) => image.menuID.includes(menuID));
     return menuImages;
 }
