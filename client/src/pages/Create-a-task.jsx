@@ -3,12 +3,7 @@ import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 import { serializeTaskPlan } from "../lib/serializeTaskPlan.mjs";
-import notepadMainImage from "../assets/notepadReferences/Notepad-Main.png";
-import notepadFileImage from "../assets/notepadReferences/Notepad-File.png";
-import notepadEditImage from "../assets/notepadReferences/Notepad-Edit.png";
-import notepadFormatImage from "../assets/notepadReferences/Notepad-Format.png";
-import notepadViewImage from "../assets/notepadReferences/Notepad-View.png";
-import notepadHelpImage from "../assets/notepadReferences/Notepad-Help.png";
+import { Notepad_Reference_Images } from "../lib/notepadReferences.js";
 
 const Default_Task = [];
 const Task_Options = ["TYPE", "CLICK"];
@@ -25,50 +20,6 @@ const Notepad_Targets = [ // List of targets for the notepad referenced from doc
     "notepad.formatMenu",
     "notepad.viewMenu",
     "notepad.helpMenu",
-]
-const Notepad_Reference_Images = [ // List of reference images for the notepad screen
-    {
-        id: "notepad_screen_main",
-        label: "Notepad Editor",
-        src: notepadMainImage,
-        width: 942,
-        height: 490,
-    },
-    {
-        id: "notepad_screen_file_menu",
-        label: "Notepad File Menu",
-        src: notepadFileImage,
-        width: 943,
-        height: 489,
-    },
-    {
-        id: "notepad_screen_edit_menu",
-        label: "Notepad Edit Menu",
-        src: notepadEditImage,
-        width: 943,
-        height: 490,
-    },
-    {
-        id: "notepad_screen_format_menu",
-        label: "Notepad Format Menu",
-        src: notepadFormatImage,
-        width: 942,
-        height: 492,
-    },
-    {
-        id: "notepad_screen_view_menu",
-        label: "Notepad View Menu",
-        src: notepadViewImage,
-        width: 943,
-        height: 492,
-    },
-    {
-        id: "notepad_screen_help_menu",
-        label: "Notepad Help Menu",
-        src: notepadHelpImage,
-        width: 943,
-        height: 490,
-    }
 ]
 
 function getCoordinateDetails(details = {}) { // Returns the coordinate details, ensuring x and y are numbers and providing a default reference image ID if not present
