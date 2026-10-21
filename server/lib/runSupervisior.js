@@ -8,6 +8,7 @@ const {
   buildIterationRunPointer,
   writeCurrentRunPointer,
   readCancellationRequest,
+  pruneCompletedRuns,
 } = require("./runStore");
 
 function sleep(ms) {
@@ -59,7 +60,16 @@ async function waitForIterationResult(iterationPaths) {
   }
 }
 
-async function superviseRun(runId) {
+//reports cleanup outcomes separately so terminal lifecycle persistence remains successful
+function reportCleanupOutcome(event, details) {
+  console.error(`RUN CLEANUP ${event}:`, details);
+}
+
+//supervises aggregate iterations and requests fail-closed cleanup after terminal state is durable
+async function superviseRun(runId, {
+  prune = pruneCompletedRuns,
+  onCleanup = reportCleanupOutcome,
+} = {}) {
   const run = await readRun(runId);
 
   if (!run) {
@@ -88,6 +98,9 @@ async function superviseRun(runId) {
     `Supervisor starting ${totalIterations} iteration(s).`
   );
 
+  //tracks whether this invocation persisted an aggregate terminal state before requesting cleanup
+  let terminal = false;
+
   for (
     let iterationNumber = firstIncompleteIteration;
     iterationNumber <= totalIterations;
@@ -106,6 +119,7 @@ async function superviseRun(runId) {
         runId,
         `Cancellation applied before iteration ${iterationNumber} was published.`
       );
+      terminal = true;
       break;
     }
 
@@ -199,6 +213,7 @@ async function superviseRun(runId) {
         `Iteration ${iterationNumber} failed. Stopping remaining iterations.`
       );
 
+      terminal = true;
       break;
     }
 
@@ -222,6 +237,27 @@ async function superviseRun(runId) {
       runId,
       `Iteration ${iterationNumber} completed successfully.`
     );
+
+    terminal = iterationNumber === totalIterations;
+  }
+
+  if (!terminal) {
+    return;
+  }
+
+  try {
+    //requests shared cleanup without an ownership scope so destructive work remains skipped in production
+    const cleanup = await prune();
+    if (cleanup?.skipped || cleanup?.failedRunIds?.length || cleanup?.deletionFailures?.length) {
+      //reports skipped or failed cleanup without changing the already persisted terminal result
+      onCleanup(cleanup?.skipped ? "SKIPPED" : "FAILED", cleanup);
+    }
+  } catch (error) {
+    //keeps cleanup exceptions separate from successful terminal lifecycle handling
+    onCleanup("FAILED", {
+      code: error?.code || "CLEANUP_FAILED",
+      message: error?.message || "Terminal cleanup failed.",
+    });
   }
 }
 
