@@ -86,7 +86,9 @@ function formatRunLabel(value) {
     .join(" ");
 }
 
+//format one history timestamp in the viewer's local timezone.
 function formatRunTimestamp(run) {
+  //use finished, started, and created timestamps in lifecycle order.
   const label = run.finishedUtc
     ? "Finished"
     : run.startedUtc
@@ -94,16 +96,27 @@ function formatRunTimestamp(run) {
     : "Created";
   const value = run.finishedUtc || run.startedUtc || run.createdUtc;
 
+  //show one clear fallback for missing or malformed values.
   if (!value) {
     return "Timestamp unavailable";
   }
 
   const parsedDate = new Date(value);
   if (Number.isNaN(parsedDate.getTime())) {
-    return `${label}: ${value}`;
+    return "Timestamp unavailable";
   }
 
-  return `${label}: ${parsedDate.toLocaleString()}`;
+  //include the viewer's local timezone with the formatted date and time.
+  const formattedTimestamp = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(parsedDate);
+
+  return `${label}: ${formattedTimestamp}`;
 }
 const Dashboard = () => {
   const navigate = useNavigate();

@@ -326,6 +326,12 @@ function normalizeAggregateStatus(meta, candidateStatus) {
   return normalizedStatus;
 }
 
+//determine whether a current pointer represents an active aggregate run in history.
+function isHistoryRunActive(runId, activeRunId, status) {
+  //terminal aggregate states are inactive even when their pointer still lingers.
+  return activeRunId === runId && !isTerminalStatus(status);
+}
+
 async function readCurrentRunPointer({
   sharedRoot = SHARED_ROOT,
   activeRoot = ACTIVE_ROOT,
@@ -1302,7 +1308,7 @@ async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId } = {}) {
       testName: meta?.testName || "Untitled Test Run",
       taskType: task?.taskType || meta?.taskType || "unknown",
       status,
-      active: activeRunId === entry.name,
+      active: isHistoryRunActive(entry.name, activeRunId, status),
       totalIterations,
       createdUtc: meta?.createdUtc || task?.createdUtc || null,
       startedUtc: meta?.startedUtc || task?.startedUtc || null,
