@@ -942,20 +942,54 @@ def process_queued_active_task(
     shared_root: Path,
     executor: Callable[[dict[str, Path | str], dict[str, Any], Path], dict[str, Any]] = execute_agent_task,
 ) -> bool:
-    """Process one queued active task and always publish a terminal outcome.
+    """Process or safely recover one active task with a terminal outcome.
 
-    Returns true only when this call claimed a queued task. The caller may use the
-    return value for polling diagnostics; terminal and non-queued tasks are never
-    executed again.
+    Returns true only when this call claimed a queued task or terminalized an
+    orphaned running task. A running task cannot be safely re-executed after an
+    agent restart because its uploaded runner may already have produced external
+    side effects.
     """
 
-    # read and claim only one queued task; missing, malformed, and terminal tasks are left alone
+    # Read one active task. Missing, malformed, and terminal tasks are left alone.
     active_task = read_active_task(shared_root)
     if active_task is None:
         return False
 
     run_context, task = active_task
-    if task.get("status") != "queued":
+    task_status = str(task.get("status") or "")
+    if task_status == "running":
+        result_path = Path(run_context["resultPath"])
+        if result_path.is_file():
+            return False
+
+        task_id = str(task.get("taskId") or "unknown-task")
+        if is_run_cancellation_requested(run_context, shared_root):
+            final_status = "cancelled"
+            message = "Run was cancelled after the guest agent was interrupted during task execution."
+        else:
+            final_status = "failed"
+            message = (
+                "Guest agent restarted while this task was running. The task was not re-executed "
+                "because its prior side effects cannot be determined safely."
+            )
+        result = build_active_result(
+            run_context,
+            task,
+            final_status,
+            message,
+            {"details": {"errorType": "AgentInterrupted", "reexecuted": False}},
+        )
+        write_active_result(run_context, result)
+        mark_active_task_finished(run_context, task, final_status)
+        append_run_log(run_context, f"Recovered orphaned running task '{task_id}' as '{final_status}'.")
+        append_agent_install_log(
+            shared_root,
+            f"Recovered orphaned running task '{task_id}' as '{final_status}' without re-execution.",
+        )
+        write_agent_heartbeat(shared_root, status="idle", task_name="waiting_for_task")
+        return True
+
+    if task_status != "queued":
         return False
 
     task_id = str(task.get("taskId") or "unknown-task")

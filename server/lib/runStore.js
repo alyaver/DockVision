@@ -730,6 +730,7 @@ async function readRun(runId) {
 
   return {
     runId,
+    ownerUserId: baseMeta.ownerUserId ?? null,
     taskId: snapshot.task?.taskId || baseMeta.taskId || null,
     testName: baseMeta.testName || "Untitled Test Run",
     runnerScriptName: baseMeta.runnerScriptName || null,
@@ -1144,6 +1145,41 @@ async function resolveRunFilePath(runId, relativePath) {
   return resolvedPath;
 }
 
+function isRunOwnedBy(meta, ownerUserId) {
+  return meta?.ownerUserId !== null &&
+    meta?.ownerUserId !== undefined &&
+    String(meta.ownerUserId) === String(ownerUserId);
+}
+
+function isValidRunId(runId) {
+  return typeof runId === "string" && /^run-[a-zA-Z0-9-]+$/.test(runId);
+}
+
+async function readRunForOwner(runId, ownerUserId) {
+  if (!isValidRunId(runId)) return null;
+  const meta = await readJsonIfExists(getRunPaths(runId).metaPath);
+  if (!isRunOwnedBy(meta, ownerUserId)) return null;
+  return readRun(runId);
+}
+
+async function requestRunCancellationForOwner(runId, ownerUserId) {
+  const run = await readRunForOwner(runId, ownerUserId);
+  if (!run) return null;
+  return requestRunCancellation(runId);
+}
+
+async function requestRunCancellation2ForOwner(runId, ownerUserId) {
+  const run = await readRunForOwner(runId, ownerUserId);
+  if (!run) return null;
+  return requestRunCancellation2(runId);
+}
+
+async function resolveRunFilePathForOwner(runId, relativePath, ownerUserId) {
+  const run = await readRunForOwner(runId, ownerUserId);
+  if (!run) return null;
+  return resolveRunFilePath(runId, relativePath);
+}
+
 async function pruneCompletedRuns({
   sharedRoot = SHARED_ROOT,
   activeRoot = ACTIVE_ROOT,
@@ -1208,7 +1244,7 @@ async function pruneCompletedRuns({
   }
 }
 
-async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
+async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId } = {}) {
   const resolvedSharedRoot = path.resolve(sharedRoot);
   const activeRoot = path.join(resolvedSharedRoot, "active");
   const runsRoot = path.join(resolvedSharedRoot, "runs");
@@ -1236,6 +1272,16 @@ async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
     ]);
 
     if (!meta && !task && !result) {
+      continue;
+    }
+
+    if (
+      ownerUserId !== undefined &&
+      ownerUserId !== null &&
+      (meta?.ownerUserId === undefined ||
+        meta?.ownerUserId === null ||
+        String(meta.ownerUserId) !== String(ownerUserId))
+    ) {
       continue;
     }
 
@@ -1283,9 +1329,12 @@ module.exports = {
   createRunRecord,
   createRunRecord2,
   readRun,
+  readRunForOwner,
   requestRunCancellation,
+  requestRunCancellationForOwner,
   listRuns,
   resolveRunFilePath,
+  resolveRunFilePathForOwner,
   pruneCompletedRuns,
   getIterationPaths,                       //for run supervisior
   buildIterationRunPointer,
@@ -1297,6 +1346,7 @@ module.exports = {
   assertRunStatusTransition,
   readCancellationRequest,
   requestRunCancellation2,
+  requestRunCancellation2ForOwner,
   readCurrentRunPointer,
   isTerminalStatus,
   buildArtifactMap,
