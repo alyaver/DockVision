@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import "./Create-a-task.css";
 import Navigation from "../components/Navigation";
 import { serializeTaskPlan } from "../lib/serializeTaskPlan.mjs";
-import { Notepad_Reference_Images } from "../lib/notepadReferences.js";
+import { Notepad_Reference_Images, notepadMenus, getReferenceMenu } from "../lib/notepadReferences.js";
 
 const Default_Task = [];
 const Task_Options = ["TYPE", "CLICK"];
@@ -23,24 +23,17 @@ const Notepad_Targets = [ // List of targets for the notepad referenced from doc
 ]
 
 function getCoordinateDetails(details = {}) { // Returns the details object with xPercent, yPercent, menuId, and referenceImageId properties, using the provided details or default values if not present
-    const referenceImageId = details?.referenceImageId ?? details?.referenceImageID ?? Notepad_Reference_Images[0]?.id ?? "";
-    const referenceImage = Notepad_Reference_Images.find((image) => image.id === referenceImageId);
+    const savedReferenceImageId = details?.referenceImageId ?? details?.referenceImageID;
+    const referenceImage = Notepad_Reference_Images.find((image) => image.id === savedReferenceImageId);
+    const menuId = details?.menuId ?? details?.menuID ?? referenceImage?.menuID?.[0] ?? "editor";
+    const menu = notepadMenus.find((menu) => menu.id === menuId);
 
     return {
         xPercent: details?.xPercent ?? "",
         yPercent: details?.yPercent ?? "",
-        menuId: details?.menuId ?? details?.menuID ?? referenceImage?.menuID?.[0] ?? "",
-        referenceImageId,
+        menuId,
+        referenceImageId: savedReferenceImageId || menu?.defaultReferenceImageId || '',
     };
-}
-
-function getReferenceImageIndex(referenceImages, referenceImageId) { // Returns the index of the reference image based on the referenceImageId, or 0 if not found
-    const index = referenceImages.findIndex((image) => image.id === referenceImageId);
-    return index >= 0 ? index : 0;
-}
-
-function getSelectedReferenceImage(referenceImages, referenceImageId) { // Returns the selected reference image based on the referenceImageId, or the first image if not found
-    return referenceImages.find((image) => image.id === referenceImageId) || referenceImages[0] || null;
 }
 
 function getMarkerStyle(details, image) { // Returns the style for the marker based on the coordinates and reference image, since the coordinates are relative to the reference image, we need to calculate the percentage position of the marker based on the image dimensions
@@ -116,6 +109,8 @@ function loadDraftTask(key, value) {
 }
 
 function validateDraftTask(task) {
+    const details = getCoordinateDetails(task.details);
+    const isReferenceImageValid = getReferenceMenu(details.menuId).some((image) => image.id === details.referenceImageId);
     const errors = {};
 
     if (!task.task) {
@@ -142,6 +137,10 @@ function validateDraftTask(task) {
                 Number(xPercent) < 0 || Number(xPercent) > 100 || Number(yPercent) < 0 || Number(yPercent) > 100) 
                 {
                 errors.details = "X and Y coordinates must be numbers between 0 and 100.";
+            }
+
+            if (!isReferenceImageValid) {
+                errors.details = "Selected reference image is not valid for the selected menu.";
             }
         }
     }
@@ -188,9 +187,17 @@ function CoordinateReferencePreview({ image, details, onSelectCoordinates }) { /
 function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel, onChangeTargetType, onChangeTarget, referenceImages}) {
     const isClick = taskDescription.task === "CLICK";
     const isTyped = taskDescription.task === "TYPE";
-    const selectedReferenceImageId = taskDescription.details?.referenceImageId || Notepad_Reference_Images[0]?.id || "";
-    const selectedReferenceImage = getSelectedReferenceImage(referenceImages, selectedReferenceImageId);
-    const selectedReferenceImageIndex = getReferenceImageIndex(referenceImages, selectedReferenceImageId);
+    const details = getCoordinateDetails(taskDescription.details);
+    const selectedMenu = notepadMenus.find((menu) => menu.id === details.menuId);
+    const menuReferences = getReferenceMenu(details.menuId, referenceImages);
+    const submenuReferences = menuReferences.filter((image) => image.kind === "submenu");
+    const availableReferences = getReferenceMenu(selectedMenu.id, referenceImages);
+    const selectedReferenceImageId = details.referenceImageId;
+    const selectedReferenceImage = menuReferences.find((image) => image.id === details.referenceImageId) ?? null;
+    const selectedMenuId = details.menuId;
+    const selectedSubmenuId = details.referenceImageId === selectedMenu?.defaultReferenceImageId ? "": details.referenceImageId;
+    const selectedReferenceImageIndex = availableReferences.findIndex((image) => image.id === selectedReferenceImageId);
+
     return (
         <div className="create-task-container">
             <TaskSelect value={taskDescription.task} tasks={tasks} onChange={(e) => onChangeTask(e.target.value)} />
@@ -243,14 +250,31 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
 
                     {taskDescription.targetType === "coordinates" && (
                         <><div className="coordinate-image-navigation">
-                            <select className="reference-image-select" value={selectedReferenceImageId} onChange={(e) => onChangeDetail("referenceImageId", e.target.value)}>
-                                {referenceImages.map((image) => (
-                                    <option key={image.id} value={image.id}>
-                                        {image.label}
-                                    </option>
-                                ))}
-                            </select>
-                            <span className="reference-image-index"> Screen {selectedReferenceImageIndex + 1} of {referenceImages.length}</span>
+                            <label>
+                                <span>Menu:</span>
+                                <select className="reference-image-select" value={selectedMenuId} onChange={(e) => onChangeDetail("menuId", e.target.value)}>
+                                        {notepadMenus.map((menu) => (
+                                        <option key={menu.id} value={menu.id}>
+                                            {menu.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            
+                            <label>
+                                <select className="reference-image-select" value={selectedSubmenuId} disabled={submenuReferences.length === 0} onChange={(e) => onChangeDetail("referenceImageId", e.target.value)}>
+                                    <option value="">Default</option>
+                                    {submenuReferences.map((image) => (
+                                        <option key={image.id} value={image.id}>
+                                            {image.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            
+                            {selectedReferenceImage && (
+                                <span className="reference-image-index"> Screen {selectedReferenceImageIndex + 1} of {availableReferences.length}</span>
+                            )}
                         </div>
 
                         <CoordinateReferencePreview image={selectedReferenceImage} details={taskDescription.details} onSelectCoordinates={(coordinates) => {
@@ -428,14 +452,35 @@ export default function CreateATask() {
     function onChangeDetail(key, value) {
         setTaskDescription((current) => { // Update the details of the taskDescription state based on the key and value provided
             if (!current) return current;
-            const details = { ...getCoordinateDetails(current.details), [key]: value };
+            const details = getCoordinateDetails(current.details);
 
-            if (key === "referenceImageId") {
-                const referenceImage = Notepad_Reference_Images.find((image) => image.id === value);
-                const menuIds = referenceImage?.menuID ?? [];
+            if (key === "menuId") { // When changing the menuId, we need to check if the referenceImageId is still valid for the new menuId, if not, we reset the referenceImageId and coordinates
+                const menu = notepadMenus.find((menu) => menu.id === value);
+                if(!menu) return current;
+                
+                details.menuId = value;
+                details.referenceImageId = menu.defaultReferenceImageId;
+                details.xPercent = "";
+                details.yPercent = "";
+                details.menuId = value;
 
-                details.menuId = menuIds.includes(details.menuId) ? details.menuId : menuIds[0] ?? "";
+            } else if (key === "referenceImageId") { // When changing the referenceImageId, we need to check if the new referenceImageId is valid for the current menuId, if not, we don't update the details
+                const isAllowedMenuId = value === "" || getReferenceMenu(details.menuId).some((image) => image.id === value);
+                const menu = notepadMenus.find((menu) => menu.id === details.menuId);
+                const nextReferenceImageId = value || menu?.defaultReferenceImageId || "";
+
+                if (!isAllowedMenuId) return current;
+
+                if (nextReferenceImageId !== details.referenceImageId) {
+                    details.xPercent = "";
+                    details.yPercent = "";
+                }
+
+                details.referenceImageId = nextReferenceImageId;
+            } else {
+                details[key] = value;
             }
+            
             return { ...current, details, errors: {}, };
         });
     }
@@ -477,17 +522,6 @@ export default function CreateATask() {
             <div className="task-container">
                 {!exit ? (
                     <div className="panel">
-
-                    <div className="create-task-header">
-                                {/*  in case we want to keep dashboard later, delete for now
-
-                                <button onClick={() => navigate("/Dashboard")} className="back-button">Dashboard</button> 
-                                
-                                */}
-                                <button onClick={() => setExit(true)} className="exit-button">Exit</button>
-                    </div>
-
-
                         <div className="head-panel">
                             <input value={newTaskName} onChange={(e) => setNewTaskName(e.target.value)} placeholder="Enter task name" />
                         </div>
@@ -586,6 +620,7 @@ export default function CreateATask() {
                                     {locked ? 'Locked' : 'Save'}
                                 </button>
                             )}
+                            <button onClick={() => setExit(true)} className="exit-button">Exit</button>
                         </div>
                     </div>  
                          ) : (
