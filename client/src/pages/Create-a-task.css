@@ -181,6 +181,17 @@
     font-size: 1.2em;
 }
 
+
+.create-task-form .task-container .exit-message button {
+    color: white;
+}
+.create-task-form .task-container .exit-message .exit-button {
+    background-color: #0192F9;
+}
+.create-task-form .task-container .exit-message .cancel-button {
+    background-color: #0192F9;
+}
+
 .create-task-form .task-container button {
     background-color: #1a1a1a;
     border-radius: 6px;

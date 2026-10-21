@@ -4,8 +4,8 @@
   justify-content: space-between;
   align-items: center;
   padding: 15px 30px;
-  border-bottom: 2px solid #000000;
-  background-color: #f5f5f5;
+  border-bottom: 2px solid #00255F;
+  background-color: #20B8FF;
 }
 
 .nav-logo a {
@@ -36,15 +36,15 @@
 .nav-button {
   padding: 6px 12px;
   border-radius: 8px;
-  border: 1px solid #999;
-  background-color: #f0f0f0;
+  border: 1px solid #00255F;
+  background-color: #00255F;
   text-decoration: none;
-  color: black;
+  color: #f5f5f5;
   font-size: 14px;
 }
 
 .nav-button-dark {
-  background-color: #333;
+  background-color: #00255F;
   color: white;
   border: none;
 }
