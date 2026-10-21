@@ -80,6 +80,7 @@ const Navigation = () => {
       console.error("Logout failed:", error);
     } finally {
       setUser(null);
+      sessionStorage.removeItem("dockvision-current-run");
       navigate("/login");
     }
   }

@@ -5,6 +5,9 @@
 `POST /api/runs/start` and the compatibility URLs `/api/runs/start2` and
 `/api/docker/start-smoke` delegate to the same service. All require the handbook
 request body, including explicit `executionMode: "builtin" | "custom"`.
+All run endpoints also require a current server-side session. New run ownership
+comes from that session and is stored as `ownerUserId` in `meta.json`; client-
+supplied ownership fields are rejected.
 Legacy URLs are supported; inference from old request bodies is not.
 Ticket 8 must update the UI request construction. This change does not implement
 guest execution (Ticket 4), supervision/recovery (Ticket 5), or history (Ticket 7).
@@ -59,9 +62,20 @@ including queued/running/cancelling, missing records, and inconsistent state.
 Unreadable pointers/records fail closed. Launch admission never declares stale
 work failed or cancels queued work. Ticket 5 owns recovery and final outcomes.
 
+If the guest agent restarts after claiming a task but before publishing its
+`result.json`, the persisted task remains `running`. The restarted agent does not
+re-execute that task because its earlier GUI or uploaded-runner side effects cannot
+be determined safely. It publishes a terminal `failed` result with an interruption
+diagnostic, or `cancelled` when a matching cancellation request already exists.
+An existing terminal result is preserved for the backend supervisor to consume.
+
 The default readiness adapter checks a running container with a resolved ID and
 an idle agent with no run ID. Heartbeat freshness uses host-observed modification
 time and the existing maximum of 60 seconds or three reported heartbeat intervals.
+The guest installer runs the long-lived Python agent under Windows Task Scheduler,
+with restart-on-failure enabled and no execution time limit, so an unexpected agent
+process exit does not leave the current Windows session with a permanently stale
+heartbeat. Reinstalling the guest agent applies these scheduler settings.
 If the container is missing or stopped, admission calls the existing VM startup
 service and returns `409 GUEST_STARTING`, asking the user to retry after boot.
 The confirmation page handles readiness-only 409 responses automatically at
@@ -97,8 +111,11 @@ are preserved; custom JSON does not pass through the built-in validator.
 
 Both modes preserve submitted configuration text in `uploaded-config.json` and
 write `meta.json`, `task.json`, `logs/task.log`, and output directories. Metadata
-includes execution mode, resolved options, input paths, and timestamps for later
-history/supervisor work. Request-supplied `taskType` and `payload` are rejected.
+includes the authenticated owner, execution mode, resolved options,
+input paths, and timestamps for later history/supervisor work. Request-supplied
+`taskType`, `payload`, and ownership fields are rejected. History, status,
+cancellation, and run-file access return only records owned by the authenticated
+user. Legacy ownerless records remain stored but are inaccessible to accounts.
 
 ## Errors and verification
 
