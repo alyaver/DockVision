@@ -41,6 +41,8 @@ guarantee.
 
 When Task 317 provides a safe per-user ownership scope, retention keeps at most 30 terminal runs for that user. A terminal run becomes age-eligible at 720 elapsed hours from its authoritative terminal completion timestamp. Count and age eligibility apply independently. Terminal runs without a valid completion timestamp are preserved and excluded from count ordering until their completion time can be established reliably.
 
+The backend requests the same retention mechanism after terminal completion, once at startup, and once per minute while it remains running. Cleanup runs do not overlap. Until a caller provides an explicit per-user run scope, these requests report a skipped cleanup and do not delete from the shared run directory. Cleanup skips or failures do not block backend startup, guest recovery, or a persisted terminal result.
+
 On Windows, replacement of an existing pointer can fail with `EPERM` on the
 VM-shared directory even when first publication succeeds. `publishPointer` tries
 rename first, then uses Windows `File.Replace` through a noninteractive PowerShell
