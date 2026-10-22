@@ -149,9 +149,12 @@ function validateDraftTask(task) {
 
 function CoordinateReferencePreview({ image, details, onSelectCoordinates }) { // Displays a preview of the reference image with a marker at the specified coordinates
     const markerStyle = getMarkerStyle(details, image);
+    const [imageError, setImageError] = useState(false);
 
-    if (!image) {
-        return null;
+    if (!image?.src || imageError) {
+        return(
+            <p className="field-error">Unable to load {image?.label || "reference image"}. Choose another screenshot.</p>
+        );
     }
 
     function handlePreviewClick(event) { // When the user clicks on the preview, we calculate the coordinates based on the click position and update the details
@@ -171,7 +174,7 @@ function CoordinateReferencePreview({ image, details, onSelectCoordinates }) { /
                 onClick={handlePreviewClick}
             >
                 {image.src ? (
-                    <img src={image.src} alt={image.label}/>
+                    <img src={image.src} alt={image.label} onError={() => setImageError(true)}/>
                 ) : (
                     <div className="reference-image-placeholder">{image.label}</div>
                 )}
@@ -187,16 +190,16 @@ function CoordinateReferencePreview({ image, details, onSelectCoordinates }) { /
 function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChangeTask, onSave, onCancel, onChangeTargetType, onChangeTarget, referenceImages}) {
     const isClick = taskDescription.task === "CLICK";
     const isTyped = taskDescription.task === "TYPE";
-    const details = getCoordinateDetails(taskDescription.details);
-    const selectedMenu = notepadMenus.find((menu) => menu.id === details.menuId);
-    const menuReferences = getReferenceMenu(details.menuId, referenceImages);
-    const submenuReferences = menuReferences.filter((image) => image.kind === "submenu");
-    const availableReferences = getReferenceMenu(selectedMenu.id, referenceImages);
-    const selectedReferenceImageId = details.referenceImageId;
-    const selectedReferenceImage = menuReferences.find((image) => image.id === details.referenceImageId) ?? null;
-    const selectedMenuId = details.menuId;
-    const selectedSubmenuId = details.referenceImageId === selectedMenu?.defaultReferenceImageId ? "": details.referenceImageId;
-    const selectedReferenceImageIndex = availableReferences.findIndex((image) => image.id === selectedReferenceImageId);
+    const details = getCoordinateDetails(taskDescription.details); // normalize menu, screenshot, and x y values
+    const selectedMenu = notepadMenus.find((menu) => menu.id === details.menuId); // menu config
+    const menuReferences = getReferenceMenu(details.menuId, referenceImages); // all screenshots assoicitated with that menu
+    const submenuReferences = menuReferences.filter((image) => image.kind === "submenu"); // screenshots with the submenu label
+    const availableReferences = getReferenceMenu(selectedMenu.id, referenceImages); // akin to menuReference
+    const selectedReferenceImageId = details.referenceImageId; // active screenshot saved ID
+    const selectedReferenceImage = menuReferences.find((image) => image.id === details.referenceImageId) ?? null; // actual image containing src and dimensions
+    const selectedMenuId = details.menuId; // valued displayed by the 1st dropdown
+    const selectedSubmenuId = details.referenceImageId === selectedMenu?.defaultReferenceImageId ? "": details.referenceImageId; // 2nd dropdown value
+    const selectedReferenceImageIndex = availableReferences.findIndex((image) => image.id === selectedReferenceImageId); // image position
 
     return (
         <div className="create-task-container">
@@ -260,7 +263,6 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                                     ))}
                                 </select>
                             </label>
-                            
                             <label>
                                 <select className="reference-image-select" value={selectedSubmenuId} disabled={submenuReferences.length === 0} onChange={(e) => onChangeDetail("referenceImageId", e.target.value)}>
                                     <option value="">Default</option>
@@ -271,13 +273,12 @@ function CreateTask({taskDescription, tasks, onChangeText,onChangeDetail, onChan
                                     ))}
                                 </select>
                             </label>
-                            
                             {selectedReferenceImage && (
                                 <span className="reference-image-index"> Screen {selectedReferenceImageIndex + 1} of {availableReferences.length}</span>
                             )}
                         </div>
 
-                        <CoordinateReferencePreview image={selectedReferenceImage} details={taskDescription.details} onSelectCoordinates={(coordinates) => {
+                        <CoordinateReferencePreview key={selectedReferenceImage?.src || selectedReferenceImageId} image={selectedReferenceImage} details={taskDescription.details} onSelectCoordinates={(coordinates) => {
                             onChangeDetail("xPercent", coordinates.xPercent);
                             onChangeDetail("yPercent", coordinates.yPercent);
                         }} />
@@ -479,8 +480,7 @@ export default function CreateATask() {
                 details.referenceImageId = nextReferenceImageId;
             } else {
                 details[key] = value;
-            }
-            
+            }    
             return { ...current, details, errors: {}, };
         });
     }
