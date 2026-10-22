@@ -181,6 +181,14 @@
     font-size: 1.2em;
 }
 
+.exit-buttons {
+    display: flex;
+    gap: 40px;       
+    margin-top: 50px;
+    align-items: center; 
+    justify-content: center;
+    flex-wrap: wrap;
+}
 
 .create-task-form .task-container .exit-message button {
     color: white;

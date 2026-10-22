@@ -70,7 +70,7 @@
   font-size: 1rem;
   font-weight: 500;
   color: white;
-  background-color: #333;
+  background-color: #00255F;
   transition: opacity 0.15s, transform 0.1s;
 }
 
@@ -84,9 +84,9 @@
 }
  
 .Button-primary {
-  background-color: #1a1a1a;
+  background-color: #00255F;
   color: #ffffff;
-  border-color: #1a1a1a;
+  border-color: #00255F;
   justify-content: center;
   font-weight: 600;
   margin-top: 4px;

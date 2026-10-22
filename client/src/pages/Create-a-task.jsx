@@ -622,8 +622,10 @@ export default function CreateATask() {
                          ) : (
                                 <div className="exit-message">
                                     <span>Are you sure you want to exit?</span>
+                                    <div className="exit-buttons">
                                     <button onClick={() => navigate("/Dashboard")} className="exit-button">Yes</button>
                                     <button onClick={() => setExit(false)} className="cancel-button">Cancel</button>
+                                    </div>
                                 </div>
                             )}
                         </div>
