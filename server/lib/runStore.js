@@ -1208,6 +1208,24 @@ function getCleanupQueueKey(sharedRoot) {
     : resolvedSharedRoot;
 }
 
+//serializes cleanup and explicit deletion mutations for one shared storage root
+async function enqueueRunDeletion(sharedRoot, operation) {
+  //use one queue so manual deletion cannot race automatic cleanup on the same directory
+  const key = getCleanupQueueKey(sharedRoot);
+  const previous = cleanupQueues.get(key) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(operation);
+  cleanupQueues.set(key, pending);
+
+  try {
+    return await pending;
+  } finally {
+    //leave a newer operation registered when it was queued behind this one
+    if (cleanupQueues.get(key) === pending) {
+      cleanupQueues.delete(key);
+    }
+  }
+}
+
 function isRunOwnedBy(meta, ownerUserId) {
   return meta?.ownerUserId !== null &&
     meta?.ownerUserId !== undefined &&
@@ -1241,6 +1259,68 @@ async function resolveRunFilePathForOwner(runId, relativePath, ownerUserId) {
   const run = await readRunForOwner(runId, ownerUserId);
   if (!run) return null;
   return resolveRunFilePath(runId, relativePath);
+}
+
+//deletes one confirmed terminal run after exact confirmation without touching external exports
+async function deleteCompletedRun(runId, confirmation, {
+  sharedRoot = SHARED_ROOT,
+  removeRun = fs.rm,
+} = {}) {
+  //reject malformed identifiers and every non-exact confirmation before reading or changing storage
+  if (!isValidRunId(runId)) {
+    return { deleted: false, reason: "INVALID_RUN_ID", runId: null };
+  }
+
+  if (confirmation !== "CONFIRM") {
+    return { deleted: false, reason: "CONFIRMATION_REQUIRED", runId };
+  }
+
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  return enqueueRunDeletion(resolvedSharedRoot, async () => {
+    //the store module owns one configured root so scoped callers must not inspect another storage tree
+    if (resolvedSharedRoot !== SHARED_ROOT) {
+      throw new Error("Deletion shared root must match the configured run store root.");
+    }
+
+    const runPaths = getRunPaths(runId);
+    const [meta, result] = await Promise.all([
+      readJsonIfExists(runPaths.metaPath),
+      readJsonIfExists(runPaths.resultPath),
+    ]);
+    const metaStatus = String(meta?.status || "").toLowerCase();
+    const resultStatus = String(result?.status || "").toLowerCase();
+
+    //contradictory persisted terminal views are unsafe to delete until recovery establishes one state
+    if (metaStatus && resultStatus && metaStatus !== resultStatus) {
+      return { deleted: false, reason: "RUN_INDETERMINATE", runId };
+    }
+
+    //read the reconciled aggregate state while the queue prevents cleanup from changing it underneath us
+    const run = await readRun(runId);
+    if (!run) {
+      return { deleted: true, alreadyDeleted: true, runId };
+    }
+
+    if (run.active) {
+      return { deleted: false, reason: "RUN_ACTIVE", runId };
+    }
+
+    if (!isTerminalStatus(run.status)) {
+      return { deleted: false, reason: "RUN_NOT_TERMINAL", runId };
+    }
+
+    try {
+      //remove only the selected server-managed run tree and leave exports outside runs untouched
+      await removeRun(runPaths.runRoot, { recursive: true, force: true });
+    } catch (error) {
+      //treat a concurrent already-removed directory as the same idempotent end state
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    return { deleted: true, alreadyDeleted: false, runId };
+  });
 }
 
 //scan select and delete only records from an explicit cleanup scope
@@ -1366,20 +1446,8 @@ async function pruneCompletedRuns(options = {}) {
     };
   }
 
-  const key = getCleanupQueueKey(sharedRoot);
-  const previous = cleanupQueues.get(key) || Promise.resolve();
-  //continue after a prior unexpected failure so one cleanup does not permanently block later retries
-  const pending = previous.catch(() => {}).then(() => pruneScopedCompletedRuns(options));
-  cleanupQueues.set(key, pending);
-
-  try {
-    return await pending;
-  } finally {
-    //only remove this queue entry when no newer scoped cleanup is waiting behind it
-    if (cleanupQueues.get(key) === pending) {
-      cleanupQueues.delete(key);
-    }
-  }
+  //share mutation serialization with exact one-run deletion so both operations observe stable storage
+  return enqueueRunDeletion(sharedRoot, () => pruneScopedCompletedRuns(options));
 }
 
 async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId } = {}) {
@@ -1468,6 +1536,7 @@ module.exports = {
   createRunRecord2,
   readRun,
   readRunForOwner,
+  deleteCompletedRun,
   requestRunCancellation,
   requestRunCancellationForOwner,
   listRuns,

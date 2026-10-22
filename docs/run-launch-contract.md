@@ -43,6 +43,8 @@ When Task 317 provides a safe per-user ownership scope, retention keeps at most 
 
 The backend requests the same retention mechanism after terminal completion, once at startup, and once per minute while it remains running. Cleanup runs do not overlap. Until a caller provides an explicit per-user run scope, these requests report a skipped cleanup and do not delete from the shared run directory. Cleanup skips or failures do not block backend startup, guest recovery, or a persisted terminal result.
 
+The internal run store also supports exact-confirmation deletion of one confirmed terminal run. It requires the raw confirmation text `CONFIRM`, rejects active, indeterminate, and non-terminal records, and removes only that run directory. Exported copies outside the run directory are preserved. This branch does not expose a deletion HTTP endpoint; authorization and the final authorized route remain separate integration work.
+
 On Windows, replacement of an existing pointer can fail with `EPERM` on the
 VM-shared directory even when first publication succeeds. `publishPointer` tries
 rename first, then uses Windows `File.Replace` through a noninteractive PowerShell
