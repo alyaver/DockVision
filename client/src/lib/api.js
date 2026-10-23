@@ -87,6 +87,21 @@ export async function cancelRun(runId) {
   return data;
 }
 
+//deletes one authorized history entry after the caller supplies exact confirmation text
+export async function deleteRun(runId, confirmation) {
+  //send only confirmation because the server derives deletion ownership from the current session
+  const response = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirmation }),
+  });
+
+  return parseJson(response);
+}
+
 // Expose direct Windows guest controls for readiness views and manual recovery.
 export async function startWindowsVm() {
   const response = await fetch(`${API_BASE}/api/windows-vm/start`, {
