@@ -523,7 +523,7 @@ export default function CreateATask() {
                 {!exit ? (
                     <div className="panel">
                         <div className="head-panel">
-                            <input value={newTaskName} onChange={(e) => setNewTaskName(e.target.value)} placeholder="Enter task name" />
+                            Create a Task Plan
                         </div>
 
                         <div className="body-panel">
