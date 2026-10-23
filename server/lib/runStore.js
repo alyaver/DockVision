@@ -296,13 +296,15 @@ async function readLogLines(filePath, limit = 200) {
   }
 }
 
+//describes the configured retention policy for callers that present cleanup behavior
 function describeCleanupPolicy() {
-  //keep the user-facing policy description aligned with the selection constants above
+  //read the constants directly so this helper cannot drift from selection behavior
   return `Retain up to ${CLEANUP_POLICY.maxTerminalRuns} terminal runs for ${CLEANUP_POLICY.maxAgeHours} hours from terminal completion when a safe ownership scope is available.`;
 }
 
+//compares run ids to make retention ordering stable when completion times match
 function compareRunIds(left, right) {
-  //provide a stable secondary sort order when terminal completion times are identical
+  //use a secondary key so equal timestamps produce repeatable cleanup candidates
   if (left === right) {
     return 0;
   }
@@ -310,8 +312,9 @@ function compareRunIds(left, right) {
   return left < right ? -1 : 1;
 }
 
+//selects removable run ids from an already scoped collection without reading or deleting files
 function selectRunsForRetention(records, { now = Date.now } = {}) {
-  //select removable run IDs from an already-scoped collection without reading or deleting files
+  //keep selection pure so controlled clocks and owner scopes can be tested without filesystem mutation
   const nowMs = now();
   if (!Number.isFinite(nowMs)) {
     throw new TypeError("Cleanup clock must return a finite timestamp.");
@@ -321,7 +324,7 @@ function selectRunsForRetention(records, { now = Date.now } = {}) {
   const expiryCutoff = nowMs - CLEANUP_POLICY.maxAgeHours * 60 * 60 * 1000;
   const completedRuns = records
     .filter((record) => {
-      //retention only considers confirmed, inactive terminal records from the supplied scope
+      //retain only confirmed inactive terminal records from the supplied owner scope
       return record &&
         typeof record.runId === "string" &&
         !record.active &&
@@ -333,18 +336,18 @@ function selectRunsForRetention(records, { now = Date.now } = {}) {
       finishedMs: Date.parse(record.finishedUtc || ""),
     }))
     .filter((record) => {
-      //missing completion time is indeterminate, so it cannot be age- or count-selected
+      //preserve missing completion times because they cannot be ordered or expired safely
       return !Number.isNaN(record.finishedMs);
     });
 
   completedRuns.sort((left, right) => {
-    //equal completion times use the run ID so retention selection remains reproducible
+    //use the run id after completion time so retention selection remains reproducible
     return right.finishedMs - left.finishedMs || compareRunIds(left.runId, right.runId);
   });
 
   return completedRuns
     .filter((record, index) => {
-      //count and age eligibility are independent: either condition selects the record
+      //select a record when either independent count or age policy makes it eligible
       return record.finishedMs <= expiryCutoff || index >= CLEANUP_POLICY.maxTerminalRuns;
     })
     .map((record) => record.runId);
@@ -1232,6 +1235,12 @@ function isRunOwnedBy(meta, ownerUserId) {
     String(meta.ownerUserId) === String(ownerUserId);
 }
 
+//checks for the persisted numeric owner identifier assigned by authenticated launches
+function hasSafeOwnerScope(meta) {
+  //exclude ownerless and malformed legacy records because they cannot be assigned safely
+  return Number.isSafeInteger(meta?.ownerUserId) && meta.ownerUserId > 0;
+}
+
 function isValidRunId(runId) {
   return typeof runId === "string" && /^run-[a-zA-Z0-9-]+$/.test(runId);
 }
@@ -1333,7 +1342,7 @@ async function pruneScopedCompletedRuns({
   now = Date.now,
   removeRun = fs.rm,
 } = {}) {
-  //resolve dependent storage paths from the supplied root so fixture cleanup never reaches live storage
+  //resolve dependent storage paths from the supplied root so fixture cleanup cannot reach live storage
   const resolvedSharedRoot = path.resolve(sharedRoot);
   const storagePaths = {
     sharedRoot: resolvedSharedRoot,
@@ -1361,7 +1370,7 @@ async function pruneScopedCompletedRuns({
       continue;
     }
 
-    //the active pointer always wins over terminal-looking files during lifecycle handoff
+    //let the active pointer win over terminal-looking files during lifecycle handoff
     if (entry.name === currentRunId) {
       continue;
     }
@@ -1450,6 +1459,91 @@ async function pruneCompletedRuns(options = {}) {
   return enqueueRunDeletion(sharedRoot, () => pruneScopedCompletedRuns(options));
 }
 
+//runs retention independently for each persisted owner scope while preserving legacy ownerless runs
+async function pruneOwnedCompletedRuns({
+  sharedRoot = SHARED_ROOT,
+  now = Date.now,
+  removeRun = fs.rm,
+} = {}) {
+  //resolve all paths from the supplied root so tests and production use the same ownership scan
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  const runsRoot = path.join(resolvedSharedRoot, "runs");
+  const activeRoot = path.join(resolvedSharedRoot, "active");
+  const currentRunPointerPath = path.join(activeRoot, "current-run.json");
+
+  return enqueueRunDeletion(resolvedSharedRoot, async () => {
+    //load only run ids backed by numeric ownership without fabricating a legacy owner
+    await ensureBaseLayout({ sharedRoot: resolvedSharedRoot, runsRoot, activeRoot });
+    const entries = await fs.readdir(runsRoot, { withFileTypes: true });
+    const runIdsByOwner = new Map();
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isValidRunId(entry.name)) {
+        continue;
+      }
+
+      const meta = await readJsonIfExists(getRunPaths(entry.name, runsRoot).metaPath);
+      if (!hasSafeOwnerScope(meta)) {
+        continue;
+      }
+
+      const ownerUserId = meta.ownerUserId;
+      const runIds = runIdsByOwner.get(ownerUserId) || [];
+      runIds.push(entry.name);
+      runIdsByOwner.set(ownerUserId, runIds);
+    }
+
+    const removedRunIds = [];
+    const failedRunIds = [];
+    const deletionFailures = [];
+    const ownerScopes = [];
+
+    for (const [ownerUserId, runIds] of runIdsByOwner) {
+      try {
+        //reuse the existing selection and deletion mechanics against exactly one owner scope
+        const cleanup = await pruneScopedCompletedRuns({
+          sharedRoot: resolvedSharedRoot,
+          activeRoot,
+          runsRoot,
+          currentRunPointerPath,
+          runIds,
+          now,
+          removeRun,
+        });
+        removedRunIds.push(...cleanup.removedRunIds);
+        failedRunIds.push(...cleanup.failedRunIds);
+        deletionFailures.push(...cleanup.deletionFailures);
+        ownerScopes.push({ ownerUserId, ...cleanup });
+      } catch (error) {
+        //continue with other owners when one scoped cleanup cannot inspect or remove its records
+        const failure = {
+          ownerUserId,
+          code: error?.code || "CLEANUP_FAILED",
+          message: error?.message || "Run cleanup failed.",
+        };
+        deletionFailures.push(failure);
+        ownerScopes.push({
+          ownerUserId,
+          skipped: false,
+          reason: null,
+          removedRunIds: [],
+          failedRunIds: [],
+          deletionFailures: [failure],
+        });
+      }
+    }
+
+    return {
+      skipped: false,
+      reason: null,
+      removedRunIds,
+      failedRunIds,
+      deletionFailures,
+      ownerScopes,
+    };
+  });
+}
+
 async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId } = {}) {
   const resolvedSharedRoot = path.resolve(sharedRoot);
   const activeRoot = path.join(resolvedSharedRoot, "active");
@@ -1458,7 +1552,8 @@ async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId } = {}) {
   const storagePaths = { sharedRoot: resolvedSharedRoot, activeRoot, runsRoot, currentRunPointerPath };
 
   await ensureBaseLayout(storagePaths);
-  await pruneCompletedRuns(storagePaths);
+  //reuse task 317 owner scopes when history reads request opportunistic retention
+  await pruneOwnedCompletedRuns(storagePaths);
 
   const currentRunPointer = await readCurrentRunPointer(storagePaths);
   const activeRunId = currentRunPointer?.runId || null;
@@ -1543,6 +1638,7 @@ module.exports = {
   resolveRunFilePath,
   resolveRunFilePathForOwner,
   pruneCompletedRuns,
+  pruneOwnedCompletedRuns,
   selectRunsForRetention,
   getIterationPaths,                       //for run supervisior
   buildIterationRunPointer,

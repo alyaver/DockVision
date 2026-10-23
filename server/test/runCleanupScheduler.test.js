@@ -223,3 +223,34 @@ test("unscoped startup and periodic cleanup report skips without deleting termin
   await fs.access(path.join(sharedRoot, "runs", runId, "uploaded-config.json"));
   assert.deepEqual(reports.map((report) => report.event), ["SKIPPED", "SKIPPED"]);
 });
+
+//verifies the default production scheduler derives task 317 owner scopes without caller-supplied run ids
+test("default startup cleanup applies owned retention and preserves ownerless legacy history", async (t) => {
+  //reload the scheduler after fixture setup so its default store uses this test-owned shared root
+  const { sharedRoot } = await createFixture(t);
+  const schedulerPath = require.resolve("../lib/runCleanupScheduler");
+  delete require.cache[schedulerPath];
+  const { createRunCleanupScheduler: createScopedScheduler } = require("../lib/runCleanupScheduler");
+  const ownedRunId = "run-scheduler-owned-expired";
+  const ownerlessRunId = "run-scheduler-legacy-expired";
+
+  t.after(() => {
+    //discard the fixture-bound scheduler so later tests do not inherit its configured store
+    delete require.cache[schedulerPath];
+  });
+  await Promise.all([
+    writeTerminalRun(sharedRoot, ownedRunId, "2000-01-01T00:00:00.000Z", {
+      meta: { ownerUserId: 101 },
+    }),
+    writeTerminalRun(sharedRoot, ownerlessRunId, "2000-01-01T00:00:00.000Z"),
+  ]);
+
+  const scheduler = createScopedScheduler({
+    setIntervalFn: () => null,
+  });
+  const cleanup = await scheduler.runCleanup();
+
+  assert.deepEqual(cleanup.removedRunIds, [ownedRunId]);
+  await assert.rejects(fs.access(path.join(sharedRoot, "runs", ownedRunId)), { code: "ENOENT" });
+  await fs.access(path.join(sharedRoot, "runs", ownerlessRunId, "uploaded-config.json"));
+});

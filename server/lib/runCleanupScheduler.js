@@ -1,4 +1,4 @@
-const { pruneCompletedRuns } = require("./runStore");
+const { pruneOwnedCompletedRuns } = require("./runStore");
 
 const RUN_CLEANUP_INTERVAL_MS = 60 * 1000;
 
@@ -10,7 +10,7 @@ function reportCleanupOutcome(event, details) {
 
 //runs shared cleanup at startup and on an interval without allowing overlapping passes
 function createRunCleanupScheduler({
-  prune = pruneCompletedRuns,
+  prune = pruneOwnedCompletedRuns,
   getOptions = () => ({}),
   onCleanup = reportCleanupOutcome,
   setIntervalFn = setInterval,

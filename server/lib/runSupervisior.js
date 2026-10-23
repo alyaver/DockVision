@@ -8,7 +8,7 @@ const {
   buildIterationRunPointer,
   writeCurrentRunPointer,
   readCancellationRequest,
-  pruneCompletedRuns,
+  pruneOwnedCompletedRuns,
 } = require("./runStore");
 
 function sleep(ms) {
@@ -67,7 +67,7 @@ function reportCleanupOutcome(event, details) {
 
 //supervises aggregate iterations and requests fail-closed cleanup after terminal state is durable
 async function superviseRun(runId, {
-  prune = pruneCompletedRuns,
+  prune = pruneOwnedCompletedRuns,
   onCleanup = reportCleanupOutcome,
 } = {}) {
   const run = await readRun(runId);

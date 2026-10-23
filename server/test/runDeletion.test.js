@@ -190,9 +190,9 @@ test("internal deletion surfaces filesystem failures and serializes with automat
   assert.equal(await pathExists(path.join(sharedRoot, "runs", "run-delete-failure")), true);
 });
 
-//verifies core deletion remains unreachable through both anonymous and authenticated http requests
-test("run access router exposes no unauthenticated deletion endpoint", async (t) => {
-  //mount only the real access router and prove it has no deletion handler to call
+//verifies the deletion route requires authentication and hides a run outside the authorized scope
+test("run access deletion requires authentication and hides foreign runs", async (t) => {
+  //mount the real router with no owned fixture run so authenticated foreign access remains not found
   const app = express();
   app.use(createRunAccessRouter({
     requireAuthenticatedUser: (req, res, next) => {

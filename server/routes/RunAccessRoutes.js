@@ -5,8 +5,10 @@ const {
   requestRunCancellationForOwner,
   requestRunCancellation2ForOwner,
   resolveRunFilePathForOwner,
+  deleteCompletedRun,
 } = require("../lib/runStore");
 
+//creates authenticated owner-scoped run history routes including single-run deletion
 function createRunAccessRouter({
   requireAuthenticatedUser,
   list = listRuns,
@@ -14,6 +16,7 @@ function createRunAccessRouter({
   cancelOwned = requestRunCancellationForOwner,
   cancelOwned2 = requestRunCancellation2ForOwner,
   resolveOwnedFile = resolveRunFilePathForOwner,
+  deleteRun = deleteCompletedRun,
 } = {}) {
   if (typeof requireAuthenticatedUser !== "function") {
     throw new Error("Run access routes require authenticated-user middleware.");
@@ -95,6 +98,37 @@ function createRunAccessRouter({
       return res.status(500).json({
         success: false,
         message: "Failed to request run cancellation",
+      });
+    }
+  });
+
+  //deletes one authenticated user's selected terminal history entry after exact confirmation
+  router.delete("/api/runs/:runId", express.json(), async (req, res) => {
+    try {
+      //read through the authenticated owner scope so client data cannot authorize a foreign deletion
+      const run = await readOwned(req.params.runId, req.auth.userId);
+      if (!run) {
+        return res.status(404).json({ success: false, message: "Run not found" });
+      }
+
+      //delegate lifecycle and artifact checks to the store after route-level ownership is established
+      const deletion = await deleteRun(req.params.runId, req.body?.confirmation);
+      if (!deletion.deleted) {
+        const status = deletion.reason === "CONFIRMATION_REQUIRED" ? 400 : 409;
+        return res.status(status).json({
+          success: false,
+          code: deletion.reason,
+          message: "Run could not be deleted in its current state",
+          runId: deletion.runId,
+        });
+      }
+
+      return res.json({ success: true, ...deletion });
+    } catch (error) {
+      console.error("RUN DELETION SERVER ERROR:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete run history",
       });
     }
   });
