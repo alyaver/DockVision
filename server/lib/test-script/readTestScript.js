@@ -114,7 +114,7 @@ function readTestScript({ fileName, content }) {
         delete step[field];
       }
     }
-v     
+     
     if (step.action !== "TYPE" && step.action !== "CLICK" && step.action !== "WAIT") {
       throw new TestScriptError(`Task '${step.id}' action must be TYPE, CLICK, or WAIT.`, `${taskPath}.action`, step.id);
     }
