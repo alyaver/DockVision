@@ -486,7 +486,7 @@ export default function CreateATask() {
     }
 
     function buildPlan() {
-        return serializeTaskPlan(newTaskName, defTask);
+        return serializeTaskPlan(newTaskName, defTask, Notepad_Reference_Images);
     }
 
     function exportJson() { // Exports the task list to a JSON file
