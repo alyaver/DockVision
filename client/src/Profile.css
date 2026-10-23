@@ -355,3 +355,260 @@ body, #root {
 .profile-file-input {
     display: none;
 }
+
+/* Recent run history */
+.profile-run-history {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    width: calc(100% - 48px);
+    max-width: 820px;
+    margin: 40px auto 0;
+    overflow: hidden;
+}
+
+.profile-run-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.profile-run-history-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.profile-run-refresh,
+.profile-run-retry,
+.profile-run-open {
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.profile-run-refresh {
+    font-size: 11px;
+    color: #555555;
+    background: none;
+    border: 1px solid #d0d0d0;
+    border-radius: 5px;
+    padding: 4px 10px;
+}
+
+.profile-run-refresh:hover:not(:disabled),
+.profile-run-open:hover {
+    background-color: #1a1a1a;
+    color: #ffffff;
+    border-color: #1a1a1a;
+}
+
+.profile-run-refresh:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.profile-run-list-state {
+    padding: 24px 20px;
+    font-size: 13px;
+    color: #666666;
+    text-align: center;
+}
+
+.profile-run-list-state--error {
+    color: #c0392b;
+}
+
+.profile-run-list-state p {
+    margin: 0 0 10px;
+}
+
+.profile-run-retry {
+    font-size: 12px;
+    color: #ffffff;
+    background-color: #1a1a1a;
+    border: 1px solid #1a1a1a;
+    border-radius: 5px;
+    padding: 5px 14px;
+}
+
+.profile-run-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.profile-run-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid #eeeeee;
+}
+
+.profile-run-item:last-child {
+    border-bottom: none;
+}
+
+.profile-run-item-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.profile-run-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #1a1a1a;
+    overflow-wrap: anywhere;
+}
+
+.profile-run-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.profile-run-badge,
+.profile-run-active {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.profile-run-badge {
+    background-color: #eef1f6;
+    color: #4a5568;
+    border: 1px solid #d9dee7;
+}
+
+.profile-run-active {
+    background-color: #1a1a1a;
+    color: #ffffff;
+    border: 1px solid #1a1a1a;
+}
+
+.profile-run-date,
+.profile-run-id {
+    font-size: 11px;
+    color: #888888;
+    margin-top: 2px;
+}
+
+.profile-run-id {
+    overflow-wrap: anywhere;
+}
+
+.profile-run-open {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: #555555;
+    background: none;
+    border: 1px solid #d0d0d0;
+    border-radius: 5px;
+    padding: 4px 12px;
+}
+
+.profile-run-empty-state {
+    padding: 48px 24px;
+    text-align: center;
+}
+
+.profile-run-empty-icon {
+    width: 48px;
+    height: 48px;
+    background-color: #f0f0f0;
+    border: 1px dashed #cccccc;
+    border-radius: 10px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aaaaaa;
+}
+
+.profile-run-empty-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin-bottom: 8px;
+}
+
+.profile-run-empty-sub {
+    font-size: 13px;
+    color: #888888;
+    line-height: 1.6;
+}
+
+.profile-run-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #bbbbbb;
+    flex-shrink: 0;
+}
+
+/* Profile Run History dot and badge run status colors */
+.profile-run-dot--queued {
+    background-color: #e0a800;
+}
+
+.profile-run-dot--running {
+    background-color: #1c56b5;
+}
+
+.profile-run-dot--completed {
+    background-color: #2f9e5f;
+}
+
+.profile-run-dot--failed {
+    background-color: #c0392b;
+}
+
+.profile-run-dot--cancelled {
+    background-color: #999999;
+}
+
+.profile-run-status--queued {
+    background-color: #fff3cd;
+    color: #856404;
+    border-color: #ffeaa7;
+}
+
+.profile-run-status--running {
+    background-color: #e7f1ff;
+    color: #1c56b5;
+    border-color: #c3d8f7;
+}
+
+.profile-run-status--completed {
+    background-color: #e6f7ed;
+    color: #1d7a34;
+    border-color: #c7ebd3;
+}
+
+.profile-run-status--failed {
+    background-color: #fde8e6;
+    color: #c0392b;
+    border-color: #f5c6cb;
+}
+
+.profile-run-status--cancelled {
+    background-color: #f1f1f1;
+    color: #666666;
+    border-color: #dddddd;
+}
+
+.profile-run-status--unknown {
+    background-color: #fff3cd;
+    color: #856404;
+    border-color: #ffeaa7;
+}
