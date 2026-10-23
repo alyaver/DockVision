@@ -28,15 +28,16 @@ const Navigation = () => {
           setUser(null);
 
           const authenticatedPaths = [
-            "/dashboard,",
+            "/dashboard",
             "/configuration-settings",
             "/create-a-task",
-            "/running-test"
+            "/running-test",
+            "/profile",
           ];
 
           const isAuthenticatedPath = authenticatedPaths.some(
             (path) => 
-              location.pathname == path || location.pathname.startsWith('${path}/')
+              location.pathname === path || location.pathname.startsWith(`${path}/`)
           );
           
           if (isAuthenticatedPath){

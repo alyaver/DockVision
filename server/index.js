@@ -24,6 +24,9 @@ const {
   createRequireAuthenticatedUser,
 } = require("./middleware/requireAuthenticatedUser");
 const { resumeActiveRun } = require("./lib/runRecovery");
+const { createAccountDeletionService } = require("./lib/accountDeletion");
+const { createLaunchService } = require("./lib/launchService");
+const { pruneCompletedRuns } = require("./lib/runStore");
 const {
   ensureWindowsVmRunning,
   getWindowsVmStatus,
@@ -32,6 +35,19 @@ const {
 const app = express();
 const PORT = 5000;
 const requireAuthenticatedUser = createRequireAuthenticatedUser({ db });
+const accountDeletionService = createAccountDeletionService({ db });
+const launch = createLaunchService({
+  beforePublish: pruneCompletedRuns,
+  assertOwnerCanLaunch: async (userId) => {
+    const result = await db.query("SELECT deletion_status FROM users WHERE user_id = $1", [userId]);
+    if (result.rows[0]?.deletion_status !== "active") {
+      const error = new Error("This account is being deleted and cannot start new work.");
+      error.status = 423;
+      error.code = "ACCOUNT_DELETION_PENDING";
+      throw error;
+    }
+  },
+});
 
 // Limit the forgot-password surface in two directions:
 // - many distinct email lookups from one IP (enumeration)
@@ -57,7 +73,7 @@ app.use(
 );
 
 app.use(cookieParser());
-app.use(createRunLaunchRouter({ requireAuthenticatedUser }));
+app.use(createRunLaunchRouter({ requireAuthenticatedUser, launch }));
 app.use(createRunAccessRouter({ requireAuthenticatedUser }));
 app.use(express.json());
 
@@ -388,7 +404,7 @@ if (typeof authRoutes !== "function") {
  *
  * No second auth server. No split-brain startup path.
  */
-app.use("/api/auth", authRoutes(db)); //updated path to /api/auth according to jira task #211
+app.use("/api/auth", authRoutes(db, { deletionService: accountDeletionService })); //updated path to /api/auth according to jira task #211
 
 /**
  * Final 404 for unknown API routes.

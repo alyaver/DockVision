@@ -6,7 +6,7 @@ const { createGuestReadiness } = require("./guestReadiness");
 // Deployment contract: one backend process per shared root, not a distributed lock.
 const admissions = new Map();
 
-function createLaunchService({ store = createLaunchStore(), readiness = createGuestReadiness({ sharedRoot: store.sharedRoot }), validate = validateLaunchRequest, beforePublish = async () => {} } = {}) {
+function createLaunchService({ store = createLaunchStore(), readiness = createGuestReadiness({ sharedRoot: store.sharedRoot }), validate = validateLaunchRequest, beforePublish = async () => {}, assertOwnerCanLaunch = async () => {} } = {}) {
   return async function launch(input, { ownerUserId } = {}) {
     const request = validate(input);
     if (ownerUserId === undefined || ownerUserId === null) {
@@ -16,6 +16,7 @@ function createLaunchService({ store = createLaunchStore(), readiness = createGu
     const previous = admissions.get(key) || Promise.resolve();
     const pending = previous.catch(() => {}).then(async () => {
       await store.assertAvailable();
+      await assertOwnerCanLaunch(ownerUserId);
       const guest = await readiness();
       if (!guest || typeof guest.containerId !== "string" || !guest.containerId.trim()) {
         throw new LaunchError(409, "GUEST_NOT_READY", "Guest readiness did not resolve a container ID.");
