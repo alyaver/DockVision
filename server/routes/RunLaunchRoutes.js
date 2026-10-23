@@ -28,14 +28,19 @@ function launchErrorHandler(error, req, res, next) {
 function createRunLaunchRouter({
   launch = createLaunchService({ beforePublish: pruneCompletedRuns }),
   supervise = superviseRun,
+  requireAuthenticatedUser,
 } = {}) {
+  if (typeof requireAuthenticatedUser !== "function") {
+    throw new Error("Run launch routes require authenticated-user middleware.");
+  }
   const router = express.Router();
   //parse here, before the application's general parser, so aliases share JSON errors too.
   router.post(["/api/runs/start", "/api/runs/start2", "/api/docker/start-smoke"],
+    requireAuthenticatedUser,
     //let these routes accept uploaded scripts up to 10mb
     express.json({ limit: RUN_LAUNCH_JSON_LIMIT }), async (req, res, next) => {
       try {
-        const accepted = await launch(req.body);
+        const accepted = await launch(req.body, { ownerUserId: req.auth.userId });
         // Supervision continues after the 202 response and advances the active
         // pointer through each iteration. Admission has already published the
         // first iteration, so starting supervision here cannot expose root paths.
