@@ -7,8 +7,11 @@ const { createGuestReadiness } = require("./guestReadiness");
 const admissions = new Map();
 
 function createLaunchService({ store = createLaunchStore(), readiness = createGuestReadiness({ sharedRoot: store.sharedRoot }), validate = validateLaunchRequest, beforePublish = async () => {} } = {}) {
-  return async function launch(input) {
+  return async function launch(input, { ownerUserId } = {}) {
     const request = validate(input);
+    if (ownerUserId === undefined || ownerUserId === null) {
+      throw new LaunchError(401, "NOT_AUTHENTICATED", "Authentication is required.");
+    }
     const key = process.platform === "win32" ? store.sharedRoot.toLowerCase() : store.sharedRoot;
     const previous = admissions.get(key) || Promise.resolve();
     const pending = previous.catch(() => {}).then(async () => {
@@ -18,7 +21,7 @@ function createLaunchService({ store = createLaunchStore(), readiness = createGu
         throw new LaunchError(409, "GUEST_NOT_READY", "Guest readiness did not resolve a container ID.");
       }
       await beforePublish();
-      return store.publish(request, guest.containerId);
+      return store.publish(request, guest.containerId, ownerUserId);
     });
     admissions.set(key, pending);
     try {

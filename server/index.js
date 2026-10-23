@@ -19,14 +19,11 @@ const nodemailer = require("nodemailer");
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
-const { resumeActiveRun } = require("./lib/runRecovery");
+const { createRunAccessRouter } = require("./routes/RunAccessRoutes");
 const {
-  readRun,
-  requestRunCancellation,
-  listRuns,
-  resolveRunFilePath,
-  requestRunCancellation2,
-} = require("./lib/runStore");
+  createRequireAuthenticatedUser,
+} = require("./middleware/requireAuthenticatedUser");
+const { resumeActiveRun } = require("./lib/runRecovery");
 const {
   ensureWindowsVmRunning,
   getWindowsVmStatus,
@@ -34,6 +31,7 @@ const {
 
 const app = express();
 const PORT = 5000;
+const requireAuthenticatedUser = createRequireAuthenticatedUser({ db });
 
 // Limit the forgot-password surface in two directions:
 // - many distinct email lookups from one IP (enumeration)
@@ -58,9 +56,10 @@ app.use(
   })
 );
 
-app.use(createRunLaunchRouter());
-app.use(express.json());
 app.use(cookieParser());
+app.use(createRunLaunchRouter({ requireAuthenticatedUser }));
+app.use(createRunAccessRouter({ requireAuthenticatedUser }));
+app.use(express.json());
 
 /**
  * Build the mail transporter only when all required email settings exist.
@@ -126,36 +125,6 @@ app.get("/api/docker/ping", (req, res) => {
   });
 });
 
-app.post("/api/runs/:runId/cancel", async (req, res) => {
-  try {
-    const run = await requestRunCancellation(req.params.runId);
-
-    if (!run) {
-      return res.status(404).json({
-        success: false,
-        message: "Run not found.",
-      });
-    }
-
-    return res.json({
-      success: true,
-      message:
-        run.status === "cancelling"
-          ? "Cancellation requested."
-          : `Run is already ${run.status}.`,
-      run,
-    });
-  } catch (error) {
-    console.error("RUN CANCELLATION ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to request run cancellation.",
-      error: error.message,
-    });
-  }
-});
-
 /**
  * Report the current Docker-backed Windows guest status without creating a run.
  * The dashboard polls this so users can tell "Docker is down" apart from
@@ -199,110 +168,6 @@ app.post("/api/windows-vm/start", async (req, res) => {
       success: false,
       message: "Failed to start the Windows VM service",
       error: error.message,
-    });
-  }
-});
-
-app.get("/api/runs", async (req, res) => {
-  try {
-    const runs = await listRuns();
-
-    return res.json({
-      success: true,
-      runs,
-    });
-  } catch (error) {
-    console.error("RUN LIST SERVER ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to load run history",
-    });
-  }
-});
-
-/**
- * Poll the current state of a single run and return its scoped artifacts/logs.
- */
-app.get("/api/runs/:runId", async (req, res) => {
-  try {
-    const run = await readRun(req.params.runId);
-
-    if (!run) {
-      return res.status(404).json({
-        success: false,
-        message: "Run not found",
-      });
-    }
-
-    return res.json({
-      success: true,
-      run,
-    });
-  } catch (error) {
-    console.error("RUN STATUS SERVER ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to read run status",
-    });
-  }
-});
-
-app.post("/api/runs/:runId/cancel2", async (req, res) => {
-  try {
-    const cancellation = await requestRunCancellation2(req.params.runId);
-
-    if (!cancellation) {
-      return res.status(404).json({
-        success: false,
-        message: "Run not found",
-      })
-    }
-    const { run, terminal } = cancellation;
-    
-    if (terminal) {
-      return res.status(200).json({
-        success: true,
-        run,
-      });
-    }
-
-    return res.status(202).json({
-      success: true,
-      run: cancellingRun,
-    })
-  } catch (error) {
-    console.error("RUN CANCELATION SERVER ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to request run cancellation",
-    });
-  }
-})
-
-/**
- * Serve a file from a single run folder. This keeps screenshots and saved
- * artifacts scoped to the current run instead of reading from shared globals.
- */
-app.get("/api/runs/:runId/files/*", async (req, res) => {
-  try {
-    const filePath = await resolveRunFilePath(req.params.runId, req.params[0] || "");
-    return res.sendFile(filePath, (sendError) => {
-      if (sendError && !res.headersSent) {
-        res.status(sendError.statusCode || 404).json({
-          success: false,
-          message: "Run file not found",
-        });
-      }
-    });
-  } catch (error) {
-    console.error("RUN FILE SERVER ERROR:", error);
-
-    return res.status(404).json({
-      success: false,
-      message: "Run file not found",
     });
   }
 });

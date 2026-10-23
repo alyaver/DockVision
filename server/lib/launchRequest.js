@@ -28,7 +28,7 @@ function validateLaunchRequest(input) {
   if (!input.configFileName.toLowerCase().endsWith(".json")) {
     invalid("configFileName", "Configuration must use a .json filename.");
   }
-  for (const field of ["taskType", "payload"]) {
+  for (const field of ["taskType", "payload", "ownerUserId", "userId", "owner"]) {
     if (Object.hasOwn(input, field)) invalid(field, `${field} is assigned by the server.`);
   }
   const supplied = input.runOptions === undefined ? {} : input.runOptions;
