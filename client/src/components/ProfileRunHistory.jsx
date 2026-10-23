@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { EmptyIcon } from "./Icons";
+import { getRun } from "../lib/api";
 
 function formatRunLabel(value) {
     return String(value || "")
@@ -30,11 +31,44 @@ function formatRunTimestamp(run) {
     return `${label}: ${parsedDate.toLocaleString()}`;
 }
 
+function flattenArtifactEntries(artifacts) {
+    return Object.entries(artifacts || {}).flatMap(([name, artifact]) => {
+        const values = Array.isArray(artifact) ? artifact : [artifact];
+        return values.filter(Boolean).map((value, index) => ({
+            name: values.length > 1 ? `${name}-${index + 1}` : name,
+            artifact: value,
+        }));
+    });
+}
+
+function flattenFileEntries(files) {
+    return Object.entries(files || {}).flatMap(([name, file]) => {
+        const values = Array.isArray(file) ? file : [file];
+        return values.filter(Boolean).map((value, index) => ({
+            name: values.length > 1 ? `${name}-${index + 1}` : name,
+            file: value,
+        }));
+    });
+}
+
+function formatArtifactGroupName(name) {
+    if (name.startsWith("screenshot-")) {
+        const match = name.match(/^screenshot-(\d+)-/);
+        return match ? `Iteration ${match[1]} Screenshots` : "Screenshots";
+    }
+
+    return "Results";
+}
+
 export default function ProfileRunHistory() {
     const navigate = useNavigate();
     const [runs, setRuns] = useState([]);
     const [runsLoading, setRunsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState("");
+    const [expandedRunId, setExpandedRunId] = useState("");
+    const [artifactRuns, setArtifactRuns] = useState({});
+    const [artifactLoadingRunId, setArtifactLoadingRunId] = useState("");
+    const [artifactErrors, setArtifactErrors] = useState({});
 
     async function loadRuns() {
         setRunsLoading(true);
@@ -68,6 +102,35 @@ export default function ProfileRunHistory() {
                 testName: run.testName,
             },
         });
+    }
+
+    async function loadArtifacts(runId) {
+        setArtifactLoadingRunId(runId);
+        setArtifactErrors((previous) => ({ ...previous, [runId]: "" }));
+
+        try {
+            const data = await getRun(runId);
+            setArtifactRuns((previous) => ({ ...previous, [runId]: data.run || null }));
+        } catch (error) {
+            setArtifactErrors((previous) => ({
+                ...previous,
+                [runId]: error.message || "Failed to load run artifacts.",
+            }));
+        } finally {
+            setArtifactLoadingRunId("");
+        }
+    }
+
+    async function handleToggleArtifacts(runId) {
+        if (expandedRunId === runId) {
+            setExpandedRunId("");
+            return;
+        }
+
+        setExpandedRunId(runId);
+        if (!artifactRuns[runId]) {
+            await loadArtifacts(runId);
+        }
     }
 
     return (
@@ -129,13 +192,112 @@ export default function ProfileRunHistory() {
                                         <div className="profile-run-id">Run ID: {run.runId}</div>
                                     </div>
                                 </div>
-                                <button
-                                    className="profile-run-open"
-                                    type="button"
-                                    onClick={() => handleOpenRun(run)}
-                                >
-                                    Open
-                                </button>
+                                <div className="profile-run-actions">
+                                    <button
+                                        className="profile-run-artifacts"
+                                        type="button"
+                                        onClick={() => handleToggleArtifacts(run.runId)}
+                                        aria-expanded={expandedRunId === run.runId}
+                                    >
+                                        {artifactLoadingRunId === run.runId
+                                            ? "Loading..."
+                                            : expandedRunId === run.runId
+                                                ? "Hide artifacts"
+                                                : "Artifacts"}
+                                    </button>
+                                    <button
+                                        className="profile-run-open"
+                                        type="button"
+                                        onClick={() => handleOpenRun(run)}
+                                    >
+                                        Open
+                                    </button>
+                                </div>
+                                {expandedRunId === run.runId && (
+                                    <div className="profile-run-artifact-panel">
+                                        {artifactErrors[run.runId] ? (
+                                            <div className="profile-run-artifact-error" role="alert">
+                                                {artifactErrors[run.runId]}
+                                                <button type="button" onClick={() => loadArtifacts(run.runId)}>
+                                                    Retry
+                                                </button>
+                                            </div>
+                                        ) : artifactRuns[run.runId] ? (
+                                            <>
+                                                {(() => {
+                                                    const artifacts = artifactRuns[run.runId].artifacts || {};
+                                                    const entries = flattenArtifactEntries(artifacts)
+                                                        .filter(({ name }) => name !== "screenshot" && !name.startsWith("screenshot-"));
+                                                    const screenshotEntries = flattenArtifactEntries(artifacts)
+                                                        .filter(({ name }) => name.startsWith("screenshot-"));
+                                                    const fileEntries = flattenFileEntries(artifactRuns[run.runId].files);
+                                                    const groupedEntries = [
+                                                        ...screenshotEntries.map((entry) => ({
+                                                            ...entry,
+                                                            group: formatArtifactGroupName(entry.name),
+                                                            value: entry.artifact,
+                                                        })),
+                                                        ...entries.map((entry) => ({
+                                                            ...entry,
+                                                            group: "Results",
+                                                            value: entry.artifact,
+                                                        })),
+                                                        ...fileEntries.map((entry) => ({
+                                                            ...entry,
+                                                            group: entry.name === "taskPlan" ? "Inputs" : "Results",
+                                                            value: entry.file,
+                                                        })),
+                                                    ];
+                                                    const groups = groupedEntries.reduce((result, entry) => {
+                                                        result[entry.group] = result[entry.group] || [];
+                                                        result[entry.group].push(entry);
+                                                        return result;
+                                                    }, {});
+
+                                                    return (
+                                                        <>
+                                                            {Object.keys(groups).length > 0 ? (
+                                                                Object.entries(groups).map(([groupName, groupEntries]) => (
+                                                                    <div className="profile-run-artifact-group" key={groupName}>
+                                                                        <h4>{groupName}</h4>
+                                                                        <ul className="profile-run-artifact-list">
+                                                                            {groupEntries.map(({ name, value }) => (
+                                                                                <li key={name}>
+                                                                                    <span>{value.displayName || value.fileName || name}</span>
+                                                                                    {value.url ? (
+                                                                                        (() => {
+                                                                                            const isTaskPlan = name === "taskPlan";
+                                                                                            return (
+                                                                                        <a
+                                                                                            href={isTaskPlan ? `${value.url}?download=1` : value.url}
+                                                                                            target={isTaskPlan ? undefined : "_blank"}
+                                                                                            rel={isTaskPlan ? undefined : "noreferrer"}
+                                                                                            download={isTaskPlan ? true : undefined}
+                                                                                        >
+                                                                                            {isTaskPlan ? "Download" : "Open"}
+                                                                                        </a>
+                                                                                            );
+                                                                                        })()
+                                                                                    ) : (
+                                                                                        <span>Pending</span>
+                                                                                    )}
+                                                                                </li>
+                                                                            ))}
+                                                                        </ul>
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <div className="profile-run-artifact-empty">No artifacts available for this run.</div>
+                                                            )}
+                                                        </>
+                                                    );
+                                                })()}
+                                            </>
+                                        ) : (
+                                            <div className="profile-run-artifact-loading" role="status">Loading artifacts...</div>
+                                        )}
+                                    </div>
+                                )}
                             </li>
                         );
                     })}

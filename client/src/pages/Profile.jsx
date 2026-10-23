@@ -493,7 +493,6 @@ export default function Profile() {
                             </>
                         )}
                     </section>
-                    <ProfileRunHistory />
                     {isChangingPasswordOpen && (
                         <section className="profile-password-card" aria-labelledby="password-title">
                             <h2 id="password-title">Change password</h2>
@@ -649,6 +648,7 @@ export default function Profile() {
                             </form>
                         </section>
                     )}
+                    <ProfileRunHistory />
                     </>
                 )}
             </main>
