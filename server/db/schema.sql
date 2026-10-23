@@ -6,7 +6,8 @@ CREATE TABLE users (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   failed_login_count INTEGER NOT NULL DEFAULT 0,
-  lock_until TIMESTAMP NULL
+  lock_until TIMESTAMP NULL,
+  deletion_status VARCHAR(20) NOT NULL DEFAULT 'active'
 );
 
 CREATE TABLE sessions (
@@ -43,3 +44,18 @@ CREATE TABLE password_reset_request_attempts (
 
 CREATE INDEX idx_reset_attempts_ip_requested_at ON password_reset_request_attempts (ip_address, requested_at);
 CREATE INDEX idx_reset_attempts_email_requested_at ON password_reset_request_attempts (email, requested_at);
+
+CREATE TABLE account_deletion_jobs (
+  deletion_job_id UUID PRIMARY KEY,
+  user_id INTEGER UNIQUE REFERENCES users(user_id) ON DELETE SET NULL,
+  status VARCHAR(20) NOT NULL,
+  step VARCHAR(40) NOT NULL,
+  last_error TEXT NULL,
+  accepted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP NULL
+);
+
+CREATE INDEX idx_account_deletion_jobs_status ON account_deletion_jobs(status);
+
+-- Existing installations should apply server/db/migration-001-account-deletion.sql.

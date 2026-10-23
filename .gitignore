@@ -165,3 +165,5 @@ client/.env
 client/.vite/*
 
 .idea
+# Local sprint review document
+/docs/Sprint-08-Team-Review.docx

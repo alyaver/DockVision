@@ -89,3 +89,59 @@ body, #root {
     overflow-wrap: anywhere;
 }
 
+.deletion-card {
+    margin-top: 24px;
+}
+
+.profile-danger-button {
+    background: #a51d2d;
+    border: 1px solid #8b1624;
+    border-radius: 6px;
+    color: #fff;
+    cursor: pointer;
+    padding: 10px 14px;
+}
+
+.profile-danger-button:disabled {
+    cursor: not-allowed;
+    opacity: .6;
+}
+
+.profile-dialog-backdrop {
+    align-items: center;
+    background: rgba(0, 0, 0, .55);
+    display: flex;
+    inset: 0;
+    justify-content: center;
+    padding: 24px;
+    position: fixed;
+    z-index: 10;
+}
+
+.profile-dialog {
+    background: #fff;
+    border-radius: 10px;
+    max-width: 520px;
+    padding: 24px;
+    width: 100%;
+}
+
+.profile-dialog form {
+    display: grid;
+    gap: 10px;
+}
+
+.profile-dialog input {
+    box-sizing: border-box;
+    font: inherit;
+    padding: 10px;
+    width: 100%;
+}
+
+.profile-dialog-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+

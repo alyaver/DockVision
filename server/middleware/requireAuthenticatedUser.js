@@ -1,4 +1,4 @@
-function createRequireAuthenticatedUser({ db }) {
+function createRequireAuthenticatedUser({ db, allowDeletionStatus = false }) {
   if (!db || typeof db.query !== "function") {
     throw new Error("Authenticated-user middleware requires a database query() method.");
   }
@@ -16,7 +16,7 @@ function createRequireAuthenticatedUser({ db }) {
 
     try {
       const result = await db.query(
-        `SELECT u.user_id
+        `SELECT u.user_id, u.deletion_status
          FROM sessions s
          JOIN users u ON u.user_id = s.user_id
          WHERE s.session_token = $1
@@ -32,7 +32,16 @@ function createRequireAuthenticatedUser({ db }) {
         });
       }
 
-      req.auth = Object.freeze({ userId: result.rows[0].user_id });
+      const deletionStatus = result.rows[0].deletion_status || "active";
+      if (!allowDeletionStatus && deletionStatus !== "active") {
+        return res.status(423).json({
+          success: false,
+          code: "ACCOUNT_DELETION_PENDING",
+          message: "This account is being deleted. Only deletion status, retry, and logout are available.",
+        });
+      }
+
+      req.auth = Object.freeze({ userId: result.rows[0].user_id, deletionStatus });
       return next();
     } catch (error) {
       return next(error);
