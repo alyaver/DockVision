@@ -55,8 +55,14 @@ if defined PYTHON_RUNTIME_SOURCE (
   )
 )
 
-for /f "delims=" %%P in ('where python.exe 2^>nul') do (
-  if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
+if exist "C:\DockVision\Python311\python.exe" (
+  set "PYTHON_EXE=C:\DockVision\Python311\python.exe"
+)
+
+if not defined PYTHON_EXE (
+  for /f "delims=" %%P in ('where python.exe 2^>nul') do (
+    if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
+  )
 )
 
 if not defined PYTHON_EXE (
@@ -93,21 +99,21 @@ for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimI
 
 timeout /t 1 /nobreak >nul
 
-start "" /B "%PYTHON_EXE%" "%AGENT_PATH%" --agent >> "%AGENT_LOG%" 2>&1
-if errorlevel 1 (
-  call :log "ERROR: Python agent launch command failed. See %AGENT_LOG%."
-  exit /b 1
-)
-
-rem Re-register the task on every install so the startup command stays aligned
-rem with the latest deployed agent path and flags.
-schtasks /Create /TN "DockVisionAgent" /SC ONLOGON /RL HIGHEST /TR """%PYTHON_EXE%"" ""%AGENT_PATH%"" --agent" /F
+rem Register the scheduled task before starting it so Task Scheduler owns the
+rem active process and can restart it if the Python agent exits unexpectedly.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $arguments = ([char]34) + $env:AGENT_PATH + ([char]34) + ' --agent'; $action = New-ScheduledTaskAction -Execute $env:PYTHON_EXE -Argument $arguments; $trigger = New-ScheduledTaskTrigger -AtLogOn; $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew; Register-ScheduledTask -TaskName 'DockVisionAgent' -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null"
 if errorlevel 1 (
   call :log "ERROR: Failed to register the Python agent scheduled task."
   exit /b 1
 )
 
-call :log "Python agent started and scheduled for logon with %PYTHON_EXE%."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; Start-ScheduledTask -TaskName 'DockVisionAgent'"
+if errorlevel 1 (
+  call :log "ERROR: Failed to start the Python agent scheduled task."
+  exit /b 1
+)
+
+call :log "Python agent started under Task Scheduler with restart-on-failure enabled."
 
 exit /b 0
 

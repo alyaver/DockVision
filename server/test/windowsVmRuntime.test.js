@@ -29,8 +29,17 @@ test("VM installer deploys and schedules only the Python agent", () => {
   assert.match(installer, /vm-notepad-runner\.py/);
   assert.match(installer, /-m pip install --disable-pip-version-check pywinauto Pillow/);
   assert.match(installer, /-c "import pywinauto; from PIL import Image"/);
-  assert.match(installer, /start "" \/B "%PYTHON_EXE%" "%AGENT_PATH%" --agent/);
-  assert.match(installer, /schtasks \/Create[\s\S]*%PYTHON_EXE%[\s\S]*%AGENT_PATH%[\s\S]*--agent/);
+  assert.match(
+    installer,
+    /if exist "C:\\DockVision\\Python311\\python\.exe"[\s\S]*set "PYTHON_EXE=C:\\DockVision\\Python311\\python\.exe"[\s\S]*if not defined PYTHON_EXE[\s\S]*where python\.exe/,
+  );
+  assert.match(installer, /New-ScheduledTaskAction -Execute \$env:PYTHON_EXE -Argument \$arguments/);
+  assert.match(installer, /New-ScheduledTaskTrigger -AtLogOn/);
+  assert.match(installer, /New-ScheduledTaskSettingsSet[\s\S]*-RestartCount 999[\s\S]*-RestartInterval[\s\S]*-ExecutionTimeLimit \(\[TimeSpan\]::Zero\)/);
+  assert.match(installer, /Register-ScheduledTask -TaskName 'DockVisionAgent'[\s\S]*-RunLevel Highest -Force/);
+  assert.match(installer, /Start-ScheduledTask -TaskName 'DockVisionAgent'/);
+  assert.doesNotMatch(installer, /schtasks \/Create/);
+  assert.doesNotMatch(installer, /start "" \/B "%PYTHON_EXE%" "%AGENT_PATH%" --agent/);
   assert.doesNotMatch(installer, /DockVisionAgent\.ps1/i);
 });
 
