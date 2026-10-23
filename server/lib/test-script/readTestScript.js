@@ -114,7 +114,7 @@ function readTestScript({ fileName, content }) {
         delete step[field];
       }
     }
-     
+
     if (step.action !== "TYPE" && step.action !== "CLICK" && step.action !== "WAIT") {
       throw new TestScriptError(`Task '${step.id}' action must be TYPE, CLICK, or WAIT.`, `${taskPath}.action`, step.id);
     }
@@ -135,7 +135,7 @@ function readTestScript({ fileName, content }) {
         throw new TestScriptError(`TYPE step '${step.id}' requires a nonempty text string.`, `${taskPath}.text`, step.id);
       }
     } else if (step.action === "WAIT") {
-      if (!Number.isFinite(step.delayMs) || step.delayMs <= 0) {
+      if (!Number.isInteger(step.delayMs) || step.delayMs <= 0) {
         throw new TestScriptError(`WAIT step '${step.id}' requires a positive delay in milliseconds.`, `${taskPath}.delayMs`, step.id);
       }
     } else{
