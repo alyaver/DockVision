@@ -117,7 +117,7 @@ test("listRuns prunes only the supplied shared root and preserves its active run
     ]);
   });
 
-  const finishedUtc = "2026-10-10T00:00:00.000Z";
+  const finishedUtc = new Date().toISOString();
   const completedRuns = Array.from({ length: 21 }, (_, index) => {
     const runId = `completed-${String(index).padStart(2, "0")}`;
     return writeJson(path.join(rootA, "runs", runId, "meta.json"), {
