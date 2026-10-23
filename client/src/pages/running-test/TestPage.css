@@ -324,3 +324,42 @@
   opacity:0.6;
   cursor: not-allowed;
 }
+
+/* Align export information with the run details below it. */
+.TestPage__exportPanel {
+  box-sizing: border-box;
+  max-width: 1200px;
+  margin: 0 auto 20px;
+  padding: 20px 24px;
+  border: 1px solid #d7e3ef;
+  border-radius: 18px;
+  box-shadow: 0 6px 18px rgba(17, 48, 83, 0.05);
+}
+
+.TestPage__exportPanel h2 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+}
+
+.TestPage__exportPanel p {
+  margin: 6px 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.TestPage__exportPanel p:last-of-type {
+  color: #5f7691;
+  font-size: 0.9rem;
+}
+
+.TestPage .TestPage__artifactDownload {
+  width: auto;
+  justify-self: start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #215a9a;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}

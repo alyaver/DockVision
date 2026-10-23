@@ -1,5 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
+const { FaF } = require("react-icons/fa6");
 
 const CLEANUP_POLICY = {
   maxCompletedRuns: 20,
@@ -623,6 +624,92 @@ async function listIterationScreenshotArtifacts(runId, iterationsRoot) {
   return artifacts;
 }
 
+async function listIterationResultArtifacts(runId, iterationsRoot) {
+  let entries;
+
+  try {
+    entries = await fs.readdir(iterationsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error;
+  }
+
+  const artifacts = {};
+
+  // Collect files even when a failed or cancelled result omits them.
+  async function collectFiles(directory, relativeDirectory) {
+    let files;
+
+    try {
+      files = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      throw error;
+    }
+
+    for (const file of files) {
+      const relativePath = `${relativeDirectory}/${file.name}`;
+      const filePath = path.join(directory, file.name);
+
+      if (file.isDirectory()) {
+        await collectFiles(filePath, relativePath);
+      } else if (file.isFile()) {
+        // Preserve iteration-relative paths so matching filenames stay distinct.
+        artifacts[`file:${relativePath}`] =
+          buildArtifactMap(runId, { file: relativePath }).file;
+      }
+    }
+  }
+
+  const iterations = entries
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .sort((left, right) => Number(left.name) - Number(right.name));
+
+  for (const iteration of iterations) {
+    const iterationRoot = path.join(iterationsRoot, iteration.name);
+    const result = await readJsonIfExists(
+      path.join(iterationRoot, "result.json")
+    );
+
+    // Include declared outputs from every iteration, not just the current one.
+    const declaredArtifacts = buildArtifactMap(
+      runId,
+      result?.artifacts || {}
+    );
+
+    for (const [name, artifact] of Object.entries(declaredArtifacts)) {
+      artifacts[`iteration:${iteration.name}:${name}`] = artifact;
+    }
+
+    // Include partial files that exist without a successful result.
+    await collectFiles(
+      path.join(iterationRoot, "artifacts"),
+      `iterations/${iteration.name}/artifacts`
+    );
+        // Include each iteration's Task Log, even if execution failed or
+    // was cancelled. Keep its iteration path so logs stay separate.
+    const taskLogRelativePath =
+      `iterations/${iteration.name}/logs/task.log`;
+
+    try {
+      const taskLogInfo = await fs.stat(
+        path.join(iterationRoot, "logs", "task.log")
+      );
+
+      if (taskLogInfo.isFile()) {
+        artifacts[`iteration:${iteration.name}:taskLog`] =
+          buildArtifactMap(runId, {
+            taskLog: taskLogRelativePath,
+          }).taskLog;
+      }
+    } catch (error) {
+      // A missing log should not prevent other artifacts from exporting.
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return artifacts;
+}
+
 async function syncMetaFromRunState(runId, snapshot) {
   if (!snapshot.meta) {
     return snapshot;
@@ -655,6 +742,63 @@ async function syncMetaFromRunState(runId, snapshot) {
     ...snapshot,
     meta: nextMeta,
   };
+}
+
+async function areRunArtifactsFinalized(runId, status, runPaths, rootResult) {
+  // A running run may still produce more iterations and files.
+  if (!isTerminalStatus(status)) return false;
+
+  // Require an explicit guest confirmation for this task and run.
+  function isFinalizedResult(result, task) {
+    return Boolean(
+      task &&
+      result?.runId === runId &&
+      result?.taskId === task.taskId &&
+      isTerminalStatus(result?.status) &&
+      result?.artifactsFinalized === true
+    );
+  }
+
+  let entries;
+
+  try {
+    entries = await fs.readdir(runPaths.iterationsRoot, {
+      withFileTypes: true,
+    });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    entries = [];
+  }
+
+  let foundIterationTask = false;
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+
+    const iterationRoot = path.join(runPaths.iterationsRoot, entry.name);
+    const task = await readJsonIfExists(
+      path.join(iterationRoot, "task.json")
+    );
+
+    // An empty prepared directory does not represent a published task.
+    if (!task) continue;
+
+    foundIterationTask = true;
+
+    const result = await readJsonIfExists(
+      path.join(iterationRoot, "result.json")
+    );
+
+    // Missing results or unfinished shutdown must keep export waiting.
+    if (!isFinalizedResult(result, task)) return false;
+  }
+
+  if (foundIterationTask) return true;
+
+  // Support runs that use the older root-level task/result layout,
+  // but still require explicit finalization confirmation.
+  const rootTask = await readJsonIfExists(runPaths.taskPath);
+  return isFinalizedResult(rootResult, rootTask);
 }
 
 async function readRun(runId) {
@@ -710,12 +854,26 @@ async function readRun(runId) {
     status,
   });
 
+  // Check finalization before collecting the files returned to the browser.
+  const artifactsFinalized = await areRunArtifactsFinalized(
+    runId,
+    snapshot.status,
+    runPaths,
+    snapshot.result
+  );
+
   const latestScreenshot = await findLatestScreenshotArtifact(
     runId,
     screenshotsRoot,
     selectedIterationNumber
   );
   const iterationScreenshotArtifacts = await listIterationScreenshotArtifacts(
+    runId,
+    runPaths.iterationsRoot
+  );
+
+  // Collect other result artifacts during all iterations
+  const iterationResultArtifacts = await listIterationResultArtifacts(
     runId,
     runPaths.iterationsRoot
   );
@@ -739,6 +897,7 @@ async function readRun(runId) {
     // executionMode and progress preserve the status contract consumed by TestPage.
     executionMode: baseMeta.executionMode || null,
     status: snapshot.status,
+            artifactsFinalized,
     settings: baseMeta.settings || snapshot.task?.settings || null,
     iterationState: baseMeta.iterationState || null,
     progress,
@@ -761,6 +920,7 @@ async function readRun(runId) {
       : null,
     artifacts: {
       ...buildArtifactMap(runId, snapshot.result?.artifacts),
+      ...iterationResultArtifacts,
       ...iterationScreenshotArtifacts,
       ...(latestScreenshot
         ? { screenshot: latestScreenshot }
