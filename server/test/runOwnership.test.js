@@ -131,6 +131,108 @@ test("run access routes pass only the authenticated owner and hide foreign runs"
   ]);
 });
 
+//verifies the single delete route reuses authenticated owner lookup before core deletion
+test("run access deletion authorizes the selected run and forwards only exact confirmation", async (t) => {
+  //capture deletion inputs so the route cannot silently accept client ownership fields
+  const calls = [];
+  const ownRun = { runId: "run-own", status: "completed" };
+  const requireAuthenticatedUser = (req, res, next) => {
+    req.auth = { userId: 17 };
+    next();
+  };
+  const app = express();
+  app.use(createRunAccessRouter({
+    requireAuthenticatedUser,
+    list: async () => [],
+    readOwned: async (runId, ownerUserId) => {
+      calls.push(["read", runId, ownerUserId]);
+      return runId === ownRun.runId ? ownRun : null;
+    },
+    cancelOwned: async () => null,
+    cancelOwned2: async () => null,
+    resolveOwnedFile: async () => null,
+    deleteRun: async (runId, confirmation) => {
+      calls.push(["delete", runId, confirmation]);
+      return confirmation === "CONFIRM"
+        ? { deleted: true, alreadyDeleted: false, runId }
+        : { deleted: false, reason: "CONFIRMATION_REQUIRED", runId };
+    },
+  }));
+  const base = await startServer(t, app);
+  const request = (runId, confirmation) => fetch(`${base}/api/runs/${runId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmation, ownerUserId: 999 }),
+  });
+
+  const missing = await request("run-foreign", "CONFIRM");
+  assert.equal(missing.status, 404);
+
+  const invalidConfirmation = await request("run-own", "Confirm");
+  assert.equal(invalidConfirmation.status, 400);
+  assert.equal((await invalidConfirmation.json()).code, "CONFIRMATION_REQUIRED");
+
+  const deleted = await request("run-own", "CONFIRM");
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(await deleted.json(), {
+    success: true,
+    deleted: true,
+    alreadyDeleted: false,
+    runId: "run-own",
+  });
+  assert.deepEqual(calls, [
+    ["read", "run-foreign", 17],
+    ["read", "run-own", 17],
+    ["delete", "run-own", "Confirm"],
+    ["read", "run-own", 17],
+    ["delete", "run-own", "CONFIRM"],
+  ]);
+});
+
+test("task-plan downloads use the plan name while preserving owner enforcement", async (t) => {
+  const sharedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-download-"));
+  const taskPlanPath = path.join(sharedRoot, "uploaded-task-plan.json");
+  await fs.writeFile(taskPlanPath, JSON.stringify({ name: "Quarterly / Smoke: Plan?" }), "utf8");
+
+  t.after(async () => {
+    await fs.rm(sharedRoot, { recursive: true, force: true });
+  });
+
+  let authenticatedUserId = 17;
+  const app = express();
+  app.use(createRunAccessRouter({
+    requireAuthenticatedUser: (req, res, next) => {
+      req.auth = { userId: authenticatedUserId };
+      next();
+    },
+    list: async () => [],
+    readOwned: async () => null,
+    cancelOwned: async () => null,
+    cancelOwned2: async () => null,
+    resolveOwnedFile: async (runId, relativePath, ownerUserId) =>
+      runId === "run-download" && ownerUserId === 17 && relativePath === "uploaded-task-plan.json"
+        ? taskPlanPath
+        : null,
+  }));
+  const base = await startServer(t, app);
+
+  const download = await fetch(
+    `${base}/api/runs/run-download/files/uploaded-task-plan.json?download=1`
+  );
+  assert.equal(download.status, 200);
+  assert.match(
+    download.headers.get("content-disposition"),
+    /attachment; filename="Quarterly - Smoke- Plan-\.json"/
+  );
+  assert.deepEqual(await download.json(), { name: "Quarterly / Smoke: Plan?" });
+
+  authenticatedUserId = 18;
+  const foreignDownload = await fetch(
+    `${base}/api/runs/run-download/files/uploaded-task-plan.json?download=1`
+  );
+  assert.equal(foreignDownload.status, 404);
+});
+
 test("two authenticated sessions receive separate history and cannot read each other's run", async (t) => {
   const sessions = new Map([
     ["token-a", 1],

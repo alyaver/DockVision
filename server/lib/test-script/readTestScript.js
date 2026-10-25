@@ -115,15 +115,17 @@ function readTestScript({ fileName, content }) {
       }
     }
 
-    if (step.action !== "TYPE" && step.action !== "CLICK") {
-      throw new TestScriptError(`Task '${step.id}' action must be TYPE or CLICK.`, `${taskPath}.action`, step.id);
+    if (step.action !== "TYPE" && step.action !== "CLICK" && step.action !== "WAIT") {
+      throw new TestScriptError(`Task '${step.id}' action must be TYPE, CLICK, or WAIT.`, `${taskPath}.action`, step.id);
     }
 
     const allowedFields = step.action === "TYPE"
       ? ["id", "action", "text"]
+      : step.action === "WAIT"
+      ? ["id", "action", "delayMs"]
       : ["id", "action", "target", "button", "clickCount", "xPercent", "yPercent"];
     for (const field of Object.keys(step)) {
-      if (!allowedFields.includes(field)) {
+      if (!allowedFields.includes(field)) { 
         throw new TestScriptError(`${step.action} task '${step.id}' does not support field '${field}'.`, `${taskPath}.${field}`, step.id);
       }
     }
@@ -132,7 +134,11 @@ function readTestScript({ fileName, content }) {
       if (typeof step.text !== "string" || step.text.length === 0) {
         throw new TestScriptError(`TYPE step '${step.id}' requires a nonempty text string.`, `${taskPath}.text`, step.id);
       }
-    } else {
+    } else if (step.action === "WAIT") {
+      if (!Number.isInteger(step.delayMs) || step.delayMs <= 0) {
+        throw new TestScriptError(`WAIT step '${step.id}' requires a positive delay in milliseconds.`, `${taskPath}.delayMs`, step.id);
+      }
+    } else{
       if (typeof step.target === "string" && step.target.startsWith("notepad.") && NAMED_TARGETS.has(step.target.slice(8))) {
         step.target = step.target.slice(8);
       } else if (step.target?.type === "namedControl" && typeof step.target.name === "string"

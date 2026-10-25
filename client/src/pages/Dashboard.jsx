@@ -9,6 +9,7 @@ import "../Dashboard.css";
 import "../NavBar.css";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { deleteRun } from "../lib/api";
 
 /**
  * The dashboard owns two pieces of transient user state:
@@ -86,7 +87,9 @@ function formatRunLabel(value) {
     .join(" ");
 }
 
+//format one history timestamp in the viewer's local timezone.
 function formatRunTimestamp(run) {
+  //use finished, started, and created timestamps in lifecycle order.
   const label = run.finishedUtc
     ? "Finished"
     : run.startedUtc
@@ -94,22 +97,41 @@ function formatRunTimestamp(run) {
     : "Created";
   const value = run.finishedUtc || run.startedUtc || run.createdUtc;
 
+  //show one clear fallback for missing or malformed values.
   if (!value) {
     return "Timestamp unavailable";
   }
 
   const parsedDate = new Date(value);
   if (Number.isNaN(parsedDate.getTime())) {
-    return `${label}: ${value}`;
+    return "Timestamp unavailable";
   }
 
-  return `${label}: ${parsedDate.toLocaleString()}`;
+  //include the viewer's local timezone with the formatted date and time.
+  const formattedTimestamp = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(parsedDate);
+
+  return `${label}: ${formattedTimestamp}`;
 }
+
+//recognizes only inactive terminal summaries that can be submitted for server-side deletion
+function canDeleteRun(run) {
+  //hide the action for uncertain states because the server must preserve them even if a stale list renders
+  return !run.active && ["completed", "failed", "cancelled"].includes(String(run.status || "").toLowerCase());
+}
+
 const Dashboard = () => {
   const navigate = useNavigate();
 
   const configFileInputRef = useRef(null);
   const runnerFileInputRef = useRef(null);
+  const deleteConfirmationInputRef = useRef(null);
 
   const [testName, setTestName] = useState("");
   // Runner name is display metadata; runner content is the source the backend
@@ -123,6 +145,10 @@ const Dashboard = () => {
   const [isPreparingRun, setIsPreparingRun] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [executionMode, setExecutionMode] = useState("custom")
+  const [runPendingDeletion, setRunPendingDeletion] = useState(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeletingRun, setIsDeletingRun] = useState(false);
 
   // Explicit loading/error flags so the history card can render all three
   // required states: loading, empty, and request-failure.
@@ -179,6 +205,11 @@ const Dashboard = () => {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    //focus the required confirmation field when the dialog opens for keyboard users
+    if (runPendingDeletion) deleteConfirmationInputRef.current?.focus();
+  }, [runPendingDeletion]);
+
   async function fetchCurrentUser() {
     try {
       /**
@@ -221,6 +252,60 @@ const Dashboard = () => {
       setRunsError(error.message || "Failed to load recent runs.");
     } finally {
       setRunsLoading(false);
+    }
+  }
+
+  //opens a local confirmation dialog without changing history or requesting deletion
+  function handleDeleteRun(run) {
+    //reset only temporary dialog state so dismissal cannot affect any history entry
+    setRunPendingDeletion(run);
+    setDeleteConfirmation("");
+    setDeleteError("");
+  }
+
+  //closes the confirmation dialog without making a deletion request
+  function dismissDeleteRun() {
+    //retain all history data because cancellation is only a local UI action
+    if (isDeletingRun) return;
+    setRunPendingDeletion(null);
+    setDeleteConfirmation("");
+    setDeleteError("");
+  }
+
+  //submits one exact-confirmation deletion and refreshes history only after the server responds
+  async function confirmDeleteRun(event) {
+    event.preventDefault();
+    //reject every near match locally so invalid input cannot make an api request
+    if (!runPendingDeletion || deleteConfirmation !== "CONFIRM" || isDeletingRun) return;
+
+    setIsDeletingRun(true);
+    setDeleteError("");
+    try {
+      const result = await deleteRun(runPendingDeletion.runId, deleteConfirmation);
+      //refresh rather than removing optimistically so automatic cleanup races cannot remove another item
+      await loadRuns();
+      setRunPendingDeletion(null);
+      setDeleteConfirmation("");
+      pushNotification(
+        "warn",
+        "Run history deleted",
+        result.alreadyDeleted
+          ? "The run had already been removed from server history."
+          : "The selected run history and server-side artifacts were deleted."
+      );
+    } catch (error) {
+      if (error.status === 404) {
+        //treat not found as concurrent automatic cleanup and refresh without deleting another entry
+        await loadRuns();
+        setRunPendingDeletion(null);
+        setDeleteConfirmation("");
+        pushNotification("warn", "Run history refreshed", "The selected run was already removed from server history.");
+      } else {
+        //keep the selected entry and input available so genuine server failures can be corrected or retried
+        setDeleteError(error.message || "Failed to delete run history.");
+      }
+    } finally {
+      setIsDeletingRun(false);
     }
   }
 
@@ -902,13 +987,24 @@ const Dashboard = () => {
                         <div className="run-date">{formatRunTimestamp(run)}</div>
                       </div>
                     </div>
-                    <button
-                      className="run-open"
-                      type="button"
-                      onClick={() => handleOpenRun(run)}
-                    >
-                      Open
-                    </button>
+                    <div className="run-actions">
+                      {canDeleteRun(run) && (
+                        <button
+                          className="run-delete"
+                          type="button"
+                          onClick={() => handleDeleteRun(run)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                      <button
+                        className="run-open"
+                        type="button"
+                        onClick={() => handleOpenRun(run)}
+                      >
+                        Open
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -928,6 +1024,52 @@ const Dashboard = () => {
           </div>
         </main>
       </div>
+
+      {runPendingDeletion && (
+        <div className="run-delete-dialog-backdrop" role="presentation">
+          <form
+            className="run-delete-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="run-delete-dialog-title"
+            onSubmit={confirmDeleteRun}
+          >
+            <h2 id="run-delete-dialog-title">Delete run history</h2>
+            <p>
+              Delete <strong>{runPendingDeletion.testName || runPendingDeletion.runId}</strong>
+              {` (${runPendingDeletion.runId})`} with status {formatRunLabel(runPendingDeletion.status) || "Unknown"}.
+            </p>
+            <p>{formatRunTimestamp(runPendingDeletion)}</p>
+            <p>Server-side history and artifacts will be deleted. Downloaded and exported copies on your device will remain untouched.</p>
+            <label className="form-label" htmlFor="run-delete-confirmation">
+              Type CONFIRM to delete this run
+            </label>
+            <input
+              ref={deleteConfirmationInputRef}
+              id="run-delete-confirmation"
+              className="form-input"
+              type="text"
+              value={deleteConfirmation}
+              onChange={(event) => setDeleteConfirmation(event.target.value)}
+              disabled={isDeletingRun}
+              autoComplete="off"
+            />
+            {deleteError && <p className="error-text" role="alert">{deleteError}</p>}
+            <div className="run-delete-dialog-actions">
+              <button className="run-open" type="button" onClick={dismissDeleteRun} disabled={isDeletingRun}>
+                Cancel
+              </button>
+              <button
+                className="run-delete"
+                type="submit"
+                disabled={deleteConfirmation !== "CONFIRM" || isDeletingRun}
+              >
+                {isDeletingRun ? "Deleting..." : "Delete run"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="Notify-stack">
         {notifications.map((item) => (

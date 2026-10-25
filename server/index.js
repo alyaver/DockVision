@@ -20,6 +20,7 @@ const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
 const { createRunAccessRouter } = require("./routes/RunAccessRoutes");
+const { createProfileRouter } = require("./routes/ProfileRoutes");
 const {
   createRequireAuthenticatedUser,
 } = require("./middleware/requireAuthenticatedUser");
@@ -27,6 +28,7 @@ const { resumeActiveRun } = require("./lib/runRecovery");
 const { createAccountDeletionService } = require("./lib/accountDeletion");
 const { createLaunchService } = require("./lib/launchService");
 const { pruneCompletedRuns } = require("./lib/runStore");
+const { createRunCleanupScheduler } = require("./lib/runCleanupScheduler");
 const {
   ensureWindowsVmRunning,
   getWindowsVmStatus,
@@ -75,7 +77,8 @@ app.use(
 app.use(cookieParser());
 app.use(createRunLaunchRouter({ requireAuthenticatedUser, launch }));
 app.use(createRunAccessRouter({ requireAuthenticatedUser }));
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
+app.use("/api/profile", createProfileRouter({ db, requireAuthenticatedUser }));
 
 /**
  * Build the mail transporter only when all required email settings exist.
@@ -454,6 +457,9 @@ app.listen(PORT, () => {
   }).catch((error) => {
     console.error("RUN RECOVERY STARTUP ERROR:", error);
   });
+  //request retention after the listener starts so cleanup cannot delay backend availability
+  //starts fail-closed retention passes without delaying backend availability or guest recovery
+  createRunCleanupScheduler().start();
   cleanupExpiredSessions();
   setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL_MS);
 });

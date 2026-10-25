@@ -25,7 +25,7 @@ with the Ticket 1 author when merging; do not introduce a parallel validator.
 2. Acquire the process-local admission queue for the shared directory.
 3. Reject an active or indeterminate run without altering its files.
 4. Check the guest container and a fresh, idle agent heartbeat.
-5. Apply the existing terminal-run retention hook.
+5. Request the terminal-run retention hook. Until per-user ownership scope is available, the hook skips destructive cleanup rather than pruning the shared run directory globally.
 6. Write inputs, metadata (including container ID), task, and initial log.
 7. Write a temporary pointer in `active`, then rename it to `current-run.json`.
 8. Return 202 with `{success:true, runId, containerId}`.
@@ -36,6 +36,14 @@ without clearing the previous pointer. Rename behavior is covered using the loca
 Windows filesystem; deployments using different/network filesystems must verify
 their rename guarantees. This is atomic visibility, not a power-loss durability
 guarantee.
+
+## Terminal history retention
+
+When Task 317 provides a safe per-user ownership scope, retention keeps at most 30 terminal runs for that user. A terminal run becomes age-eligible at 720 elapsed hours from its authoritative terminal completion timestamp. Count and age eligibility apply independently. Terminal runs without a valid completion timestamp are preserved and excluded from count ordering until their completion time can be established reliably.
+
+The backend requests the same retention mechanism after terminal completion, before a new run is admitted, once at startup, and once per minute while it remains running. Cleanup runs do not overlap. Each pass groups only Task 317 runs with a persisted positive numeric `ownerUserId` and applies retention independently within that owner scope. Ownerless or malformed legacy records are excluded and preserved. Cleanup failures do not block backend startup, guest recovery, admission, or a persisted terminal result, and a failure for one owner does not prevent another owner scope from being processed.
+
+The authenticated run-history API exposes exact-confirmation deletion of one authorized confirmed terminal run. It derives ownership from the current session, requires the raw confirmation text `CONFIRM`, rejects active, indeterminate, and non-terminal records, and removes that run directory. If `active/current-run.json` still points to the deleted terminal run, deletion clears that stale pointer; a pointer for another run is preserved. Exported copies outside the run directory are preserved.
 
 On Windows, replacement of an existing pointer can fail with `EPERM` on the
 VM-shared directory even when first publication succeeds. `publishPointer` tries

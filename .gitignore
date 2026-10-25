@@ -167,3 +167,4 @@ client/.vite/*
 .idea
 # Local sprint review document
 /docs/Sprint-08-Team-Review.docx
+tests/__pycache__/vm_agent_lifecycle_test.cpython-312.pyc

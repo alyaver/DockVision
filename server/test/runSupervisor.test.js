@@ -85,7 +85,23 @@ test("supervisor preserves a pre-published first iteration and publishes the nex
   ]);
 
   const originalFirstTask = await fs.readFile(path.join(firstIterationRoot, "task.json"), "utf8");
-  const supervision = superviseRun(runId);
+  const cleanupCalls = [];
+  const cleanupReports = [];
+  const supervision = superviseRun(runId, {
+    //returns the production-style fail-closed outcome after terminal persistence
+    prune: async () => {
+      cleanupCalls.push(runId);
+      return {
+        skipped: true,
+        reason: "OWNERSHIP_SCOPE_REQUIRED",
+        removedRunIds: [],
+        failedRunIds: [],
+        deletionFailures: [],
+      };
+    },
+    //captures separate cleanup reporting so the terminal completion assertions remain independent
+    onCleanup: (event, details) => cleanupReports.push({ event, details }),
+  });
 
   // Supervision waits on result files, so poll only until iteration 2 is
   // published and then provide its synthetic guest result to finish the test.
@@ -113,6 +129,17 @@ test("supervisor preserves a pre-published first iteration and publishes the nex
   assert.equal(finalPointer.iterationNumber, 2);
   assert.equal(finalPointer.channel.screenshotsDir, `runs/${runId}/iterations/2/screenshots`);
   assert.deepEqual(finalMeta.iterationState, { total: 2, current: 2, completed: 2, failed: 0 });
+  assert.deepEqual(cleanupCalls, [runId]);
+  assert.deepEqual(cleanupReports, [{
+    event: "SKIPPED",
+    details: {
+      skipped: true,
+      reason: "OWNERSHIP_SCOPE_REQUIRED",
+      removedRunIds: [],
+      failedRunIds: [],
+      deletionFailures: [],
+    },
+  }]);
 });
 
 test("supervisor resumes a completed second iteration and publishes iteration 3", async (t) => {
@@ -198,7 +225,15 @@ test("supervisor resumes a completed second iteration and publishes iteration 3"
     fs.writeFile(path.join(sharedRoot, "active", "current-run.json"), JSON.stringify(pointer)),
   ]);
 
-  const supervision = superviseRun(runId);
+  const cleanupReports = [];
+  const supervision = superviseRun(runId, {
+    //throws after terminal persistence to prove cleanup failure cannot undo lifecycle state
+    prune: async () => {
+      throw new Error("simulated cleanup failure");
+    },
+    //captures the failure report instead of writing test diagnostics to the console
+    onCleanup: (event, details) => cleanupReports.push({ event, details }),
+  });
   let thirdTask;
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
@@ -226,4 +261,11 @@ test("supervisor resumes a completed second iteration and publishes iteration 3"
   assert.equal(finalMeta.status, "completed");
   assert.equal(finalMeta.finishedUtc, "2026-10-10T00:06:00.000Z");
   assert.deepEqual(finalMeta.iterationState, { total: 3, current: 3, completed: 3, failed: 0 });
+  assert.deepEqual(cleanupReports, [{
+    event: "FAILED",
+    details: {
+      code: "CLEANUP_FAILED",
+      message: "simulated cleanup failure",
+    },
+  }]);
 });
