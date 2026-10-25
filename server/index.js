@@ -20,6 +20,7 @@ const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
 const { createRunAccessRouter } = require("./routes/RunAccessRoutes");
+const { createProfileRouter } = require("./routes/ProfileRoutes");
 const {
   createRequireAuthenticatedUser,
 } = require("./middleware/requireAuthenticatedUser");
@@ -60,7 +61,8 @@ app.use(
 app.use(cookieParser());
 app.use(createRunLaunchRouter({ requireAuthenticatedUser }));
 app.use(createRunAccessRouter({ requireAuthenticatedUser }));
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
+app.use("/api/profile", createProfileRouter({ db, requireAuthenticatedUser }));
 
 /**
  * Build the mail transporter only when all required email settings exist.

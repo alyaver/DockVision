@@ -1,4 +1,6 @@
 const express = require("express");
+const fs = require("fs/promises");
+const path = require("path");
 const {
   listRuns,
   readRunForOwner,
@@ -24,6 +26,33 @@ function createRunAccessRouter({
 
   const router = express.Router();
   router.use("/api/runs", requireAuthenticatedUser);
+
+  // Converts the json's "name" field into a safe "name.json" filename so that
+  // it can be displayed clearly on the profile page's run artifacts sections.
+  function sanitizeDownloadName(value) {
+    const normalized = String(value || "")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .replace(/[<>:"/\\|?*]/g, "-")
+      .replace(/[. ]+$/g, "")
+      .trim()
+      .slice(0, 120);
+    const safeName = normalized || "uploaded-task-plan";
+    const reservedName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(safeName)
+      ? `download-${safeName}`
+      : safeName;
+
+    return `${reservedName}.json`;
+  }
+
+  // Gets the "name" field from the task plan .json file
+  async function getTaskPlanDownloadName(filePath) {
+    try {
+      const parsed = JSON.parse((await fs.readFile(filePath, "utf8")).replace(/^\uFEFF/, ""));
+      return sanitizeDownloadName(parsed?.name);
+    } catch {
+      return "uploaded-task-plan.json";
+    }
+  }
 
   router.get("/api/runs", async (req, res) => {
     try {
@@ -143,6 +172,24 @@ function createRunAccessRouter({
 
       if (!filePath) {
         return res.status(404).json({ success: false, message: "Run file not found" });
+      }
+
+      // Responsible for downloading the task plan .json file from the profile page's run artifacts
+      // sections. This allows the user to download and reuse a previously used task plan.
+      const requestedPath = String(req.params[0] || "").replace(/\\/g, "/");
+      const isTaskPlan = ["uploaded-task-plan.json", "task-plan.json"].includes(
+        path.posix.basename(requestedPath)
+      );
+      if (req.query.download === "1" && isTaskPlan) {
+        const downloadName = await getTaskPlanDownloadName(filePath);
+        return res.download(filePath, downloadName, (sendError) => {
+          if (sendError && !res.headersSent) {
+            res.status(sendError.statusCode || 404).json({
+              success: false,
+              message: "Run file not found",
+            });
+          }
+        });
       }
 
       return res.sendFile(filePath, (sendError) => {
