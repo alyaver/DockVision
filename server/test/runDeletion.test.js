@@ -90,6 +90,41 @@ test("internal deletion removes exactly one terminal run and preserves external 
   assert.deepEqual(repeated, { deleted: true, alreadyDeleted: true, runId: selectedRunId });
 });
 
+//verifies a stale latest-run pointer cannot prevent deletion or block a later launch
+test("internal deletion clears a lingering pointer for its terminal run only", async (t) => {
+  //model the completed latest history entry before the guest or supervisor clears its pointer
+  const { sharedRoot, store } = await createFixture(t);
+  const runId = "run-delete-terminal-pointer";
+  const otherRunId = "run-delete-other-pointer";
+  await Promise.all([
+    writeRun(sharedRoot, runId),
+    writeJson(path.join(sharedRoot, "active", "current-run.json"), { runId }),
+  ]);
+
+  assert.equal((await store.readRun(runId)).active, false);
+  assert.deepEqual(await store.deleteCompletedRun(runId, "CONFIRM"), {
+    deleted: true,
+    alreadyDeleted: false,
+    runId,
+  });
+  assert.equal(await pathExists(path.join(sharedRoot, "runs", runId)), false);
+  assert.equal(await pathExists(path.join(sharedRoot, "active", "current-run.json")), false);
+
+  await Promise.all([
+    writeRun(sharedRoot, runId),
+    writeJson(path.join(sharedRoot, "active", "current-run.json"), { runId: otherRunId }),
+  ]);
+  assert.deepEqual(await store.deleteCompletedRun(runId, "CONFIRM"), {
+    deleted: true,
+    alreadyDeleted: false,
+    runId,
+  });
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(path.join(sharedRoot, "active", "current-run.json"), "utf8")),
+    { runId: otherRunId }
+  );
+});
+
 //verifies only the raw exact confirmation text can reach deletion state checks
 test("invalid confirmation values are no-ops", async (t) => {
   //exercise casing whitespace omitted values and malformed payload types without changing storage
@@ -118,7 +153,7 @@ test("internal deletion preserves active indeterminate and non-terminal runs", a
   const runningRunId = "run-delete-running";
   const cancellingRunId = "run-delete-cancelling";
   await Promise.all([
-    writeRun(sharedRoot, activeRunId),
+    writeRun(sharedRoot, activeRunId, { metaStatus: "running", resultStatus: "running", finishedUtc: null }),
     writeJson(path.join(sharedRoot, "active", "current-run.json"), { runId: activeRunId }),
     writeRun(sharedRoot, indeterminateRunId, { metaStatus: "completed", resultStatus: "failed" }),
     writeRun(sharedRoot, queuedRunId, { metaStatus: "queued", resultStatus: "queued", finishedUtc: null }),

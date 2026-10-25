@@ -917,6 +917,9 @@ async function readRun(runId) {
     snapshot.result,
     selectedIterationNumber
   );
+  // A lingering pointer remains necessary to read the latest iteration channel,
+  // but a durable terminal aggregate state must not be reported as active.
+  const active = isHistoryRunActive(runId, activeRunId, snapshot.status);
 
   return {
     runId,
@@ -934,7 +937,7 @@ async function readRun(runId) {
     iterationState: baseMeta.iterationState || null,
     progress,
     activeIterationNumber,
-    active: isActiveRun,
+    active,
     cleanupPolicy: baseMeta.cleanupPolicy || describeCleanupPolicy(),
     containerId: baseMeta.containerId || null,
     createdUtc: baseMeta.createdUtc || snapshot.task?.createdUtc || null,
@@ -958,7 +961,7 @@ async function readRun(runId) {
         : {}),
     },
     files: fileArtifacts,
-    heartbeat: isActiveRun ? heartbeat : null,
+    heartbeat: active ? heartbeat : null,
     logs: {
       task: taskLogLines,
     },
@@ -1460,6 +1463,13 @@ async function deleteCompletedRun(runId, confirmation, {
       if (error?.code !== "ENOENT") {
         throw error;
       }
+    }
+
+    //A deleted terminal run cannot remain the active pointer target because the
+    //admission gate correctly treats a pointer without durable run records as unsafe.
+    const currentRunPointer = await readCurrentRunPointer();
+    if (currentRunPointer?.runId === runId) {
+      await clearActiveChannel();
     }
 
     return { deleted: true, alreadyDeleted: false, runId };

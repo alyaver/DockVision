@@ -43,7 +43,7 @@ When Task 317 provides a safe per-user ownership scope, retention keeps at most 
 
 The backend requests the same retention mechanism after terminal completion, before a new run is admitted, once at startup, and once per minute while it remains running. Cleanup runs do not overlap. Each pass groups only Task 317 runs with a persisted positive numeric `ownerUserId` and applies retention independently within that owner scope. Ownerless or malformed legacy records are excluded and preserved. Cleanup failures do not block backend startup, guest recovery, admission, or a persisted terminal result, and a failure for one owner does not prevent another owner scope from being processed.
 
-The authenticated run-history API exposes exact-confirmation deletion of one authorized confirmed terminal run. It derives ownership from the current session, requires the raw confirmation text `CONFIRM`, rejects active, indeterminate, and non-terminal records, and removes only that run directory. Exported copies outside the run directory are preserved.
+The authenticated run-history API exposes exact-confirmation deletion of one authorized confirmed terminal run. It derives ownership from the current session, requires the raw confirmation text `CONFIRM`, rejects active, indeterminate, and non-terminal records, and removes that run directory. If `active/current-run.json` still points to the deleted terminal run, deletion clears that stale pointer; a pointer for another run is preserved. Exported copies outside the run directory are preserved.
 
 On Windows, replacement of an existing pointer can fail with `EPERM` on the
 VM-shared directory even when first publication succeeds. `publishPointer` tries
