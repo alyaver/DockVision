@@ -86,18 +86,18 @@ const Confirmation = () => {
     storedRun?.configContent ||
     "No config content available";
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [progressMessage, setProgressMessage] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [exportDirectory, setExportDirectory] = useState(null); // Store folder handle -> provide access to folder for saves
-  const [skipAutomaticExport, setSkipAutomaticExport] = useState(false); // tracks if user chooses not to save automatically
-  const [exportMessage, setExportMessage] = useState(""); // keeps folder selection errors separate from other errors
-  const supportsFolderSelection = typeof window.showDirectoryPicker === "function"; // checks if browser provides folder picker
+  const [exportDirectory, setExportDirectory] = useState(null);
+  const [exportMessage, setExportMessage] = useState("");
+  const [isChoosingFolder, setIsChoosingFolder] = useState(false);
+  const [skipAutomaticExport, setSkipAutomaticExport] = useState(false);
+  const [exportUserId, setExportUserId] = useState(null);
   const pending = useRef(null);
-  const isConfirming = useRef(false);
   useEffect(() => () => pending.current?.abort(), []);
-
+  
   useEffect(() => {
     let isMounted = true;
 

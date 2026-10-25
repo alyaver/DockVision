@@ -110,7 +110,7 @@ export default function Profile() {
         } catch (error) {
             // Display the actual error to identify why selection or saving failed.
             setExportMessage(
-                `Could not remember the folder: ${error.message}: ${error.message}`
+                `Could not remember the folder: ${error.message}`
             );
             
         } finally {
