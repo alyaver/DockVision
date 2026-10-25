@@ -131,6 +131,50 @@ test("run access routes pass only the authenticated owner and hide foreign runs"
   ]);
 });
 
+test("task-plan downloads use the plan name while preserving owner enforcement", async (t) => {
+  const sharedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-download-"));
+  const taskPlanPath = path.join(sharedRoot, "uploaded-task-plan.json");
+  await fs.writeFile(taskPlanPath, JSON.stringify({ name: "Quarterly / Smoke: Plan?" }), "utf8");
+
+  t.after(async () => {
+    await fs.rm(sharedRoot, { recursive: true, force: true });
+  });
+
+  let authenticatedUserId = 17;
+  const app = express();
+  app.use(createRunAccessRouter({
+    requireAuthenticatedUser: (req, res, next) => {
+      req.auth = { userId: authenticatedUserId };
+      next();
+    },
+    list: async () => [],
+    readOwned: async () => null,
+    cancelOwned: async () => null,
+    cancelOwned2: async () => null,
+    resolveOwnedFile: async (runId, relativePath, ownerUserId) =>
+      runId === "run-download" && ownerUserId === 17 && relativePath === "uploaded-task-plan.json"
+        ? taskPlanPath
+        : null,
+  }));
+  const base = await startServer(t, app);
+
+  const download = await fetch(
+    `${base}/api/runs/run-download/files/uploaded-task-plan.json?download=1`
+  );
+  assert.equal(download.status, 200);
+  assert.match(
+    download.headers.get("content-disposition"),
+    /attachment; filename="Quarterly - Smoke- Plan-\.json"/
+  );
+  assert.deepEqual(await download.json(), { name: "Quarterly / Smoke: Plan?" });
+
+  authenticatedUserId = 18;
+  const foreignDownload = await fetch(
+    `${base}/api/runs/run-download/files/uploaded-task-plan.json?download=1`
+  );
+  assert.equal(foreignDownload.status, 404);
+});
+
 test("two authenticated sessions receive separate history and cannot read each other's run", async (t) => {
   const sessions = new Map([
     ["token-a", 1],

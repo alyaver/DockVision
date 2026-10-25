@@ -536,6 +536,128 @@ function buildArtifactMap(runId, artifacts = {}) {
   return mappedArtifacts;
 }
 
+// Returns filepath metadata to be displayed on the profile page's run artifact sections.
+async function mapExistingRunFile(runId, absolutePath, relativePath, { requireNonEmpty = false } = {}) {
+  try {
+    const fileStats = await fs.stat(absolutePath);
+    if (!fileStats.isFile() || (requireNonEmpty && fileStats.size === 0)) {
+      return null;
+    }
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+
+  return {
+    rawPath: relativePath,
+    relativePath,
+    url: buildRunFileUrl(runId, relativePath),
+    fileName: path.posix.basename(relativePath),
+  };
+}
+
+// Maps the task-plan.json or uploaded-task-plan.json file to a displayName
+// which will be used on the profile page's run artifact sections. 
+async function mapTaskPlanFile(runId, absolutePath, relativePath) {
+  const file = await mapExistingRunFile(runId, absolutePath, relativePath);
+  if (!file) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse((await fs.readFile(absolutePath, "utf8")).replace(/^\uFEFF/, ""));
+    const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+    if (name) {
+      file.displayName = `Task Plan: '${name}.json'`;
+    }
+  } catch {
+    // If the displayName definition fails, we'll just use the default fileName
+  }
+
+  return file;
+}
+
+// Collects the different artifacts that will be displayed on the profile page's run artifact sections.
+// These currently include screenshots, the task plan .json file, the stdout.txt and stderr.txt,
+// task.log, result.json, and control-tree.txt. 
+async function listRunFileArtifacts(runId, runPaths, selectedIterationPaths) {
+  const files = {};
+  const taskPlanCandidates = [
+    [path.join(runPaths.runRoot, "uploaded-task-plan.json"), "uploaded-task-plan.json"],
+    [path.join(runPaths.runRoot, "task-plan.json"), "task-plan.json"],
+  ];
+  const resultPath = selectedIterationPaths?.resultPath || runPaths.resultPath;
+  const resultRelativePath = selectedIterationPaths
+    ? `iterations/${path.basename(selectedIterationPaths.iterationRoot)}/result.json`
+    : "result.json";
+  const taskLogPath = selectedIterationPaths
+    ? path.join(selectedIterationPaths.logsRoot, "task.log")
+    : runPaths.taskLogPath;
+  const taskLogRelativePath = selectedIterationPaths
+    ? `iterations/${path.basename(selectedIterationPaths.iterationRoot)}/logs/task.log`
+    : "logs/task.log";
+
+  const [resultFile, taskLog, taskPlanFiles] = await Promise.all([
+    mapExistingRunFile(runId, resultPath, resultRelativePath),
+    mapExistingRunFile(runId, taskLogPath, taskLogRelativePath),
+    Promise.all(
+      taskPlanCandidates.map(([absolutePath, relativePath]) =>
+        mapTaskPlanFile(runId, absolutePath, relativePath)
+      )
+    ),
+  ]);
+
+  if (resultFile) {
+    files.result = resultFile;
+  }
+  if (taskLog) {
+    files.taskLog = taskLog;
+  }
+  const taskPlan = taskPlanFiles.find(Boolean);
+  if (taskPlan) {
+    files.taskPlan = taskPlan;
+  }
+
+  const logsRoot = selectedIterationPaths?.logsRoot || runPaths.logsRoot;
+  let logEntries = [];
+  try {
+    logEntries = await fs.readdir(logsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const iterationPrefix = selectedIterationPaths
+    ? `iterations/${path.basename(selectedIterationPaths.iterationRoot)}/logs/`
+    : "logs/";
+  const outputEntries = logEntries
+    .filter((entry) => entry.isFile() && /(?:stdout|stderr)\.txt$/i.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of outputEntries) {
+    const outputType = /stderr\.txt$/i.test(entry.name) ? "stderr" : "stdout";
+    const outputFile = await mapExistingRunFile(
+      runId,
+      path.join(logsRoot, entry.name),
+      `${iterationPrefix}${entry.name}`,
+      { requireNonEmpty: true }
+    );
+
+    if (outputFile) {
+      const existing = files[outputType];
+      files[outputType] = existing
+        ? [...(Array.isArray(existing) ? existing : [existing]), outputFile]
+        : outputFile;
+    }
+  }
+
+  return files;
+}
+
 async function findLatestScreenshotArtifact(runId, screenshotsRoot, iterationNumber = null) {
   try {
     const entries = await fs.readdir(screenshotsRoot, { withFileTypes: true });
@@ -725,6 +847,11 @@ async function readRun(runId) {
     runId,
     runPaths.iterationsRoot
   );
+  const fileArtifacts = await listRunFileArtifacts(
+    runId,
+    runPaths,
+    selectedIterationPaths
+  );
 
   const baseMeta = snapshot.meta || meta || {};
   const progress = deriveRunProgress(
@@ -773,6 +900,7 @@ async function readRun(runId) {
         ? { screenshot: latestScreenshot }
         : {}),
     },
+    files: fileArtifacts,
     heartbeat: isActiveRun ? heartbeat : null,
     logs: {
       task: taskLogLines,

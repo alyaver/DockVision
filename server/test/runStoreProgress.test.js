@@ -148,6 +148,64 @@ test("readRun exposes screenshots from every iteration while preserving the late
   assert.equal(run.artifacts.screenshot.fileName, "notepad-run-2-iteration-2.png");
 });
 
+test("readRun maps selected iteration result and diagnostic files", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runId = "run-progress-files";
+  const runRoot = path.join(sharedRoot, "runs", runId);
+  const iterationRoot = path.join(runRoot, "iterations", "2");
+
+  await Promise.all([
+    writeJson(path.join(runRoot, "meta.json"), {
+      runId,
+      status: "completed",
+      iterationState: { total: 2, current: 2, completed: 2, failed: 0 },
+    }),
+    writeJson(path.join(iterationRoot, "task.json"), { runId, status: "completed", iterationNumber: 2 }),
+    writeJson(path.join(iterationRoot, "result.json"), { status: "completed" }),
+    writeFile(
+      path.join(runRoot, "uploaded-task-plan.json"),
+      JSON.stringify({ name: "Nightly Smoke Test", tasks: [] })
+    ),
+    writeFile(path.join(iterationRoot, "logs", "task.log"), "task output"),
+    writeFile(path.join(iterationRoot, "logs", "run-stdout.txt"), "stdout output"),
+    writeFile(path.join(iterationRoot, "logs", "run-stderr.txt"), "stderr output"),
+    writeFile(path.join(iterationRoot, "logs", "empty-stdout.txt"), ""),
+    writeFile(path.join(iterationRoot, "logs", "empty-stderr.txt"), ""),
+  ]);
+
+  const run = await store.readRun(runId);
+
+  assert.equal(run.files.result.relativePath, "iterations/2/result.json");
+  assert.equal(run.files.taskLog.relativePath, "iterations/2/logs/task.log");
+  assert.equal(run.files.stdout.fileName, "run-stdout.txt");
+  assert.equal(run.files.taskPlan.fileName, "uploaded-task-plan.json");
+  assert.equal(run.files.taskPlan.displayName, "Task Plan: 'Nightly Smoke Test.json'");
+  assert.equal(run.files.taskPlan.relativePath, "uploaded-task-plan.json");
+  assert.equal(Array.isArray(run.files.stdout), false);
+  assert.equal(Array.isArray(run.files.stderr), false);
+  assert.equal(run.files.stderr.fileName, "run-stderr.txt");
+  assert.match(run.files.stdout.url, /iterations\/2\/logs\/run-stdout\.txt$/);
+  assert.match(run.files.stderr.url, /iterations\/2\/logs\/run-stderr\.txt$/);
+});
+
+test("readRun falls back to the task-plan filename when its name is unavailable", async (t) => {
+  const { sharedRoot, store } = await createFixture(t);
+  const runId = "run-progress-task-plan-fallback";
+  const runRoot = path.join(sharedRoot, "runs", runId);
+
+  await Promise.all([
+    writeJson(path.join(runRoot, "meta.json"), { runId, status: "completed" }),
+    writeJson(path.join(runRoot, "task.json"), { runId, status: "completed" }),
+    writeJson(path.join(runRoot, "result.json"), { status: "completed" }),
+    writeFile(path.join(runRoot, "uploaded-task-plan.json"), "{invalid json"),
+  ]);
+
+  const run = await store.readRun(runId);
+
+  assert.equal(run.files.taskPlan.fileName, "uploaded-task-plan.json");
+  assert.equal(run.files.taskPlan.displayName, undefined);
+});
+
 test("readRun supports built-in details.steps on the active iteration", async (t) => {
   const { sharedRoot, store } = await createFixture(t);
   const runId = "run-progress-builtin";

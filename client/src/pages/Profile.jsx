@@ -2,6 +2,7 @@
 import { FiEye, FiEyeOff } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import Navigation from "../components/Navigation";
+import ProfileRunHistory from "../components/ProfileRunHistory";
 import "../Profile.css";
 
 const AVATAR_TYPES = ["image/png", "image/jpeg"];
@@ -647,6 +648,7 @@ export default function Profile() {
                             </form>
                         </section>
                     )}
+                    <ProfileRunHistory />
                     </>
                 )}
             </main>
