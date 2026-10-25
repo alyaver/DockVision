@@ -131,6 +131,64 @@ test("run access routes pass only the authenticated owner and hide foreign runs"
   ]);
 });
 
+//verifies the single delete route reuses authenticated owner lookup before core deletion
+test("run access deletion authorizes the selected run and forwards only exact confirmation", async (t) => {
+  //capture deletion inputs so the route cannot silently accept client ownership fields
+  const calls = [];
+  const ownRun = { runId: "run-own", status: "completed" };
+  const requireAuthenticatedUser = (req, res, next) => {
+    req.auth = { userId: 17 };
+    next();
+  };
+  const app = express();
+  app.use(createRunAccessRouter({
+    requireAuthenticatedUser,
+    list: async () => [],
+    readOwned: async (runId, ownerUserId) => {
+      calls.push(["read", runId, ownerUserId]);
+      return runId === ownRun.runId ? ownRun : null;
+    },
+    cancelOwned: async () => null,
+    cancelOwned2: async () => null,
+    resolveOwnedFile: async () => null,
+    deleteRun: async (runId, confirmation) => {
+      calls.push(["delete", runId, confirmation]);
+      return confirmation === "CONFIRM"
+        ? { deleted: true, alreadyDeleted: false, runId }
+        : { deleted: false, reason: "CONFIRMATION_REQUIRED", runId };
+    },
+  }));
+  const base = await startServer(t, app);
+  const request = (runId, confirmation) => fetch(`${base}/api/runs/${runId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmation, ownerUserId: 999 }),
+  });
+
+  const missing = await request("run-foreign", "CONFIRM");
+  assert.equal(missing.status, 404);
+
+  const invalidConfirmation = await request("run-own", "Confirm");
+  assert.equal(invalidConfirmation.status, 400);
+  assert.equal((await invalidConfirmation.json()).code, "CONFIRMATION_REQUIRED");
+
+  const deleted = await request("run-own", "CONFIRM");
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(await deleted.json(), {
+    success: true,
+    deleted: true,
+    alreadyDeleted: false,
+    runId: "run-own",
+  });
+  assert.deepEqual(calls, [
+    ["read", "run-foreign", 17],
+    ["read", "run-own", 17],
+    ["delete", "run-own", "Confirm"],
+    ["read", "run-own", 17],
+    ["delete", "run-own", "CONFIRM"],
+  ]);
+});
+
 test("task-plan downloads use the plan name while preserving owner enforcement", async (t) => {
   const sharedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-download-"));
   const taskPlanPath = path.join(sharedRoot, "uploaded-task-plan.json");

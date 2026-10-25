@@ -1,6 +1,6 @@
 const express = require("express");
 const { createLaunchService } = require("../lib/launchService");
-const { pruneCompletedRuns } = require("../lib/runStore");
+const { pruneOwnedCompletedRuns } = require("../lib/runStore");
 const { superviseRun } = require("../lib/runSupervisior");
 
 //uploaded scripts can be bigger than the normal request limit
@@ -25,8 +25,10 @@ function launchErrorHandler(error, req, res, next) {
   return res.status(status).json(body);
 }
 
+//creates authenticated launch routes that prune only persisted owner scopes before admission
 function createRunLaunchRouter({
-  launch = createLaunchService({ beforePublish: pruneCompletedRuns }),
+  //use ownership-derived cleanup because this route has no safe single-user history scope before launch
+  launch = createLaunchService({ beforePublish: pruneOwnedCompletedRuns }),
   supervise = superviseRun,
   requireAuthenticatedUser,
 } = {}) {

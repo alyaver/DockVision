@@ -25,6 +25,7 @@ const {
   createRequireAuthenticatedUser,
 } = require("./middleware/requireAuthenticatedUser");
 const { resumeActiveRun } = require("./lib/runRecovery");
+const { createRunCleanupScheduler } = require("./lib/runCleanupScheduler");
 const {
   ensureWindowsVmRunning,
   getWindowsVmStatus,
@@ -440,6 +441,9 @@ app.listen(PORT, () => {
   }).catch((error) => {
     console.error("RUN RECOVERY STARTUP ERROR:", error);
   });
+  //request retention after the listener starts so cleanup cannot delay backend availability
+  //starts fail-closed retention passes without delaying backend availability or guest recovery
+  createRunCleanupScheduler().start();
   cleanupExpiredSessions();
   setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL_MS);
 });
