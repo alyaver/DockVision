@@ -44,8 +44,8 @@ const Navigation = () => {
           ];
 
           const isAuthenticatedPath = authenticatedPaths.some(
-              (path) =>
-              location.pathname == path || location.pathname.startsWith('${path}/')
+            (path) => 
+              location.pathname === path || location.pathname.startsWith(`${path}/`)
           );
           
           if (isAuthenticatedPath){

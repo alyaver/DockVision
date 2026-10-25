@@ -244,7 +244,10 @@ test("unscoped history cleanup skips deletion and preserves terminal runs", asyn
     ]);
   });
 
-  const finishedUtc = new Date().toISOString();
+  // Keep age expiry out of this count-limit and storage-isolation scenario.
+  t.mock.method(Date, "now", () => Date.parse("2026-10-11T00:00:00.000Z"));
+
+  const finishedUtc = "2026-10-10T00:00:00.000Z";
   const completedRuns = Array.from({ length: 21 }, (_, index) => {
     const runId = `completed-${String(index).padStart(2, "0")}`;
     return writeJson(path.join(rootA, "runs", runId, "meta.json"), {

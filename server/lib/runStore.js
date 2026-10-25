@@ -1382,17 +1382,18 @@ function isValidRunId(runId) {
   return typeof runId === "string" && /^run-[a-zA-Z0-9-]+$/.test(runId);
 }
 
-async function readRunForOwner(runId, ownerUserId) {
+async function readRunForOwner(runId, ownerUserId, { sharedRoot = SHARED_ROOT } = {}) {
   if (!isValidRunId(runId)) return null;
-  const meta = await readJsonIfExists(getRunPaths(runId).metaPath);
+  const runsRoot = path.join(path.resolve(sharedRoot), "runs");
+  const meta = await readJsonIfExists(getRunPaths(runId, runsRoot).metaPath);
   if (!isRunOwnedBy(meta, ownerUserId)) return null;
-  return readRun(runId);
+  return readRun(runId, { sharedRoot });
 }
 
-async function requestRunCancellationForOwner(runId, ownerUserId) {
-  const run = await readRunForOwner(runId, ownerUserId);
+async function requestRunCancellationForOwner(runId, ownerUserId, options = {}) {
+  const run = await readRunForOwner(runId, ownerUserId, options);
   if (!run) return null;
-  return requestRunCancellation(runId);
+  return requestRunCancellation(runId, options);
 }
 
 async function requestRunCancellation2ForOwner(runId, ownerUserId) {
@@ -1688,7 +1689,7 @@ async function pruneOwnedCompletedRuns({
   });
 }
 
-async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId } = {}) {
+async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId, prune = true } = {}) {
   const resolvedSharedRoot = path.resolve(sharedRoot);
   const activeRoot = path.join(resolvedSharedRoot, "active");
   const runsRoot = path.join(resolvedSharedRoot, "runs");
@@ -1696,8 +1697,9 @@ async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId } = {}) {
   const storagePaths = { sharedRoot: resolvedSharedRoot, activeRoot, runsRoot, currentRunPointerPath };
 
   await ensureBaseLayout(storagePaths);
-  //reuse task 317 owner scopes when history reads request opportunistic retention
-  await pruneOwnedCompletedRuns(storagePaths);
+  if (prune) {
+    await pruneCompletedRuns(storagePaths);
+  }
 
   const currentRunPointer = await readCurrentRunPointer(storagePaths);
   const activeRunId = currentRunPointer?.runId || null;

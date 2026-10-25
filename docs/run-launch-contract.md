@@ -135,3 +135,23 @@ and test malformed input, aliases, concurrency, blocked states, and injected wri
 and rename failures. The readiness adapter is separately tested with a stubbed VM
 status source. No tests start Docker, execute uploaded code, or publish to the live
 guest share. Node's built-in test runner is used; no test dependency was added.
+
+## Account deletion boundary (DOCKV-312)
+
+Account deletion is accepted only after the current password and exact `CONFIRM`
+text are verified. The server records a durable deletion job and changes the
+account to a deletion-restricted state. While that state is active, authenticated
+requests are limited to deletion status/resume and logout; launch admission also
+checks the account state immediately before readiness and publication.
+
+Owned filesystem runs are requested to cancel first. Cleanup removes an owned run
+only after its aggregate status is terminal. Ownerless legacy runs and runs owned
+by another account are preserved. Cleanup is retry-safe for completed run-folder
+removal and records a failed/pending job when a run has not reached a terminal
+state. Existing databases must apply `server/db/migration-001-account-deletion.sql`.
+
+The current implementation does not provide distributed locking across multiple
+backend processes, and it does not prove guest process termination beyond the
+existing durable terminal run state. Deployments must continue to use the
+single-process/shared-root constraint until a stronger cross-process fencing
+mechanism is implemented.
