@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "name": "WAIT Click and Type Smoke Test",
+  "app": {
+    "name": "notepad",
+    "executable": "notepad.exe"
+  },
+  "settings": {
+    "stepDelayMs": 0,
+    "timeoutSeconds": 20,
+    "typingDelayMs": 25
+  },
+  "tasks": [
+    {
+      "id": "click-before-wait",
+      "action": "CLICK",
+      "target": "editor",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "type-before-wait",
+      "action": "TYPE",
+      "text": "Text entered before WAIT.\n"
+    },
+    {
+      "id": "wait-between-text",
+      "action": "WAIT",
+      "delayMs": 2000
+    },
+    {
+      "id": "click-after-wait",
+      "action": "CLICK",
+      "target": "editor",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "type-after-wait",
+      "action": "TYPE",
+      "text": "Text entered after WAIT.\n"
+    },
+    {
+      "id": "second-wait",
+      "action": "WAIT",
+      "delayMs": 1000
+    },
+    {
+      "id": "click-after-second-wait",
+      "action": "CLICK",
+      "target": "editor",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "type-after-second-wait",
+      "action": "TYPE",
+      "text": "Text entered after the second WAIT.\n"
+    }
+  ]
+}
