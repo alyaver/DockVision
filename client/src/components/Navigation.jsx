@@ -23,7 +23,7 @@ const Navigation = () => {
 
     async function loadCurrentUser() {
       try {
-        const response = await fetch("/api/profile", {
+        const response = await fetch(`${API_BASE_URL}/me`, {
           method: "GET",
           credentials: "include",
         });
