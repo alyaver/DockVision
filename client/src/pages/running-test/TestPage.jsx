@@ -613,9 +613,14 @@ useEffect(() => {
   const screenshotArtifacts = run?.artifacts?.screenshot || null;
   const screenshotArtifact = run?.artifacts?.screenshot ||
     (Array.isArray(screenshotArtifacts) ? screenshotArtifacts.at(-1) : null);
-  const artifactEntries = Object.entries(run?.artifacts || {}).filter(
-    ([name]) => name !== "screenshot"
-  );
+  const artifactEntries = [
+  ...new Map(
+    flattenArtifactEntries(run?.artifacts).map((entry) => [
+      entry.artifact.relativePath || entry.artifact.url || entry.key,
+      entry,
+    ])
+  ).values(),
+];
   const logLines = run?.logs?.task || [];
   const taskLogs = Array.isArray(run?.logs?.task) ? run.logs.task : [];
   const stdoutLogs = Array.isArray(run?.logs?.stdout) ? run.logs.stdout : [];
