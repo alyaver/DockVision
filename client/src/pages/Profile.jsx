@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
+import { getExportDestination, saveExportDestination, disableExportDestination } from "../lib/exportDestination.mjs";
 import Navigation from "../components/Navigation";
 import ProfileRunHistory from "../components/ProfileRunHistory";
 import "../Profile.css";
@@ -77,6 +78,9 @@ export default function Profile() {
     const [user, setUser] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState("");
+    const [exportDestination, setExportDestination] = useState(null);
+    const [exportMessage, setExportMessage] = useState("");
+    const [isUpdatingExport, setIsUpdatingExport] = useState(false);
     const [deletionJob, setDeletionJob] = useState(null);
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [deletionPassword, setDeletionPassword] = useState("");
@@ -232,6 +236,100 @@ export default function Profile() {
 
         return () => controller.abort();
     }, [navigate]);
+
+    useEffect(() => {
+        if (user?.user_id == null) return;
+
+        let isMounted = true;
+
+        getExportDestination(user.user_id)
+            .then((destination) => {
+                if (isMounted) setExportDestination(destination);
+            })
+            .catch(() => {
+                if (isMounted) {
+                    setExportMessage(
+                        "Could not load your export destination. Choose a folder again."
+                    );
+                }
+            });
+        return () => {
+            isMounted = false;
+        };          
+    }, [user?.user_id]);
+
+    async function handleChangeExportFolder() {
+        setExportMessage("folder button clicked.");
+        if (typeof window.showDirectoryPicker !== "function") {
+            setExportMessage(
+                "Automatic folder saving is unavailable in this browser. Use the artifact download actions instead."
+            );
+            return;
+        }
+
+        if (user?.user_id == null) {
+            setExportMessage("Your profile response is missing user_id.");
+            return;
+        }
+
+        setIsUpdatingExport(true);
+
+
+        try {
+            const directory = await window.showDirectoryPicker({
+                mode:"readwrite",
+                ...(exportDestination?.directory
+                    ? { startIn: exportDestination.directory }
+                    : {}),
+            });
+
+            setExportMessage(`Selected ${directory.name}. Remembering destination…`);
+
+            await saveExportDestination(user.user_id, directory);
+            setExportDestination({ directory, enabled: true });
+            setExportMessage("Export destination updated.");
+        } catch (error) {
+            // Display the actual error to identify why selection or saving failed.
+            setExportMessage(
+                `Could not remember the folder: ${error.message}`
+            );
+            
+        } finally {
+            setIsUpdatingExport(false);
+        }
+    }
+
+    async function handleDisableExport() {
+        if (user?.user_id == null) {
+            setExportMessage(
+                "missing user_id"
+            );
+            return;
+        }
+
+        setIsUpdatingExport(true);
+        setExportMessage("");
+
+        try {
+            // Disable saving while retaining the last folder for future pickers.
+            await disableExportDestination(user.user_id);
+
+            setExportDestination((previous) => ({
+            ...previous,
+            enabled: false,
+            }));
+
+            setExportMessage(
+            "Automatic export disabled. Artifacts will not be automatically saved to this device. You can still open and download them manually."
+            );
+        } catch {
+            setExportMessage(
+            "Could not disable automatic export. Please try again."
+            );
+        } finally {
+            setIsUpdatingExport(false);
+        }
+    }
 
     useEffect(() => {
         let cancelled = false;
@@ -760,6 +858,38 @@ export default function Profile() {
                     )}
                     <ProfileRunHistory />
                     </>
+                )}
+
+                {user && (
+                    <section className="profile-card" aria-labelledby="export-title">
+                        <h2 id="export-title">Artifact Export</h2>
+
+                        <p>
+                            Destination: {exportDestination?.directory?.name || "None selected"}
+                        </p>
+
+                        <p>
+                            Automatic export: {exportDestination?.enabled ? "Enabled" : "Disabled"}
+                        </p>
+
+                        <button
+                            type="button"
+                            onClick={handleChangeExportFolder}
+                            disabled={isUpdatingExport}
+                        >
+                            Choose or change export folder
+                        </button>
+                        
+                        <button
+                            type="button"
+                            onClick={handleDisableExport}
+                            disabled={isUpdatingExport || !exportDestination?.enabled}
+                        >
+                            Disable automatic export
+                        </button>
+
+                        {exportMessage && <p role="status">{exportMessage}</p>}
+                    </section>
                 )}
 
                 <section className="profile-card deletion-card" aria-labelledby="delete-account-title">

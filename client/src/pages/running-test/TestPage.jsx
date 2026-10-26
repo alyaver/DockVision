@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Navigation from "../../components/Navigation";
 import { getRun, cancelRun } from "../../lib/api";
+import { getRunExport, saveFinalizedRunExport, changeRunExportDestination } from "../../lib/exportDestination.mjs";
 import {
   CURRENT_RUN_STORAGE_KEY,
   clearStoredRunIfMatches,
@@ -140,6 +141,16 @@ function flattenArtifactEntries(artifacts) {
   });
 }
 
+// Display only the filename, never a host directory.
+function artifactFilename(artifact) {
+  return (
+    String(artifact.fileName || artifact.relativePath || "artifact")
+      .replace(/\\/g, "/")
+      .split("/")
+      .pop() || "artifact"
+  );
+}
+
 function TestPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -158,6 +169,17 @@ function TestPage() {
   const [cancelError, setCancelError] = useState("");
   const cancelPendingRef = useRef(false);
   const [cancelNotice, setCancelNotice] = useState("");
+  const [exportStatus, setExportStatus] = useState("Loading");
+  const [exportMessage, setExportMessage] = useState("");
+  const [exportAccount, setExportAccount] = useState(null); // Associate export work with the authenticated account and current run.
+  const [exportRetry, setExportRetry] = useState(0);
+  const [downloadError, setDownloadError] = useState("");
+  const [isChoosingExport, setIsChoosingExport] = useState(false);
+
+  // Polling replaces the run object. Keep its latest value without restarting
+  // an export every time a new polling response arrives.
+  const latestRunRef = useRef(run);
+  latestRunRef.current = run;
 
   const pollTimerRef = useRef(null);
   const mountedRef = useRef(false);
@@ -279,6 +301,249 @@ function TestPage() {
       window.clearInterval(intervalId);
     };
   }, [runId, fallbackTestName]);
+
+useEffect(() => {
+    if (!runId) return;
+
+    const controller = new AbortController();
+    let isMounted = true;
+
+    setExportAccount(null);
+    setExportStatus("Loading");
+    setExportMessage("");
+
+    async function loadExportChoice() {
+      try {
+        // Use the authenticated account to read its browser-stored choice.
+        const response = await fetch("/api/auth/me", {
+          credentials: "include",
+          signal: controller.signal,
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data.user?.user_id == null) {
+          throw new Error("Sign in to load this run's export choice.");
+        }
+
+        const choice = await getRunExport(data.user.user_id, runId);
+
+        if (!isMounted) return;
+
+        // Allow automatic export only after this account's choice has loaded.
+        setExportAccount({
+          userId: data.user.user_id,
+          runId,
+          directory: choice?.directory ?? null,
+        });
+
+        if (!choice) {
+          setExportStatus("Not configured");
+          setExportMessage(
+            "No export choice was remembered for this run. Use the artifact Download actions when available."
+          );
+          return;
+        }
+
+        setExportStatus(formatStatus(choice.status));
+
+        if (choice.status === "disabled") {
+          setExportMessage(
+            "Artifacts will not be automatically saved to this device."
+          );
+        } else if (choice.status === "pending") {
+          setExportMessage(
+            "Automatic export is pending. No files have been saved to your selected folder yet."
+          );
+        }
+      } catch (error) {
+        if (!isMounted || error.name === "AbortError") return;
+
+        // Loading an export preference must not change execution status.
+        setExportStatus("Unavailable");
+        setExportMessage(
+          "Could not load the export choice. Refresh to retry. This does not change the test's execution status."
+        );
+      }
+    }
+
+    loadExportChoice();
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, [runId]);
+
+  useEffect(() => {
+  if (
+    exportAccount?.runId !== runId ||
+    run?.runId !== runId ||
+    !isTerminalStatus(run?.status) ||
+    run?.artifactsFinalized !== true
+  ) {
+    return;
+  }
+
+  const controller = new AbortController();
+  let isMounted = true;
+
+  async function exportArtifacts() {
+    try {
+      const choice = await getRunExport(exportAccount.userId, runId);
+
+      if (!isMounted || !choice) return;
+
+      // Start pending exports automatically. Failed exports require Retry.
+      const shouldSave =
+        choice.status === "pending" ||
+        (choice.status === "failed" && exportRetry > 0);
+
+      if (!shouldSave) {
+        setExportStatus(formatStatus(choice.status));
+
+        if (choice.message) {
+          setExportMessage(choice.message);
+        }
+
+        return;
+      }
+
+      setExportStatus("Saving");
+      setExportMessage(
+        "Saving artifacts to your selected folder. Keep this page open until export finishes."
+      );
+
+      const result = await saveFinalizedRunExport(
+        exportAccount.userId,
+        latestRunRef.current,
+        { signal: controller.signal }
+      );
+
+      if (!isMounted || !result) return;
+
+      // Update export presentation only; never change the execution result.
+      setExportStatus(formatStatus(result.status));
+      setExportMessage(result.message || "");
+    } catch (error) {
+      if (!isMounted || controller.signal.aborted) return;
+
+      setExportStatus("Failed");
+      setExportMessage(
+        error.message ||
+          "Export could not finish. You can still download artifacts manually."
+      );
+    }
+  }
+
+  exportArtifacts();
+
+  return () => {
+    isMounted = false;
+    controller.abort();
+  };
+  }, [
+    runId,
+    run?.runId,
+    run?.status,
+    run?.artifactsFinalized,
+    exportAccount,
+    exportRetry,
+  ]);
+
+  async function handleRecoverExportFolder() {
+  if (!exportAccount || isChoosingExport || exportStatus === "Saving") return;
+
+  if (typeof window.showDirectoryPicker !== "function") {
+    setExportMessage(
+      "Folder saving is unavailable in this browser. Use the artifact Download actions."
+    );
+    return;
+  }
+
+  setIsChoosingExport(true);
+
+  try {
+    // Open directly from this click so the browser can request authorization.
+    const directory = await window.showDirectoryPicker({
+      mode: "readwrite",
+      ...(exportAccount.directory
+        ? { startIn: exportAccount.directory }
+        : {}),
+    });
+
+    const record = await changeRunExportDestination(
+      exportAccount.userId,
+      runId,
+      directory
+    );
+
+    setExportStatus(formatStatus(record.status));
+    setExportMessage(record.message || "");
+
+    // Changing this account context triggers the existing export effect.
+    setExportAccount((previous) => ({
+      ...previous,
+      directory: record.directory,
+    }));
+  } catch (error) {
+    if (error.name === "AbortError") return;
+
+    if (error.name === "NotFoundError" || error.name === "TypeError") {
+      // Let the next explicit click open without an unavailable starting folder.
+      setExportAccount((previous) => ({
+        ...previous,
+        directory: null,
+      }));
+
+      setExportMessage(
+        "The previous folder is unavailable. Click Choose or authorize export folder again and select an existing writable folder."
+      );
+    } else {
+      setExportMessage(
+        "Could not authorize that destination. Choose an existing writable folder and allow access. You can still download artifacts manually."
+      );
+    }
+  } finally {
+    setIsChoosingExport(false);
+  }
+}
+
+  async function handleDownloadArtifact(artifact) {
+    setDownloadError("");
+
+    try {
+      // Fetch the file with the signed-in session before downloading it.
+      const response = await fetch(artifact.url, {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("The artifact could not be downloaded.");
+      }
+
+      const contents = await response.blob();
+      const objectUrl = URL.createObjectURL(contents);
+      const link = document.createElement("a");
+
+      link.href = objectUrl;
+      link.download = artifactFilename(artifact);
+      document.body.appendChild(link);
+
+      try {
+        link.click();
+      } finally {
+        link.remove();
+
+        // Release the temporary URL after the browser starts the download.
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+    } catch {
+      setDownloadError(
+        "Could not download this artifact. Check your connection and try again."
+      );
+    }
+  }
 
   async function handleCancel() {
     if (!runId ||
@@ -409,6 +674,46 @@ function TestPage() {
           </div>
         </div>
 
+        {/* Display export progress independently of the run status badge. */}
+        <section className="TestPage__panel TestPage__exportPanel" aria-labelledby="export-status-title">
+          <h2 id="export-status-title">Artifact Export</h2>
+
+          <p role="status">Export status: {exportStatus}</p>
+
+          {exportMessage && <p>{exportMessage}</p>}
+
+          {/* Retry saving without restarting the test. */}
+          {exportStatus === "Failed" && (
+            <button
+              type="button"
+              onClick={() => setExportRetry((previous) => previous + 1)}
+              disabled={isChoosingExport}
+            >
+              Retry export
+            </button>
+          )}
+
+          {/* Recover folder access without restarting execution. */}
+          {["Failed", "Needs Permission"].includes(exportStatus) && (
+            <button
+              type="button"
+              onClick={handleRecoverExportFolder}
+              disabled={isChoosingExport}
+            >
+              {isChoosingExport
+                ? "Choosing folder..."
+                : "Choose or authorize export folder"}
+            </button>
+          )}
+        </section>
+
+        {/* Report export setup problems separately from execution status. */}
+        {location.state?.exportSetupMessage && (
+          <p className="TestPage__error" role="alert">
+            {location.state.exportSetupMessage}
+          </p>
+        )}
+
         {errorMessage && <p className="TestPage__error">{errorMessage}</p>}
         {networkNotice && <p className="TestPage__error">{networkNotice}</p>}
         {cancelError && <p className="TestPage__error">{cancelError}</p>}
@@ -499,7 +804,7 @@ function TestPage() {
                 </div>
               </dl>
             </section>
-
+{/* Remove Scoped Paths, stdout, and stderr panels
             <section className="TestPage__panel">
               <h2>Scoped Paths</h2>
               <div className="TestPage__pathList">
@@ -529,13 +834,13 @@ function TestPage() {
                 </p>
               </div>
             </section>
-
+*/}
             <LogPanel
               title="Task Log"
               lines={taskLogs}
               emptyMessage="No task log entries yet."
             />
-
+{/*}
             <LogPanel
               title="Stdout"
               lines={stdoutLogs}
@@ -547,7 +852,7 @@ function TestPage() {
               lines={stderrLogs}
               emptyMessage="No stderr output was returned."
             />
-
+*/}
             <section className="TestPage__panel">
               <div className="TestPage__panelHeader">
                 <h2>Latest Screenshot</h2>
@@ -577,18 +882,30 @@ function TestPage() {
                 <span>{artifactEntries.length}</span>
               </div>
 
+              {/* Show errors from manual artifact downloads. */}
+              {downloadError && <p role="alert">{downloadError}</p>}
+
               {artifactEntries.length ? (
                 <ul className="TestPage__artifactList">
-                  {artifactEntries.map(([name, artifact]) => (
-                    <li key={name}>
-                      <strong>{artifact.fileName || name}</strong>
-                      <span>{artifact.relativePath || artifact.rawPath || "Not available"}</span>
+                  {artifactEntries.map(({key, artifact}) => (
+                    <li key={key}>
+                      <strong>{artifactFilename(artifact)}</strong>
                       {artifact.url ? (
-                        <a href={artifact.url} target="_blank" rel="noreferrer">
-                          Open
-                        </a>
+                        <>
+                          <a href={artifact.url} target="_blank" rel="noreferrer">
+                            Open
+                          </a>
+
+                          <button
+                            type="button"
+                            className="TestPage__artifactDownload"
+                            onClick={() => handleDownloadArtifact(artifact)}
+                          >
+                            Download
+                          </button>
+                        </>
                       ) : (
-                        <span className="TestPage__muted">Pending</span>
+                        <span className="TestPage__muted">Unavailable</span>
                       )}
                     </li>
                   ))}

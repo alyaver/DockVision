@@ -1004,11 +1004,15 @@ def process_queued_active_task(
 
     final_status = "failed"
     result: dict[str, Any]
+
+    execution_started = False
+
     # convert every execution outcome into a supported terminal result without stopping the agent loop
     try:
         if is_run_cancellation_requested(run_context, shared_root):
             raise AgentTaskCancelled("Cancellation was requested before task execution began.")
 
+        execution_started = True
         execution_result = executor(run_context, task, shared_root)
         requested_status = str(execution_result.get("status") or "completed").lower()
         if requested_status not in AGENT_TERMINAL_TASK_STATUSES:
@@ -1045,11 +1049,29 @@ def process_queued_active_task(
         )
         append_agent_install_log(shared_root, f"Task '{task_id}' failed: {exc}")
     finally:
-        # always publish the result, terminal task state, and idle heartbeat even after an exception
         try:
+            # Publish execution status separately from artifact finalization.
+            result["artifactsFinalized"] = False
             write_active_result(run_context, result)
             mark_active_task_finished(run_context, task, final_status)
             append_run_log(run_context, f"Task '{task_id}' finished with status '{final_status}'.")
+
+            process_details = result.get("details", {}).get("process", {})
+
+            # Built-in screenshot work is synchronous. Custom runners must
+            # confirm that their process exited or was successfully stopped.
+            runner_stopped = (
+                not execution_started
+                or task_type != "script_runner"
+                or process_details.get("exitCode") is not None
+                or process_details.get("processTreeTerminated") is True
+            )
+
+            # Publish this only after the guest's final task-log write.
+            # If shutdown is unconfirmed, leave export pending.
+            result["artifactsFinalized"] = runner_stopped
+            write_active_result(run_context, result)
+
         finally:
             write_agent_heartbeat(shared_root, status="idle", task_name="waiting_for_task")
 
