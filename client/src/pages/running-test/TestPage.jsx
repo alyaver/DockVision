@@ -3,9 +3,12 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Navigation from "../../components/Navigation";
 import { getRun, cancelRun } from "../../lib/api";
 import { getRunExport, saveFinalizedRunExport, changeRunExportDestination } from "../../lib/exportDestination.mjs";
+import {
+  CURRENT_RUN_STORAGE_KEY,
+  clearStoredRunIfMatches,
+} from "../../lib/currentRunStorage.mjs";
 import "./TestPage.css";
 
-const CURRENT_RUN_STORAGE_KEY = "dockvision-current-run";
 const POLL_INTERVAL_MS = 3000;
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
@@ -272,8 +275,9 @@ function TestPage() {
         }
 
         if (error.status === 404) {
+          clearStoredRunIfMatches(sessionStorage, runId);
           setRun(null);
-          setErrorMessage("This run is missing or expired. Please return to the dashboard.");
+          setErrorMessage("This run is not available for this account. Please return to the dashboard.");
           setNetworkNotice("");
           clearTimer();
           return;
@@ -574,7 +578,10 @@ useEffect(() => {
       }
     } catch (error) {
       if (error.status === 404) {
-        setErrorMessage("Run not found.\nThis run is missing or expired. Return to the dashboard.");
+        clearStoredRunIfMatches(sessionStorage, runId);
+        setRun(null);
+        setCancelNotice("");
+        setErrorMessage("This run is not available for this account. Return to the dashboard.");
       } else {
         setCancelError(
           error.message || "Could not request cancellation. Please try again."

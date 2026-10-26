@@ -104,7 +104,7 @@
 }
 
 .edit-button, .delete-button, .move-up-button, .move-down-button{
-    background-color: #007bff;
+    background-color: #00255F;
     color: white;
     border: none;
     padding: 6px 12px;
@@ -181,8 +181,27 @@
     font-size: 1.2em;
 }
 
+.exit-buttons {
+    display: flex;
+    gap: 40px;       
+    margin-top: 50px;
+    align-items: center; 
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.create-task-form .task-container .exit-message button {
+    color: white;
+}
+.create-task-form .task-container .exit-message .exit-button {
+    background-color: #0192F9;
+}
+.create-task-form .task-container .exit-message .cancel-button {
+    background-color: #0192F9;
+}
+
 .create-task-form .task-container button {
-    background-color: #1a1a1a;
+    background-color: #00255F;
     border-radius: 6px;
     font-family: inherit;
     transition: opacity 0.15s;
@@ -204,7 +223,7 @@
 }
 
 .create-task-form .task-container :is(input, select, button):focus-visible {
-    outline: 2px solid #1a1a1a;
+    outline: 2px solid #00255F;
     outline-offset: 2px;
 }
 

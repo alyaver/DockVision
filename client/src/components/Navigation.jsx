@@ -13,9 +13,17 @@ const Navigation = () => {
   useEffect(() => {
     let isMounted = true;
 
+    function handleProfileUpdated(event) {
+      if (event.detail && isMounted) {
+        setUser(event.detail);
+      }
+    }
+
+    window.addEventListener("dockvision:profile-updated", handleProfileUpdated);
+
     async function loadCurrentUser() {
       try {
-        const response = await fetch(`${API_BASE_URL}/me`, {
+        const response = await fetch("/api/profile", {
           method: "GET",
           credentials: "include",
         });
@@ -28,15 +36,16 @@ const Navigation = () => {
           setUser(null);
 
           const authenticatedPaths = [
-            "/dashboard,",
+            "/dashboard",
             "/configuration-settings",
             "/create-a-task",
-            "/running-test"
+            "/running-test",
+            "/profile",
           ];
 
           const isAuthenticatedPath = authenticatedPaths.some(
             (path) => 
-              location.pathname == path || location.pathname.startsWith('${path}/')
+              location.pathname === path || location.pathname.startsWith(`${path}/`)
           );
           
           if (isAuthenticatedPath){
@@ -67,6 +76,7 @@ const Navigation = () => {
 
     return () => {
       isMounted = false;
+      window.removeEventListener("dockvision:profile-updated", handleProfileUpdated);
     };
   }, [location.pathname]);
 
@@ -80,6 +90,7 @@ const Navigation = () => {
       console.error("Logout failed:", error);
     } finally {
       setUser(null);
+      sessionStorage.removeItem("dockvision-current-run");
       navigate("/login");
     }
   }
@@ -113,7 +124,9 @@ const Navigation = () => {
           (user ? (
             <>
             {(location.pathname === "/about" || 
-              location.pathname === "/contact")
+              location.pathname === "/contact" ||
+              location.pathname === "/profile" ||
+              location.pathname === "/")
             && (
               <li>
                 <Link to="/dashboard" className="nav-button">
@@ -123,8 +136,19 @@ const Navigation = () => {
             )}
 
               <li>
-                <Link to="/profile" className="nav-button">
-                  Profile
+                <Link to="/profile" className="nav-button nav-profile-link">
+                  {user.has_avatar ? (
+                    <img
+                      className="nav-avatar"
+                      src={`/api/profile/avatar?v=${encodeURIComponent(user.avatar_updated_at || "current")}`}
+                      alt=""
+                    />
+                  ) : (
+                    <span className="nav-avatar nav-avatar-fallback" aria-hidden="true">
+                      {user.name?.charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  <span>Profile</span>
                 </Link>
               </li>
               <li>

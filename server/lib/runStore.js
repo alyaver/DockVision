@@ -2,10 +2,14 @@ const fs = require("fs/promises");
 const path = require("path");
 const { FaF } = require("react-icons/fa6");
 
+//define retention limits independently from ownership; callers must still supply a safe scope
 const CLEANUP_POLICY = {
-  maxCompletedRuns: 20,
-  maxAgeDays: 7,
+  maxTerminalRuns: 30,
+  maxAgeHours: 720,
 };
+
+//serialize cleanup per shared root without treating this process-local queue as a distributed lock
+const cleanupQueues = new Map();
 
 
 const TERMINAL_STATUSES = new Set([                                         //start of lifecycle definitions
@@ -293,13 +297,66 @@ async function readLogLines(filePath, limit = 200) {
   }
 }
 
+//describes the configured retention policy for callers that present cleanup behavior
 function describeCleanupPolicy() {
-  return `Retain the latest ${CLEANUP_POLICY.maxCompletedRuns} completed or failed runs for up to ${CLEANUP_POLICY.maxAgeDays} days. Delete anything older or beyond that cap when a new run starts.`;
+  //read the constants directly so this helper cannot drift from selection behavior
+  return `Retain up to ${CLEANUP_POLICY.maxTerminalRuns} terminal runs for ${CLEANUP_POLICY.maxAgeHours} hours from terminal completion when a safe ownership scope is available.`;
+}
+
+//compares run ids to make retention ordering stable when completion times match
+function compareRunIds(left, right) {
+  //use a secondary key so equal timestamps produce repeatable cleanup candidates
+  if (left === right) {
+    return 0;
+  }
+
+  return left < right ? -1 : 1;
+}
+
+//selects removable run ids from an already scoped collection without reading or deleting files
+function selectRunsForRetention(records, { now = Date.now } = {}) {
+  //keep selection pure so controlled clocks and owner scopes can be tested without filesystem mutation
+  const nowMs = now();
+  if (!Number.isFinite(nowMs)) {
+    throw new TypeError("Cleanup clock must return a finite timestamp.");
+  }
+
+  //calculate the inclusive completion-time cutoff from the injected clock for repeatable selection
+  const expiryCutoff = nowMs - CLEANUP_POLICY.maxAgeHours * 60 * 60 * 1000;
+  const completedRuns = records
+    .filter((record) => {
+      //retain only confirmed inactive terminal records from the supplied owner scope
+      return record &&
+        typeof record.runId === "string" &&
+        !record.active &&
+        !record.indeterminate &&
+        isTerminalStatus(record.status);
+    })
+    .map((record) => ({
+      runId: record.runId,
+      finishedMs: Date.parse(record.finishedUtc || ""),
+    }))
+    .filter((record) => {
+      //preserve missing completion times because they cannot be ordered or expired safely
+      return !Number.isNaN(record.finishedMs);
+    });
+
+  completedRuns.sort((left, right) => {
+    //use the run id after completion time so retention selection remains reproducible
+    return right.finishedMs - left.finishedMs || compareRunIds(left.runId, right.runId);
+  });
+
+  return completedRuns
+    .filter((record, index) => {
+      //select a record when either independent count or age policy makes it eligible
+      return record.finishedMs <= expiryCutoff || index >= CLEANUP_POLICY.maxTerminalRuns;
+    })
+    .map((record) => record.runId);
 }
 
 function hasRemainingIterations(meta) {
-  // Metadata is the aggregate source of truth. The selected iteration may have
-  // a terminal result while later requested iterations have not been published.
+  //metadata is the aggregate source of truth. the selected iteration may have
+  //a terminal result while later requested iterations have not been published
   const totalIterations = toPositiveInteger(meta?.iterationState?.total);
   const completedIterations = toNonNegativeInteger(meta?.iterationState?.completed);
   return totalIterations !== null &&
@@ -310,21 +367,27 @@ function normalizeAggregateStatus(meta, candidateStatus) {
   const normalizedStatus = String(candidateStatus || "queued").toLowerCase();
   const metaStatus = String(meta?.status || "").toLowerCase();
 
-  // Cancellation or failure may terminate a sequence before every requested
-  // iteration runs. A completed current iteration must not reopen that run.
+  //cancellation or failure may terminate a sequence before every requested
+  // iteration runs. a completed current iteration must not reopen that run
   if (metaStatus === "cancelled" || metaStatus === "failed") {
     return metaStatus;
   }
 
   if (normalizedStatus === "completed" && hasRemainingIterations(meta)) {
-    // A stale per-iteration success must not make history, retention, or the
-    // launch gate treat the whole sequence as complete during supervisor handoff.
+    //a stale per-iteration success must not make history, retention, or the
+    // launch gate treat the whole sequence as complete during supervisor handoff
     return metaStatus === "cancelling"
       ? "cancelling"
       : "running";
   }
 
   return normalizedStatus;
+}
+
+//determine whether a current pointer represents an active aggregate run in history.
+function isHistoryRunActive(runId, activeRunId, status) {
+  //terminal aggregate states are inactive even when their pointer still lingers.
+  return activeRunId === runId && !isTerminalStatus(status);
 }
 
 async function readCurrentRunPointer({
@@ -340,8 +403,8 @@ async function readCurrentRunPointer({
 function deriveRunStatus(meta, task, result, heartbeat, isActiveRun) {
   const resultStatus = String(result?.status || "").toLowerCase();
   if (resultStatus === "completed") {
-    // An iteration result is not the run result. The supervisor advances the
-    // completed count after observing it, and only the final count is terminal.
+    //an iteration result is not the run result. the supervisor advances the
+    // completed count after observing it, and only the final count is terminal
     return normalizeAggregateStatus(meta, resultStatus);
   }
 
@@ -394,19 +457,19 @@ function deriveRunProgress(meta, task, result, selectedIterationNumber) {
     toPositiveInteger(selectedIterationNumber) ||
     toPositiveInteger(task?.iterationNumber);
   // Zero is a valid count before the first iteration finishes; unlike current
-  // and total, completed must not be restricted to positive integers.
+  // and total, completed must not be restricted to positive integers
   const completedIterations = toNonNegativeInteger(iterationState.completed);
 
-  // Custom runners currently emit steps at the result root, while built-in
-  // result writers may nest them under details. This maps persisted telemetry
-  // only; null step fields tell the UI that the runner has not published it.
+  //custom runners currently emit steps at the result root, while built-in
+  // result writers may nest them under details. this maps persisted telemetry
+  // only; null step fields tell the UI that the runner has not published it
   const resultSteps = Array.isArray(result?.steps)
     ? result.steps
     : Array.isArray(result?.details?.steps)
       ? result.details.steps
       : null;
-  // Result writers append steps in observation order, making the final entry
-  // the current step for active runs and the last-observed step after completion.
+  //result writers append steps in observation order, making the final entry
+  // the current step for active runs and the last-observed step after completion
   const lastStep = resultSteps?.length ? resultSteps[resultSteps.length - 1] : null;
 
   return {
@@ -449,7 +512,7 @@ async function requestRunCancellation2(runId) {
   const runPaths = getRunPaths(runId);
   const requestedUtc = nowIso();
 
-  // The guest agent watches this run-scoped marker while executing.
+  //the guest agent watches this run-scoped marker while executing
   await writeJson(path.join(runPaths.runRoot, "cancel.json"), {
     runId,
     requestedUtc,
@@ -529,6 +592,128 @@ function buildArtifactMap(runId, artifacts = {}) {
   }
 
   return mappedArtifacts;
+}
+
+// Returns filepath metadata to be displayed on the profile page's run artifact sections.
+async function mapExistingRunFile(runId, absolutePath, relativePath, { requireNonEmpty = false } = {}) {
+  try {
+    const fileStats = await fs.stat(absolutePath);
+    if (!fileStats.isFile() || (requireNonEmpty && fileStats.size === 0)) {
+      return null;
+    }
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+
+  return {
+    rawPath: relativePath,
+    relativePath,
+    url: buildRunFileUrl(runId, relativePath),
+    fileName: path.posix.basename(relativePath),
+  };
+}
+
+// Maps the task-plan.json or uploaded-task-plan.json file to a displayName
+// which will be used on the profile page's run artifact sections. 
+async function mapTaskPlanFile(runId, absolutePath, relativePath) {
+  const file = await mapExistingRunFile(runId, absolutePath, relativePath);
+  if (!file) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse((await fs.readFile(absolutePath, "utf8")).replace(/^\uFEFF/, ""));
+    const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+    if (name) {
+      file.displayName = `Task Plan: '${name}.json'`;
+    }
+  } catch {
+    // If the displayName definition fails, we'll just use the default fileName
+  }
+
+  return file;
+}
+
+// Collects the different artifacts that will be displayed on the profile page's run artifact sections.
+// These currently include screenshots, the task plan .json file, the stdout.txt and stderr.txt,
+// task.log, result.json, and control-tree.txt. 
+async function listRunFileArtifacts(runId, runPaths, selectedIterationPaths) {
+  const files = {};
+  const taskPlanCandidates = [
+    [path.join(runPaths.runRoot, "uploaded-task-plan.json"), "uploaded-task-plan.json"],
+    [path.join(runPaths.runRoot, "task-plan.json"), "task-plan.json"],
+  ];
+  const resultPath = selectedIterationPaths?.resultPath || runPaths.resultPath;
+  const resultRelativePath = selectedIterationPaths
+    ? `iterations/${path.basename(selectedIterationPaths.iterationRoot)}/result.json`
+    : "result.json";
+  const taskLogPath = selectedIterationPaths
+    ? path.join(selectedIterationPaths.logsRoot, "task.log")
+    : runPaths.taskLogPath;
+  const taskLogRelativePath = selectedIterationPaths
+    ? `iterations/${path.basename(selectedIterationPaths.iterationRoot)}/logs/task.log`
+    : "logs/task.log";
+
+  const [resultFile, taskLog, taskPlanFiles] = await Promise.all([
+    mapExistingRunFile(runId, resultPath, resultRelativePath),
+    mapExistingRunFile(runId, taskLogPath, taskLogRelativePath),
+    Promise.all(
+      taskPlanCandidates.map(([absolutePath, relativePath]) =>
+        mapTaskPlanFile(runId, absolutePath, relativePath)
+      )
+    ),
+  ]);
+
+  if (resultFile) {
+    files.result = resultFile;
+  }
+  if (taskLog) {
+    files.taskLog = taskLog;
+  }
+  const taskPlan = taskPlanFiles.find(Boolean);
+  if (taskPlan) {
+    files.taskPlan = taskPlan;
+  }
+
+  const logsRoot = selectedIterationPaths?.logsRoot || runPaths.logsRoot;
+  let logEntries = [];
+  try {
+    logEntries = await fs.readdir(logsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const iterationPrefix = selectedIterationPaths
+    ? `iterations/${path.basename(selectedIterationPaths.iterationRoot)}/logs/`
+    : "logs/";
+  const outputEntries = logEntries
+    .filter((entry) => entry.isFile() && /(?:stdout|stderr)\.txt$/i.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of outputEntries) {
+    const outputType = /stderr\.txt$/i.test(entry.name) ? "stderr" : "stdout";
+    const outputFile = await mapExistingRunFile(
+      runId,
+      path.join(logsRoot, entry.name),
+      `${iterationPrefix}${entry.name}`,
+      { requireNonEmpty: true }
+    );
+
+    if (outputFile) {
+      const existing = files[outputType];
+      files[outputType] = existing
+        ? [...(Array.isArray(existing) ? existing : [existing]), outputFile]
+        : outputFile;
+    }
+  }
+
+  return files;
 }
 
 async function findLatestScreenshotArtifact(runId, screenshotsRoot, iterationNumber = null) {
@@ -871,6 +1056,11 @@ async function readRun(runId) {
     runId,
     runPaths.iterationsRoot
   );
+  const fileArtifacts = await listRunFileArtifacts(
+    runId,
+    runPaths,
+    selectedIterationPaths
+  );
 
   // Collect other result artifacts during all iterations
   const iterationResultArtifacts = await listIterationResultArtifacts(
@@ -885,9 +1075,13 @@ async function readRun(runId) {
     snapshot.result,
     selectedIterationNumber
   );
+  // A lingering pointer remains necessary to read the latest iteration channel,
+  // but a durable terminal aggregate state must not be reported as active.
+  const active = isHistoryRunActive(runId, activeRunId, snapshot.status);
 
   return {
     runId,
+    ownerUserId: baseMeta.ownerUserId ?? null,
     taskId: snapshot.task?.taskId || baseMeta.taskId || null,
     testName: baseMeta.testName || "Untitled Test Run",
     runnerScriptName: baseMeta.runnerScriptName || null,
@@ -902,7 +1096,7 @@ async function readRun(runId) {
     iterationState: baseMeta.iterationState || null,
     progress,
     activeIterationNumber,
-    active: isActiveRun,
+    active,
     cleanupPolicy: baseMeta.cleanupPolicy || describeCleanupPolicy(),
     containerId: baseMeta.containerId || null,
     createdUtc: baseMeta.createdUtc || snapshot.task?.createdUtc || null,
@@ -926,7 +1120,8 @@ async function readRun(runId) {
         ? { screenshot: latestScreenshot }
         : {}),
     },
-    heartbeat: isActiveRun ? heartbeat : null,
+    files: fileArtifacts,
+    heartbeat: active ? heartbeat : null,
     logs: {
       task: taskLogLines,
     },
@@ -1304,71 +1499,357 @@ async function resolveRunFilePath(runId, relativePath) {
   return resolvedPath;
 }
 
-async function pruneCompletedRuns({
-  sharedRoot = SHARED_ROOT,
-  activeRoot = ACTIVE_ROOT,
-  runsRoot = RUNS_ROOT,
-  currentRunPointerPath = CURRENT_RUN_POINTER_PATH,
-} = {}) {
-  await ensureBaseLayout({ sharedRoot, activeRoot, runsRoot });
+//build one process-local queue key for each shared storage root
+function getCleanupQueueKey(sharedRoot) {
+  //normalize windows paths so case-only variants share one cleanup queue
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  return process.platform === "win32"
+    ? resolvedSharedRoot.toLowerCase()
+    : resolvedSharedRoot;
+}
 
-  const entries = await fs.readdir(runsRoot, { withFileTypes: true });
-  const currentRunPointer = await readCurrentRunPointer({
-    sharedRoot,
-    activeRoot,
-    runsRoot,
-    currentRunPointerPath,
+//serializes cleanup and explicit deletion mutations for one shared storage root
+async function enqueueRunDeletion(sharedRoot, operation) {
+  //use one queue so manual deletion cannot race automatic cleanup on the same directory
+  const key = getCleanupQueueKey(sharedRoot);
+  const previous = cleanupQueues.get(key) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(operation);
+  cleanupQueues.set(key, pending);
+
+  try {
+    return await pending;
+  } finally {
+    //leave a newer operation registered when it was queued behind this one
+    if (cleanupQueues.get(key) === pending) {
+      cleanupQueues.delete(key);
+    }
+  }
+}
+
+function isRunOwnedBy(meta, ownerUserId) {
+  return meta?.ownerUserId !== null &&
+    meta?.ownerUserId !== undefined &&
+    String(meta.ownerUserId) === String(ownerUserId);
+}
+
+//checks for the persisted numeric owner identifier assigned by authenticated launches
+function hasSafeOwnerScope(meta) {
+  //exclude ownerless and malformed legacy records because they cannot be assigned safely
+  return Number.isSafeInteger(meta?.ownerUserId) && meta.ownerUserId > 0;
+}
+
+function isValidRunId(runId) {
+  return typeof runId === "string" && /^run-[a-zA-Z0-9-]+$/.test(runId);
+}
+
+async function readRunForOwner(runId, ownerUserId, { sharedRoot = SHARED_ROOT } = {}) {
+  if (!isValidRunId(runId)) return null;
+  const runsRoot = path.join(path.resolve(sharedRoot), "runs");
+  const meta = await readJsonIfExists(getRunPaths(runId, runsRoot).metaPath);
+  if (!isRunOwnedBy(meta, ownerUserId)) return null;
+  return readRun(runId, { sharedRoot });
+}
+
+async function requestRunCancellationForOwner(runId, ownerUserId, options = {}) {
+  const run = await readRunForOwner(runId, ownerUserId, options);
+  if (!run) return null;
+  return requestRunCancellation(runId, options);
+}
+
+async function requestRunCancellation2ForOwner(runId, ownerUserId) {
+  const run = await readRunForOwner(runId, ownerUserId);
+  if (!run) return null;
+  return requestRunCancellation2(runId);
+}
+
+async function resolveRunFilePathForOwner(runId, relativePath, ownerUserId) {
+  const run = await readRunForOwner(runId, ownerUserId);
+  if (!run) return null;
+  return resolveRunFilePath(runId, relativePath);
+}
+
+//deletes one confirmed terminal run after exact confirmation without touching external exports
+async function deleteCompletedRun(runId, confirmation, {
+  sharedRoot = SHARED_ROOT,
+  removeRun = fs.rm,
+} = {}) {
+  //reject malformed identifiers and every non-exact confirmation before reading or changing storage
+  if (!isValidRunId(runId)) {
+    return { deleted: false, reason: "INVALID_RUN_ID", runId: null };
+  }
+
+  if (confirmation !== "CONFIRM") {
+    return { deleted: false, reason: "CONFIRMATION_REQUIRED", runId };
+  }
+
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  return enqueueRunDeletion(resolvedSharedRoot, async () => {
+    //the store module owns one configured root so scoped callers must not inspect another storage tree
+    if (resolvedSharedRoot !== SHARED_ROOT) {
+      throw new Error("Deletion shared root must match the configured run store root.");
+    }
+
+    const runPaths = getRunPaths(runId);
+    const [meta, result] = await Promise.all([
+      readJsonIfExists(runPaths.metaPath),
+      readJsonIfExists(runPaths.resultPath),
+    ]);
+    const metaStatus = String(meta?.status || "").toLowerCase();
+    const resultStatus = String(result?.status || "").toLowerCase();
+
+    //contradictory persisted terminal views are unsafe to delete until recovery establishes one state
+    if (metaStatus && resultStatus && metaStatus !== resultStatus) {
+      return { deleted: false, reason: "RUN_INDETERMINATE", runId };
+    }
+
+    //read the reconciled aggregate state while the queue prevents cleanup from changing it underneath us
+    const run = await readRun(runId);
+    if (!run) {
+      return { deleted: true, alreadyDeleted: true, runId };
+    }
+
+    if (run.active) {
+      return { deleted: false, reason: "RUN_ACTIVE", runId };
+    }
+
+    if (!isTerminalStatus(run.status)) {
+      return { deleted: false, reason: "RUN_NOT_TERMINAL", runId };
+    }
+
+    try {
+      //remove only the selected server-managed run tree and leave exports outside runs untouched
+      await removeRun(runPaths.runRoot, { recursive: true, force: true });
+    } catch (error) {
+      //treat a concurrent already-removed directory as the same idempotent end state
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    //A deleted terminal run cannot remain the active pointer target because the
+    //admission gate correctly treats a pointer without durable run records as unsafe.
+    const currentRunPointer = await readCurrentRunPointer();
+    if (currentRunPointer?.runId === runId) {
+      await clearActiveChannel();
+    }
+
+    return { deleted: true, alreadyDeleted: false, runId };
   });
+}
+
+//scan select and delete only records from an explicit cleanup scope
+async function pruneScopedCompletedRuns({
+  sharedRoot = SHARED_ROOT,
+  activeRoot,
+  runsRoot,
+  currentRunPointerPath,
+  runIds,
+  now = Date.now,
+  removeRun = fs.rm,
+} = {}) {
+  //resolve dependent storage paths from the supplied root so fixture cleanup cannot reach live storage
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  const storagePaths = {
+    sharedRoot: resolvedSharedRoot,
+    activeRoot: activeRoot || path.join(resolvedSharedRoot, "active"),
+    runsRoot: runsRoot || path.join(resolvedSharedRoot, "runs"),
+  };
+  storagePaths.currentRunPointerPath = currentRunPointerPath || path.join(
+    storagePaths.activeRoot,
+    "current-run.json"
+  );
+
+  //ensure the scoped layout exists before examining candidate run directories
+  await ensureBaseLayout(storagePaths);
+
+  const entries = await fs.readdir(storagePaths.runsRoot, { withFileTypes: true });
+  //ignore non-string IDs and use a set for membership checks while scanning disk
+  const scopedRunIds = new Set(runIds.filter((runId) => typeof runId === "string"));
+  const currentRunPointer = await readCurrentRunPointer(storagePaths);
   const currentRunId = currentRunPointer?.runId || null;
-  const expiryCutoff = Date.now() - CLEANUP_POLICY.maxAgeDays * 24 * 60 * 60 * 1000;
-  const completedRuns = [];
+  const retentionRecords = [];
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) {
+    //never inspect files outside the explicitly supplied scope
+    if (!entry.isDirectory() || !scopedRunIds.has(entry.name)) {
       continue;
     }
 
+    //let the active pointer win over terminal-looking files during lifecycle handoff
     if (entry.name === currentRunId) {
       continue;
     }
 
-    const runPaths = getRunPaths(entry.name, runsRoot);
+    const runPaths = getRunPaths(entry.name, storagePaths.runsRoot);
     const [meta, result] = await Promise.all([
       readJsonIfExists(runPaths.metaPath),
       readJsonIfExists(runPaths.resultPath),
     ]);
 
+    //normalize aggregate state before selection so incomplete multi-iteration runs remain protected
     const status = normalizeAggregateStatus(meta, result?.status || meta?.status || "queued");
-    if (!isTerminalStatus(status)) {
-      continue;
-    }
+    const metaStatus = String(meta?.status || "").toLowerCase();
+    const resultStatus = String(result?.status || "").toLowerCase();
+    const contradictory = Boolean(metaStatus && resultStatus && metaStatus !== resultStatus);
+    //prefer a valid terminal result time, then use terminal metadata when the result time is unavailable
+    const resultFinishedMs = Date.parse(result?.finishedUtc || "");
+    const finishedUtc = Number.isNaN(resultFinishedMs)
+      ? meta?.finishedUtc || null
+      : result.finishedUtc;
 
-    const sortValue =
-      Date.parse(result?.finishedUtc || meta?.finishedUtc || meta?.createdUtc || 0) || 0;
-
-    completedRuns.push({
+    retentionRecords.push({
       runId: entry.name,
-      finishedMs: sortValue,
-      removeForAge: sortValue > 0 && sortValue < expiryCutoff,
+      status,
+      active: false,
+      finishedUtc,
+      //a disagreement between persisted lifecycle views must not trigger deletion
+      indeterminate: contradictory,
     });
   }
 
-  completedRuns.sort((left, right) => right.finishedMs - left.finishedMs);
+  //keep selection pure and limit this function to scoped record loading plus filesystem deletion
+  const selectedRunIds = selectRunsForRetention(retentionRecords, { now });
+  const removedRunIds = [];
+  const failedRunIds = [];
+  const deletionFailures = [];
 
-  for (let index = 0; index < completedRuns.length; index += 1) {
-    const candidate = completedRuns[index];
-    const removeForCount = index >= CLEANUP_POLICY.maxCompletedRuns;
+  for (const runId of selectedRunIds) {
+    //delete only run directories selected from the explicit scope above
+    const runPaths = getRunPaths(runId, storagePaths.runsRoot);
+    try {
+      await removeRun(runPaths.runRoot, { recursive: true, force: true });
+      removedRunIds.push(runId);
+    } catch (error) {
+      //another cleanup may have removed the selected directory after this operation scanned it
+      if (error?.code === "ENOENT") {
+        removedRunIds.push(runId);
+        continue;
+      }
 
-    if (!candidate.removeForAge && !removeForCount) {
-      continue;
+      //keep failed candidates on disk so a later scoped cleanup can retry them
+      failedRunIds.push(runId);
+      deletionFailures.push({
+        runId,
+        code: error?.code || "CLEANUP_DELETE_FAILED",
+        message: error?.message || "Unable to remove the run directory.",
+      });
     }
-
-    const runPaths = getRunPaths(candidate.runId, runsRoot);
-    await fs.rm(runPaths.runRoot, { recursive: true, force: true });
   }
+
+  return {
+    skipped: false,
+    reason: null,
+    removedRunIds,
+    failedRunIds,
+    deletionFailures,
+  };
 }
 
-async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
+//fail closed for unscoped calls and serialize scoped cleanup by shared root
+async function pruneCompletedRuns(options = {}) {
+  const { sharedRoot = SHARED_ROOT, runIds } = options;
+
+  //refuse destructive cleanup until a caller provides the run IDs it safely owns
+  if (!Array.isArray(runIds)) {
+    return {
+      skipped: true,
+      reason: "OWNERSHIP_SCOPE_REQUIRED",
+      removedRunIds: [],
+      failedRunIds: [],
+      deletionFailures: [],
+    };
+  }
+
+  //share mutation serialization with exact one-run deletion so both operations observe stable storage
+  return enqueueRunDeletion(sharedRoot, () => pruneScopedCompletedRuns(options));
+}
+
+//runs retention independently for each persisted owner scope while preserving legacy ownerless runs
+async function pruneOwnedCompletedRuns({
+  sharedRoot = SHARED_ROOT,
+  now = Date.now,
+  removeRun = fs.rm,
+} = {}) {
+  //resolve all paths from the supplied root so tests and production use the same ownership scan
+  const resolvedSharedRoot = path.resolve(sharedRoot);
+  const runsRoot = path.join(resolvedSharedRoot, "runs");
+  const activeRoot = path.join(resolvedSharedRoot, "active");
+  const currentRunPointerPath = path.join(activeRoot, "current-run.json");
+
+  return enqueueRunDeletion(resolvedSharedRoot, async () => {
+    //load only run ids backed by numeric ownership without fabricating a legacy owner
+    await ensureBaseLayout({ sharedRoot: resolvedSharedRoot, runsRoot, activeRoot });
+    const entries = await fs.readdir(runsRoot, { withFileTypes: true });
+    const runIdsByOwner = new Map();
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isValidRunId(entry.name)) {
+        continue;
+      }
+
+      const meta = await readJsonIfExists(getRunPaths(entry.name, runsRoot).metaPath);
+      if (!hasSafeOwnerScope(meta)) {
+        continue;
+      }
+
+      const ownerUserId = meta.ownerUserId;
+      const runIds = runIdsByOwner.get(ownerUserId) || [];
+      runIds.push(entry.name);
+      runIdsByOwner.set(ownerUserId, runIds);
+    }
+
+    const removedRunIds = [];
+    const failedRunIds = [];
+    const deletionFailures = [];
+    const ownerScopes = [];
+
+    for (const [ownerUserId, runIds] of runIdsByOwner) {
+      try {
+        //reuse the existing selection and deletion mechanics against exactly one owner scope
+        const cleanup = await pruneScopedCompletedRuns({
+          sharedRoot: resolvedSharedRoot,
+          activeRoot,
+          runsRoot,
+          currentRunPointerPath,
+          runIds,
+          now,
+          removeRun,
+        });
+        removedRunIds.push(...cleanup.removedRunIds);
+        failedRunIds.push(...cleanup.failedRunIds);
+        deletionFailures.push(...cleanup.deletionFailures);
+        ownerScopes.push({ ownerUserId, ...cleanup });
+      } catch (error) {
+        //continue with other owners when one scoped cleanup cannot inspect or remove its records
+        const failure = {
+          ownerUserId,
+          code: error?.code || "CLEANUP_FAILED",
+          message: error?.message || "Run cleanup failed.",
+        };
+        deletionFailures.push(failure);
+        ownerScopes.push({
+          ownerUserId,
+          skipped: false,
+          reason: null,
+          removedRunIds: [],
+          failedRunIds: [],
+          deletionFailures: [failure],
+        });
+      }
+    }
+
+    return {
+      skipped: false,
+      reason: null,
+      removedRunIds,
+      failedRunIds,
+      deletionFailures,
+      ownerScopes,
+    };
+  });
+}
+
+async function listRuns({ sharedRoot = SHARED_ROOT, ownerUserId, prune = true } = {}) {
   const resolvedSharedRoot = path.resolve(sharedRoot);
   const activeRoot = path.join(resolvedSharedRoot, "active");
   const runsRoot = path.join(resolvedSharedRoot, "runs");
@@ -1376,7 +1857,9 @@ async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
   const storagePaths = { sharedRoot: resolvedSharedRoot, activeRoot, runsRoot, currentRunPointerPath };
 
   await ensureBaseLayout(storagePaths);
-  await pruneCompletedRuns(storagePaths);
+  if (prune) {
+    await pruneCompletedRuns(storagePaths);
+  }
 
   const currentRunPointer = await readCurrentRunPointer(storagePaths);
   const activeRunId = currentRunPointer?.runId || null;
@@ -1399,6 +1882,16 @@ async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
       continue;
     }
 
+    if (
+      ownerUserId !== undefined &&
+      ownerUserId !== null &&
+      (meta?.ownerUserId === undefined ||
+        meta?.ownerUserId === null ||
+        String(meta.ownerUserId) !== String(ownerUserId))
+    ) {
+      continue;
+    }
+
     const status = normalizeAggregateStatus(
       meta,
       meta?.status || result?.status || task?.status || "queued"
@@ -1416,7 +1909,7 @@ async function listRuns({ sharedRoot = SHARED_ROOT } = {}) {
       testName: meta?.testName || "Untitled Test Run",
       taskType: task?.taskType || meta?.taskType || "unknown",
       status,
-      active: activeRunId === entry.name,
+      active: isHistoryRunActive(entry.name, activeRunId, status),
       totalIterations,
       createdUtc: meta?.createdUtc || task?.createdUtc || null,
       startedUtc: meta?.startedUtc || task?.startedUtc || null,
@@ -1439,14 +1932,20 @@ function runSortTimestamp(run) {
 }
 
 module.exports = {
-  // Keep these older run creators available for the older server routes.
+  //keep these older run creators available for the older server routes.
   createRunRecord,
   createRunRecord2,
   readRun,
+  readRunForOwner,
+  deleteCompletedRun,
   requestRunCancellation,
+  requestRunCancellationForOwner,
   listRuns,
   resolveRunFilePath,
+  resolveRunFilePathForOwner,
   pruneCompletedRuns,
+  pruneOwnedCompletedRuns,
+  selectRunsForRetention,
   getIterationPaths,                       //for run supervisior
   buildIterationRunPointer,
   writeCurrentRunPointer,
@@ -1457,6 +1956,7 @@ module.exports = {
   assertRunStatusTransition,
   readCancellationRequest,
   requestRunCancellation2,
+  requestRunCancellation2ForOwner,
   readCurrentRunPointer,
   isTerminalStatus,
   buildArtifactMap,

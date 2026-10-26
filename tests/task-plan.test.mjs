@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { serializeTaskPlan } from '../client/src/lib/serializeTaskPlan.mjs';
 import parser from '../server/lib/test-script/readTestScript.js';
 
@@ -59,6 +60,7 @@ test('single demo percentage leaves the other axis unspecified for runner defaul
 const text = '  Punctuation: !? + ^ % {ENTER} "quoted" \\ 世界 🧪\tTabbed\nNext\r\nEnd  ';
 const type = { id: 'type', action: 'TYPE', text };
 const click = { id: 'click', action: 'CLICK', target: 'editor', button: 'left', clickCount: 1 };
+const wait = { id: 'wait', action: 'WAIT', delayMs: 1000 };
 const plan = (tasks = [click, type]) => ({ schemaVersion: 'dockvision.user-task-plan.v1', app, tasks });
 const parse = value => parser.readTestScript({ fileName: 'plan.json', content: JSON.stringify(value) });
 function rejects(value, path, stepId = null) {
@@ -70,6 +72,38 @@ function rejects(value, path, stepId = null) {
     return true;
   });
 }
+
+test('accepts WAIT with a positive integer delay', () => {
+  const result = parse(plan([wait]));
+
+  assert.deepEqual(result.tasks[0], {
+    id: 'wait',
+    action: 'WAIT',
+    delayMs: 1000,
+  });
+});
+
+test('WAIT fixture preserves mixed-task order and individual durations', () => {
+  const content = readFileSync(
+    new URL('./fixtures/wait-click-type.json', import.meta.url),
+    'utf8',
+  );
+  const result = parser.readTestScript({ fileName: 'wait-click-type.json', content });
+
+  assert.deepEqual(result.tasks.map(({ id, action }) => ({ id, action })), [
+    { id: 'click-before-wait', action: 'CLICK' },
+    { id: 'type-before-wait', action: 'TYPE' },
+    { id: 'wait-between-text', action: 'WAIT' },
+    { id: 'click-after-wait', action: 'CLICK' },
+    { id: 'type-after-wait', action: 'TYPE' },
+    { id: 'second-wait', action: 'WAIT' },
+    { id: 'click-after-second-wait', action: 'CLICK' },
+    { id: 'type-after-second-wait', action: 'TYPE' },
+  ]);
+  assert.deepEqual(result.tasks.filter(task => task.action === 'WAIT').map(task => task.delayMs),
+    [2000, 1000]);
+  assert.equal(result.settings.stepDelayMs, 0);
+});
 
 test('builder exports canonical JSON that round-trips with order, IDs and literal text intact', () => {
   const drafts = [
@@ -124,12 +158,19 @@ test('rejects malformed JSON with a configuration error', () => {
 });
 
 const invalid = [
+  ['missing WAIT delay', plan([{ id: 'wait', action: 'WAIT' }]), 'tasks[0].delayMs', 'wait'],
+  ['negative WAIT delay', plan([{ ...wait, delayMs: -1 }]), 'tasks[0].delayMs', 'wait'],
+  ['zero WAIT delay', plan([{ ...wait, delayMs: 0 }]), 'tasks[0].delayMs', 'wait'],
+  ['fractional WAIT delay', plan([{ ...wait, delayMs: 1.5 }]), 'tasks[0].delayMs', 'wait'],
+  ['boolean WAIT delay', plan([{ ...wait, delayMs: true }]), 'tasks[0].delayMs', 'wait'],
+  ['string WAIT delay', plan([{ ...wait, delayMs: '1000' }]), 'tasks[0].delayMs', 'wait'],
+  ['WAIT with unsupported text field', plan([{ ...wait, text: 'wrong' }]), 'tasks[0].text', 'wait'],
   ['empty tasks', plan([]), 'tasks'],
   ['duplicate IDs', plan([type, type]), 'tasks[1].id', 'type'],
   ['missing ID', plan([{ action: 'TYPE', text: 'a' }]), 'tasks[0].id'],
   ['empty TYPE', plan([{ ...type, text: '' }]), 'tasks[0].text', 'type'],
   ['nonstring TYPE', plan([{ ...type, text: 42 }]), 'tasks[0].text', 'type'],
-  ['unsupported action', plan([{ ...type, action: 'WAIT' }]), 'tasks[0].action', 'type'],
+  ['unsupported action', plan([{ ...type, action: 'PAUSE' }]), 'tasks[0].action', 'type'],
   ['lowercase action', plan([{ ...type, action: 'type' }]), 'tasks[0].action', 'type'],
   ['TYPE target', plan([{ ...type, target: 'editor' }]), 'tasks[0].target', 'type'],
   ['CLICK text', plan([{ ...click, text: 'a' }]), 'tasks[0].text', 'click'],

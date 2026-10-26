@@ -107,7 +107,10 @@ function createLaunchStore({ sharedRoot = DEFAULT_SHARED_ROOT, io = fs } = {}) {
     error.activeRunId = pointer.runId;
     throw error;
   }
-  async function publish(request, containerId) {
+  async function publish(request, containerId, ownerUserId) {
+    if (ownerUserId === undefined || ownerUserId === null) {
+      throw new LaunchError(401, "NOT_AUTHENTICATED", "Authentication is required.");
+    }
     // Keep IDs compact while retaining enough random entropy to avoid collisions
     // between launches created during the same millisecond.
     const runId = `run-${Date.now()}-${randomBytes(3).toString("hex")}`;
@@ -132,7 +135,7 @@ function createLaunchStore({ sharedRoot = DEFAULT_SHARED_ROOT, io = fs } = {}) {
       } : request.plan,
     };
     const meta = {
-      runId, taskId, testName: request.testName, executionMode: request.executionMode,
+      runId, taskId, ownerUserId, testName: request.testName, executionMode: request.executionMode,
       taskType: task.taskType, status: "queued", createdUtc, updatedUtc: createdUtc,
       startedUtc: null, finishedUtc: null, containerId, runOptions: request.runOptions,
       settings: request.runOptions,

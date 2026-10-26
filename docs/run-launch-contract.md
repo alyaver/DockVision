@@ -5,6 +5,9 @@
 `POST /api/runs/start` and the compatibility URLs `/api/runs/start2` and
 `/api/docker/start-smoke` delegate to the same service. All require the handbook
 request body, including explicit `executionMode: "builtin" | "custom"`.
+All run endpoints also require a current server-side session. New run ownership
+comes from that session and is stored as `ownerUserId` in `meta.json`; client-
+supplied ownership fields are rejected.
 Legacy URLs are supported; inference from old request bodies is not.
 Ticket 8 must update the UI request construction. This change does not implement
 guest execution (Ticket 4), supervision/recovery (Ticket 5), or history (Ticket 7).
@@ -22,7 +25,7 @@ with the Ticket 1 author when merging; do not introduce a parallel validator.
 2. Acquire the process-local admission queue for the shared directory.
 3. Reject an active or indeterminate run without altering its files.
 4. Check the guest container and a fresh, idle agent heartbeat.
-5. Apply the existing terminal-run retention hook.
+5. Request the terminal-run retention hook. Until per-user ownership scope is available, the hook skips destructive cleanup rather than pruning the shared run directory globally.
 6. Write inputs, metadata (including container ID), task, and initial log.
 7. Write a temporary pointer in `active`, then rename it to `current-run.json`.
 8. Return 202 with `{success:true, runId, containerId}`.
@@ -33,6 +36,14 @@ without clearing the previous pointer. Rename behavior is covered using the loca
 Windows filesystem; deployments using different/network filesystems must verify
 their rename guarantees. This is atomic visibility, not a power-loss durability
 guarantee.
+
+## Terminal history retention
+
+When Task 317 provides a safe per-user ownership scope, retention keeps at most 30 terminal runs for that user. A terminal run becomes age-eligible at 720 elapsed hours from its authoritative terminal completion timestamp. Count and age eligibility apply independently. Terminal runs without a valid completion timestamp are preserved and excluded from count ordering until their completion time can be established reliably.
+
+The backend requests the same retention mechanism after terminal completion, before a new run is admitted, once at startup, and once per minute while it remains running. Cleanup runs do not overlap. Each pass groups only Task 317 runs with a persisted positive numeric `ownerUserId` and applies retention independently within that owner scope. Ownerless or malformed legacy records are excluded and preserved. Cleanup failures do not block backend startup, guest recovery, admission, or a persisted terminal result, and a failure for one owner does not prevent another owner scope from being processed.
+
+The authenticated run-history API exposes exact-confirmation deletion of one authorized confirmed terminal run. It derives ownership from the current session, requires the raw confirmation text `CONFIRM`, rejects active, indeterminate, and non-terminal records, and removes that run directory. If `active/current-run.json` still points to the deleted terminal run, deletion clears that stale pointer; a pointer for another run is preserved. Exported copies outside the run directory are preserved.
 
 On Windows, replacement of an existing pointer can fail with `EPERM` on the
 VM-shared directory even when first publication succeeds. `publishPointer` tries
@@ -55,9 +66,20 @@ including queued/running/cancelling, missing records, and inconsistent state.
 Unreadable pointers/records fail closed. Launch admission never declares stale
 work failed or cancels queued work. Ticket 5 owns recovery and final outcomes.
 
+If the guest agent restarts after claiming a task but before publishing its
+`result.json`, the persisted task remains `running`. The restarted agent does not
+re-execute that task because its earlier GUI or uploaded-runner side effects cannot
+be determined safely. It publishes a terminal `failed` result with an interruption
+diagnostic, or `cancelled` when a matching cancellation request already exists.
+An existing terminal result is preserved for the backend supervisor to consume.
+
 The default readiness adapter checks a running container with a resolved ID and
 an idle agent with no run ID. Heartbeat freshness uses host-observed modification
 time and the existing maximum of 60 seconds or three reported heartbeat intervals.
+The guest installer runs the long-lived Python agent under Windows Task Scheduler,
+with restart-on-failure enabled and no execution time limit, so an unexpected agent
+process exit does not leave the current Windows session with a permanently stale
+heartbeat. Reinstalling the guest agent applies these scheduler settings.
 If the container is missing or stopped, admission calls the existing VM startup
 service and returns `409 GUEST_STARTING`, asking the user to retry after boot.
 The confirmation page handles readiness-only 409 responses automatically at
@@ -93,8 +115,11 @@ are preserved; custom JSON does not pass through the built-in validator.
 
 Both modes preserve submitted configuration text in `uploaded-config.json` and
 write `meta.json`, `task.json`, `logs/task.log`, and output directories. Metadata
-includes execution mode, resolved options, input paths, and timestamps for later
-history/supervisor work. Request-supplied `taskType` and `payload` are rejected.
+includes the authenticated owner, execution mode, resolved options,
+input paths, and timestamps for later history/supervisor work. Request-supplied
+`taskType`, `payload`, and ownership fields are rejected. History, status,
+cancellation, and run-file access return only records owned by the authenticated
+user. Legacy ownerless records remain stored but are inaccessible to accounts.
 
 ## Errors and verification
 
@@ -110,3 +135,23 @@ and test malformed input, aliases, concurrency, blocked states, and injected wri
 and rename failures. The readiness adapter is separately tested with a stubbed VM
 status source. No tests start Docker, execute uploaded code, or publish to the live
 guest share. Node's built-in test runner is used; no test dependency was added.
+
+## Account deletion boundary (DOCKV-312)
+
+Account deletion is accepted only after the current password and exact `CONFIRM`
+text are verified. The server records a durable deletion job and changes the
+account to a deletion-restricted state. While that state is active, authenticated
+requests are limited to deletion status/resume and logout; launch admission also
+checks the account state immediately before readiness and publication.
+
+Owned filesystem runs are requested to cancel first. Cleanup removes an owned run
+only after its aggregate status is terminal. Ownerless legacy runs and runs owned
+by another account are preserved. Cleanup is retry-safe for completed run-folder
+removal and records a failed/pending job when a run has not reached a terminal
+state. Existing databases must apply `server/db/migration-001-account-deletion.sql`.
+
+The current implementation does not provide distributed locking across multiple
+backend processes, and it does not prove guest process termination beyond the
+existing durable terminal run state. Deployments must continue to use the
+single-process/shared-root constraint until a stronger cross-process fencing
+mechanism is implemented.
