@@ -200,7 +200,22 @@ DB_USER=postgres
 DB_PASSWORD=your_postgres_password
 DB_NAME=postgres
 ```
-The email settings in `server/.env.example` are optional. You only need them if you want forgot-password emails to send from your machine.
+To enable server-side forgot-password email, configure these values only in the
+untracked `server/.env` file or the deployment secret store:
+
+```env
+EMAIL_HOST=your_smtp_host
+EMAIL_PORT=587
+EMAIL_USER=approved_sending_account@example.com
+EMAIL_PASS=provider_app_password_or_smtp_secret
+CLIENT_URL=https://your-dockvision-application-origin
+```
+
+`EMAIL_PASS` is a credential and must never be committed, copied into browser
+code, returned by an API, or included in logs. `CLIENT_URL` must be a bare
+absolute `http` or `https` application origin (for example,
+`http://localhost:5173` during local development); do not include a path,
+query string, or fragment because the server appends the reset route.
 
 
 ### 3. Create the database tables
@@ -255,7 +270,10 @@ the backend health check should respond at `http://localhost:5000/api/health`
 
 - Start Docker Desktop before using test-run, container, or Windows VM routes.
 - If registration or login fails on a new setup, make sure PostgreSQL is running and that `server/db/schema.sql` has been applied.
-- Forgot-password requests will return a configuration message until the optional `EMAIL_*` values are set.
+- Forgot-password requests return a configuration error until valid server-only
+  `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, and `CLIENT_URL`
+  values are configured. The backend does not use browser-provided mail or
+  origin settings.
 
 
 

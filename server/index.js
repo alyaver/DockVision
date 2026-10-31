@@ -16,6 +16,7 @@ const checkDiskSpace = require("check-disk-space").default;
 const path = require("path");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const { readMailConfiguration } = require("./lib/mailConfig");
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
@@ -80,38 +81,33 @@ app.use(createRunAccessRouter({ requireAuthenticatedUser }));
 app.use(express.json({ limit: "8mb" }));
 app.use("/api/profile", createProfileRouter({ db, requireAuthenticatedUser }));
 
-/**
- * Build the mail transporter only when all required email settings exist.
- *
- * Why:
- * - Forgot-password should not crash the whole backend at startup
- * - Docker/readiness/auth work should still boot even if email is unfinished
- */
+//builds the SMTP transport only from the validated server-side settings so an unsafe reset origin disables delivery.
 function createMailTransporter() {
-  const emailHost = process.env.EMAIL_HOST;
-  const emailPort = Number(process.env.EMAIL_PORT);
-  const emailUser = process.env.EMAIL_USER;
-  const emailPass = process.env.EMAIL_PASS;
+  const mailConfiguration = readMailConfiguration();
 
-  if (!emailHost || !emailPort || !emailUser || !emailPass) {
+  //keeps unrelated backend features available when reset-email configuration is absent or malformed.
+  if (!mailConfiguration) {
     console.warn(
-      "Email transporter not initialized. Missing one or more EMAIL_* environment variables."
+      "Email transporter not initialized. Check EMAIL_* settings and CLIENT_URL."
     );
     return null;
   }
 
   return nodemailer.createTransport({
-    host: emailHost,
-    port: emailPort,
-    secure: emailPort === 465,
+    host: mailConfiguration.host,
+    port: mailConfiguration.port,
+    //uses implicit TLS only for port 465; port 587 uses the provider's STARTTLS negotiation.
+    secure: mailConfiguration.port === 465,
     auth: {
-      user: emailUser,
-      pass: emailPass,
+      user: mailConfiguration.user,
+      pass: mailConfiguration.pass,
     },
   });
 }
 
 const transporter = createMailTransporter();
+//retains the normalized origin and sender that were accepted when the transport was created.
+const mailConfiguration = readMailConfiguration();
 
 /**
  * Health check for the dashboard readiness card.
@@ -276,7 +272,7 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 
-  if (!transporter) {
+  if (!transporter || !mailConfiguration) {
     return res.status(503).json({
       message: "Email service is not configured yet.",
     });
@@ -361,11 +357,11 @@ app.post("/api/forgot-password", async (req, res) => {
       [userId, tokenHash]
     );
 
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
-    const resetLink = `${clientUrl}/set-new-password?token=${rawToken}`;
+    //builds the browser URL from the validated application origin instead of request-controlled host data.
+    const resetLink = `${mailConfiguration.clientUrl}/set-new-password?token=${rawToken}`;
 
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+      from: mailConfiguration.user,
       to: email,
       subject: "Password Reset",
       html: `
