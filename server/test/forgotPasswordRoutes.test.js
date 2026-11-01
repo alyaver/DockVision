@@ -142,6 +142,46 @@ test("unknown and deletion-pending addresses receive the normal acknowledgement 
   assert.equal(fixture.tokens.length, 0);
   assert.equal(fixture.attempts.length, 2);
 });
+//verifies one ip can submit three distinct addresses before the fourth new address reaches the enumeration limit.
+test("distinct-address rate limiting allows the boundary request and rejects the next address", async (t) => {
+  const fixture = await createFixture(t);
+
+  for (const email of ["first@example.com", "second@example.com", "third@example.com"]) {
+    const response = await requestReset(fixture, email);
+    assert.equal(response.status, 200, email);
+    assert.deepEqual(await response.json(), { message: genericMessage }, email);
+  }
+
+  const rejected = await requestReset(fixture, "fourth@example.com");
+
+  assert.equal(rejected.status, 429);
+  assert.deepEqual(await rejected.json(), { message: "Please wait a few minutes before trying again." });
+  //confirms the rejected fourth address is not retained as a new rate-limit attempt.
+  assert.equal(fixture.attempts.length, 3);
+  assert.equal(fixture.messages.length, 0);
+  assert.equal(fixture.tokens.length, 0);
+});
+
+//verifies repeated requests for one address allow three attempts before the fourth triggers the mailbox-spam limit.
+test("repeated-address rate limiting allows the boundary request and rejects the next attempt", async (t) => {
+  const fixture = await createFixture(t);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const response = await requestReset(fixture, "member@example.com");
+    assert.equal(response.status, 200, `attempt ${attempt}`);
+    assert.deepEqual(await response.json(), { message: genericMessage }, `attempt ${attempt}`);
+  }
+
+  const rejected = await requestReset(fixture, "member@example.com");
+
+  assert.equal(rejected.status, 429);
+  assert.deepEqual(await rejected.json(), { message: "Please wait a few minutes before trying again." });
+  //confirms the rejected fourth request is not persisted and cannot advance the repeated-request count.
+  assert.equal(fixture.attempts.length, 3);
+  assert.equal(fixture.messages.length, 0);
+  assert.equal(fixture.tokens.length, 0);
+});
+
 
 test("malformed reset addresses fail before rate-limit storage, lookup, token creation, or delivery", async (t) => {
   //starts with an active fixture account to prove validation short-circuits before account eligibility could matter.

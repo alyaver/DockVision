@@ -225,6 +225,47 @@ prepared, the server deletes that specific token by user and token hash before
 reporting the delivery failure. If that cleanup fails, the server reports a
 server error; retrying the request replaces any prior token for the account.
 
+#### Password-reset email operations and recovery
+
+The committed `server/.env.example` contains placeholders only. Keep the real
+SMTP host, sending-account address, application origin, and `EMAIL_PASS` in
+the ignored `server/.env` file for local development or in the deployment
+secret store. The owner of the sending account is responsible for approving
+its use, rotating or revoking its SMTP credential, and updating the secret
+store without committing the replacement value. Confirm the provider's host,
+port, authentication method, and TLS requirements with that owner before
+deployment. The current server enables implicit TLS when `EMAIL_PORT=465`; a
+provider using port `587` uses Nodemailer's STARTTLS negotiation.
+
+`CLIENT_URL` is the application origin shown in reset links. Use the deployed
+HTTPS origin outside local development, and use `http://localhost:5173` only
+when that is the local client origin. The server rejects a missing or malformed
+mail configuration before rate-limit storage, account lookup, token creation,
+or message submission.
+
+| Request outcome | HTTP response | Operational meaning |
+| --- | --- | --- |
+| Valid registered or unregistered address under normal service | `200` with the generic acknowledgement | Do not infer account existence from the response. Only an active registered account receives a message. |
+| Invalid email/body | `400` | Correct the request; no rate-limit row, reset token, or message is created. |
+| Distinct-address or repeated-address limit reached | `429` | Wait for the existing 15-minute window before retrying; the rejected request is not retained. |
+| Missing or invalid server mail configuration | `503` | Restore the server-only mail settings and restart/redeploy as required by the environment before retrying. |
+| Database failure or failed token-cleanup after transport rejection | `500` | Do not claim delivery. Investigate server diagnostics and database health before retrying. |
+| Mail transport rejection after token preparation | `502` | No delivery is confirmed. The server conditionally deletes the token created by that request using both user and token hash; retry only after the provider issue is resolved. |
+
+If the conditional cleanup after a transport rejection also fails, the token
+may remain until a later reset request replaces the account's prior token. Do
+not manually expose, reuse, or copy a raw reset token from server diagnostics;
+resolve the storage/provider issue and have the user request a fresh link.
+
+Before a release, perform one separately authorized controlled delivery check
+using a team-owned test inbox. Do not record that inbox address, credentials,
+or the issued reset token in committed files. Confirm that the request reaches
+the intended inbox, the link begins with the configured `CLIENT_URL` and uses
+`/set-new-password`, the message says it expires in one hour, the token resets
+the password once, and a second use is rejected. This check requires confirmed
+ownership of the sending account, credential, deployed origin, and test inbox;
+automated tests intentionally use a fake transport instead of sending mail.
+
 
 ### 3. Create the database tables
 

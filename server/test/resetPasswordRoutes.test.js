@@ -15,6 +15,8 @@ async function createFixture(t, {
   expiresAt = new Date(FIXTURE_NOW.getTime() + 1_000),
   queryError,
   queryErrorWhen,
+  onTokenLocked,
+  onTokenLockWait,
 } = {}) {
   //seeds a second account so successful and rolled-back resets can prove they do not change unrelated authentication state.
   const state = {
@@ -33,7 +35,10 @@ async function createFixture(t, {
     ],
   };
   const calls = [];
-  let transactionState;
+  const transactionStates = new Map();
+  const tokenLocks = new Set();
+  const tokenLockWaiters = new Map();
+  let nextClientId = 1;
 
   //copies plain fixture records so rollback can discard every mutation made after BEGIN.
   function copyState(value) {
@@ -44,33 +49,77 @@ async function createFixture(t, {
     };
   }
 
-  //runs transaction queries against an isolated working copy and publishes it only when COMMIT succeeds.
-  async function query(sql, params = []) {
-    calls.push({ sql, params });
+  //releases token-row locks only after the transaction ends so waiting completion attempts observe the committed token state.
+  function releaseTokenLocks(clientId) {
+    const transaction = transactionStates.get(clientId);
+    for (const tokenId of transaction?.lockedTokenIds || []) {
+      tokenLocks.delete(tokenId);
+      const waiters = tokenLockWaiters.get(tokenId) || [];
+      tokenLockWaiters.delete(tokenId);
+      for (const resolve of waiters) resolve();
+    }
+  }
+
+  //waits for the current token owner to finish before a second transaction can inspect the same locked row.
+  async function lockToken(clientId, tokenId) {
+    while (tokenLocks.has(tokenId)) {
+      //signals the test only after the competing request is blocked on the row lock.
+      await onTokenLockWait?.();
+      await new Promise((resolve) => {
+        const waiters = tokenLockWaiters.get(tokenId) || [];
+        waiters.push(resolve);
+        tokenLockWaiters.set(tokenId, waiters);
+      });
+    }
+    tokenLocks.add(tokenId);
+    transactionStates.get(clientId).lockedTokenIds.add(tokenId);
+  }
+
+  //runs each client query in an isolated transaction copy and publishes it only when that client commits.
+  async function query(clientId, sql, params = []) {
+    calls.push({ clientId, sql, params });
     //raises only at the selected operation so the test can verify rollback after earlier mutations have run.
     if (queryError && (!queryErrorWhen || queryErrorWhen(sql, params))) {
       throw queryError;
     }
     if (sql === "BEGIN") {
-      transactionState = copyState(state);
+      transactionStates.set(clientId, {
+        lockedTokenIds: new Set(),
+        state: copyState(state),
+      });
       return { rows: [] };
     }
     if (sql === "ROLLBACK") {
-      transactionState = undefined;
+      releaseTokenLocks(clientId);
+      transactionStates.delete(clientId);
       return { rows: [] };
     }
     if (sql === "COMMIT") {
-      Object.assign(state, transactionState);
-      transactionState = undefined;
+      Object.assign(state, transactionStates.get(clientId).state);
+      releaseTokenLocks(clientId);
+      transactionStates.delete(clientId);
       return { rows: [] };
     }
 
-    const workingState = transactionState;
+    const transaction = transactionStates.get(clientId);
+    let workingState = transaction?.state;
     if (sql.includes("FROM password_reset_tokens") && sql.includes("FOR UPDATE")) {
       //models the database predicate so equality with the database clock is rejected at the expiry boundary.
-      const token = workingState.tokens.find((candidate) => (
-        candidate.tokenHash === params[0] && candidate.expiresAt > FIXTURE_NOW
+      const candidate = state.tokens.find((token) => (
+        token.tokenHash === params[0] && token.expiresAt > FIXTURE_NOW
       ));
+      if (!candidate) return { rows: [] };
+
+      await lockToken(clientId, candidate.id);
+      //refreshes the waiting transaction after lock acquisition so it sees a competing request's committed token deletion.
+      transaction.state = copyState(state);
+      workingState = transaction.state;
+      const token = workingState.tokens.find((record) => (
+        record.tokenHash === params[0] && record.expiresAt > FIXTURE_NOW
+      ));
+      if (!token) return { rows: [] };
+      //holds the owner only after the row is locked so a parallel request must wait rather than read the same token.
+      await onTokenLocked?.();
       return {
         rows: token ? [{
           password_reset_token_id: token.id,
@@ -100,7 +149,12 @@ async function createFixture(t, {
     },
     async connect() {
       //returns a per-request client that exposes only the transaction behavior exercised by reset completion.
-      return { query, release() {} };
+      const clientId = nextClientId;
+      nextClientId += 1;
+      return {
+        query: (sql, params) => query(clientId, sql, params),
+        release() {},
+      };
     },
   };
   const app = express();
@@ -197,6 +251,43 @@ test("reset completion rejects a consumed token without changing committed state
   assert.equal(secondResponse.status, 400);
   assert.deepEqual(await secondResponse.json(), { message: "Invalid or expired token" });
   assert.equal(JSON.stringify(fixture.state), committedState);
+});
+
+//verifies concurrent completion attempts serialize on the token row so only one request can consume one reset secret.
+test("concurrent reset completion allows exactly one token consumer", async (t) => {
+  let releaseFirstLock;
+  let signalFirstLock;
+  let signalSecondWait;
+  const firstLockHeld = new Promise((resolve) => { signalFirstLock = resolve; });
+  const secondRequestWaiting = new Promise((resolve) => { signalSecondWait = resolve; });
+  const fixture = await createFixture(t, {
+    //pauses the owner after FOR UPDATE so the other request must contend for the same row lock.
+    onTokenLocked: async () => {
+      signalFirstLock();
+      await new Promise((resolve) => { releaseFirstLock = resolve; });
+    },
+    //signals that the competing request reached the simulated lock instead of merely starting an HTTP request.
+    onTokenLockWait: () => signalSecondWait(),
+  });
+
+  const firstRequest = resetPassword(fixture, { token: RESET_TOKEN, newPassword: NEW_PASSWORD });
+  await firstLockHeld;
+  const secondRequest = resetPassword(fixture, { token: RESET_TOKEN, newPassword: "AnotherPassword3!" });
+  await secondRequestWaiting;
+  releaseFirstLock();
+
+  const responses = await Promise.all([firstRequest, secondRequest]);
+  const responseBodies = await Promise.all(responses.map((response) => response.json()));
+
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 400]);
+  assert.equal(responseBodies.filter((body) => body.message === "Password reset successful").length, 1);
+  assert.equal(responseBodies.filter((body) => body.message === "Invalid or expired token").length, 1);
+  assert.equal(await bcrypt.compare(NEW_PASSWORD, fixture.state.users[0].passwordHash), true);
+  assert.equal(fixture.state.tokens.some((token) => token.id === 41), false);
+  assert.equal(fixture.state.sessions.filter((session) => session.userId === 7).length, 0);
+  //proves the second transaction reached the lock query but could not perform a second password update.
+  assert.equal(fixture.calls.filter((call) => call.sql.includes("FOR UPDATE")).length, 2);
+  assert.equal(fixture.calls.filter((call) => call.sql.includes("UPDATE users")).length, 1);
 });
 
 //verifies a mutation-stage database failure rolls back all prior password, session, and token work.
