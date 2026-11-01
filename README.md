@@ -217,6 +217,14 @@ absolute `http` or `https` application origin (for example,
 `http://localhost:5173` during local development); do not include a path,
 query string, or fragment because the server appends the reset route.
 
+Forgot-password delivery is acknowledged only after the configured mail
+transport accepts the message. Missing configuration returns a service error,
+and database or transport failures return a non-confirming error without
+revealing account existence. If mail submission fails after a reset token is
+prepared, the server deletes that specific token by user and token hash before
+reporting the delivery failure. If that cleanup fails, the server reports a
+server error; retrying the request replaces any prior token for the account.
+
 
 ### 3. Create the database tables
 

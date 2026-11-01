@@ -12,6 +12,15 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
 }
 
+//logs only stable error metadata so transport or database messages cannot leak reset secrets or provider details.
+function logSafeFailure(label, error) {
+  //keeps diagnostics actionable with an error class and code while excluding potentially sensitive message content.
+  console.error(label, {
+    code: typeof error?.code === "string" ? error.code : undefined,
+    name: typeof error?.name === "string" ? error.name : "Error",
+  });
+}
+
 //creates the existing reset-request endpoint with injected storage and mail dependencies for isolated verification.
 function createForgotPasswordRouter({ db, transporter, mailConfiguration }) {
   if (!db || typeof db.query !== "function") {
@@ -33,6 +42,7 @@ function createForgotPasswordRouter({ db, transporter, mailConfiguration }) {
       });
     }
 
+    //stops before persistence so an unavailable mail service cannot leave a reset token that was never deliverable.
     if (!transporter || !mailConfiguration) {
       return res.status(503).json({ message: "Email service is not configured yet." });
     }
@@ -104,22 +114,40 @@ function createForgotPasswordRouter({ db, transporter, mailConfiguration }) {
 
       //uses only the validated server-side origin and never request host data when building the browser reset link.
       const resetLink = `${mailConfiguration.clientUrl}/set-new-password?token=${rawToken}`;
-      await transporter.sendMail({
-        from: mailConfiguration.user,
-        to: email,
-        subject: "Password Reset",
-        html: `
-          <p>Click the link below to reset your password. It expires in 1 hour.</p>
-          <a href="${resetLink}">${resetLink}</a>
-          <p>If you did not request this, you can safely ignore this email.</p>
-        `,
-      });
+      try {
+        await transporter.sendMail({
+          from: mailConfiguration.user,
+          to: email,
+          subject: "Password Reset",
+          html: `
+            <p>Click the link below to reset your password. It expires in 1 hour.</p>
+            <a href="${resetLink}">${resetLink}</a>
+            <p>If you did not request this, you can safely ignore this email.</p>
+          `,
+        });
+      } catch (error) {
+        //removes only this request's digest so a concurrent retry cannot lose its newer reset token.
+        try {
+          await db.query(
+            "DELETE FROM password_reset_tokens WHERE user_id = $1 AND token_hash = $2",
+            [userId, tokenHash]
+          );
+        } catch (cleanupError) {
+          //returns a non-confirming server failure when cleanup cannot prove the prepared token was removed.
+          logSafeFailure("PASSWORD RESET TOKEN CLEANUP ERROR", cleanupError);
+          return res.status(500).json({ message: "Server error. Please try again." });
+        }
+
+        //does not treat a rejected transport request as proof that delivery occurred.
+        logSafeFailure("PASSWORD RESET EMAIL DELIVERY ERROR", error);
+        return res.status(502).json({ message: "Unable to send reset email. Please try again." });
+      }
 
       //returns the same normal-service message only after the transport accepts the delivery request.
       return genericResponse();
     } catch (error) {
       //does not include account, token, mail, or configuration details in a storage or transport failure response.
-      console.error("FORGOT PASSWORD SERVER ERROR:", error);
+      logSafeFailure("FORGOT PASSWORD SERVER ERROR", error);
       return res.status(500).json({ message: "Server error. Please try again." });
     }
   });
