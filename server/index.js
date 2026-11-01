@@ -17,6 +17,8 @@ const path = require("path");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const { readMailConfiguration } = require("./lib/mailConfig");
+//keeps reset-request behavior independently testable while the main server supplies live dependencies.
+const { createForgotPasswordRouter } = require("./routes/ForgotPasswordRoutes");
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
@@ -51,13 +53,6 @@ const launch = createLaunchService({
     }
   },
 });
-
-// Limit the forgot-password surface in two directions:
-// - many distinct email lookups from one IP (enumeration)
-// - repeated requests for the same email from one IP (spamming)
-const RESET_REQUEST_WINDOW_MINUTES = 15;
-const MAX_UNIQUE_EMAILS_PER_IP = 3;
-const MAX_RESET_REQUESTS_PER_EMAIL_PER_IP = 3;
 
 /**
  * Single backend policy:
@@ -250,136 +245,8 @@ app.get("/api/storage/space", async (req, res) => {
   }
 });
 
-/**
- * Forgot-password endpoint.
- *
- * Note:
- * - This is intentionally in the single backend entry.
- * - Reset link now points to the normalized frontend route:
- *   /set-new-password?token=...
- */
-app.post("/api/forgot-password", async (req, res) => {
-  // Normalize user input before any lookup or rate-limit accounting so the
-  // same address is treated consistently across requests.
-  const rawEmail = req.body?.email;
-  const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
-  const genericResponse = () =>
-    res.status(200).json({ message: "If that email is registered, a reset link has been sent." });
-
-  if (!email) {
-    return res.status(400).json({
-      message: "Email is required.",
-    });
-  }
-
-  if (!transporter || !mailConfiguration) {
-    return res.status(503).json({
-      message: "Email service is not configured yet.",
-    });
-  }
-
-  // Prefer the forwarded IP when present so deployments behind a proxy can
-  // still rate limit by client origin.
-  const ipAddress =
-    req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
-    req.socket.remoteAddress ||
-    "unknown";
-
-  try {
-    const rateLimitResult = await db.query(
-      `SELECT COUNT(DISTINCT email)::int AS unique_email_count
-       FROM password_reset_request_attempts
-       WHERE ip_address = $1
-         AND requested_at > CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 minute')`,
-      [ipAddress, RESET_REQUEST_WINDOW_MINUTES]
-    );
-
-    const uniqueEmailCount = rateLimitResult.rows[0].unique_email_count;
-
-    const repeatedEmailResult = await db.query(
-      `SELECT COUNT(*)::int AS request_count
-       FROM password_reset_request_attempts
-       WHERE ip_address = $1
-          AND email = $2
-         AND requested_at > CURRENT_TIMESTAMP - ($3::int * INTERVAL '1 minute')`,
-      [ipAddress, email, RESET_REQUEST_WINDOW_MINUTES]
-    );
-
-    const repeatedEmailCount = repeatedEmailResult.rows[0].request_count;
-
-    if (uniqueEmailCount >= MAX_UNIQUE_EMAILS_PER_IP && repeatedEmailCount === 0) {
-      return res.status(429).json({
-        message: "Please wait a few minutes before trying again.",
-      });
-    }
-
-    if (repeatedEmailCount >= MAX_RESET_REQUESTS_PER_EMAIL_PER_IP) {
-      return res.status(429).json({
-        message: "Please wait a few minutes before trying again.",
-      });
-    }
-
-    await db.query(
-      `INSERT INTO password_reset_request_attempts (email, ip_address)
-       VALUES ($1, $2)`,
-      [email, ipAddress]
-    );
-
-    // TODO: Re-enable DB lookup when forgot-password is fully wired.
-    // Example:
-    // const result = await db.query("SELECT user_id FROM users WHERE email = $1", [email]);
-    // if (result.rows.length === 0) {
-    //   return res.status(404).json({ message: "No account found with that email." });
-    // }
-
-   const result = await db.query(
-      "SELECT user_id FROM users WHERE email = $1",
-      [email]
-    );
-
-    if (result.rows.length === 0) {
-      return genericResponse();
-    }
-
-    const userId = result.rows[0].user_id;
-
-    await db.query(
-      "DELETE FROM password_reset_tokens WHERE user_id = $1",
-      [userId]
-    );
-
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-
-    await db.query(
-      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
-       VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP)`,
-      [userId, tokenHash]
-    );
-
-    //builds the browser URL from the validated application origin instead of request-controlled host data.
-    const resetLink = `${mailConfiguration.clientUrl}/set-new-password?token=${rawToken}`;
-
-    await transporter.sendMail({
-      from: mailConfiguration.user,
-      to: email,
-      subject: "Password Reset",
-      html: `
-        <p>Click the link below to reset your password. It expires in 1 hour.</p>
-        <a href="${resetLink}">${resetLink}</a>
-        <p>If you did not request this, you can safely ignore this email.</p>
-      `,
-    });
-
-    return genericResponse();
-  } catch (error) {
-    console.error("FORGOT PASSWORD SERVER ERROR:", error);
-
-    return res.status(500).json({
-      message: "Server error. Please try again.",
-    });
-  }
-});
+//mounts the established public URL without letting request code choose its database, mail transport, or origin.
+app.use("/api/forgot-password", createForgotPasswordRouter({ db, transporter, mailConfiguration }));
 
 /**
  * Defensive guard:
