@@ -63,6 +63,7 @@ class VmAgentLifecycleTest(unittest.TestCase):
             "createdUtc": "2026-10-04T00:00:00Z",
             "payload": {} if payload is None else payload,
         }
+        Path(self.context["resultPath"]).unlink(missing_ok=True)
         # Put the task in this temporary run folder for the agent to read.
         runner.write_json_atomically(Path(self.context["taskPath"]), task)
         return task
@@ -726,9 +727,9 @@ class VmAgentLifecycleTest(unittest.TestCase):
         }
         runner.write_json_atomically(Path(self.context["resultPath"]), existing_result)
 
-        self.assertFalse(runner.process_queued_active_task(self.shared_root))
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
         self.assertEqual(self.read_json(Path(self.context["resultPath"])), existing_result)
-        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "running")
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
 
     def test_bounded_agent_loop_claims_and_completes_one_noop_task(self) -> None:
         self.write_task(task_type="noop")
@@ -888,6 +889,90 @@ class VmAgentLifecycleTest(unittest.TestCase):
             runner.resolve_notepad_file_path("nested/proof.txt", file_dir=artifacts_root),
             artifacts_root / "proof.txt",
         )
+    def test_terminal_result_finalizes_queued_task_without_execution(self):
+        # verify that a queued task with an existing terminal result is finalized without execution
+        task = self.write_task()
+        result_path = Path(self.context["resultPath"])
+        existing = runner.build_active_result(self.context, task, "failed", "previous failure")
+        runner.write_json_atomically(result_path, existing)
+        original_result = result_path.read_bytes()
+        executer = Mock()
+        self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executer))
+        persisted = self.read_json(Path(self.context["taskPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(persisted["status"], "failed")
+        self.assertTrue(persisted["completedUtc"])
+        self.assertEqual(result_path.read_bytes(), original_result)
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(heartbeat["agent"]["runId"], "")
+        self.assertFalse(runner.process_queued_active_task(self.shared_root, executor=executer))
+        executer.assert_not_called()
+    def test_logging_failure_prserves_execution_failure(self):
+        # verify that a failure to write the result does not mask the execution failure
+        task = self.write_task()
+        original_open = Path.open
+        log_paths = {self.shared_root / "agent-install-log.txt", Path(self.context["taskLogPath"]),}
+        def failing_log_open(path, *args, **kwargs):
+            if path in log_paths:
+                raise PermissionError(f"log unavailable")
+            return original_open(path, *args, **kwargs)
+        executor = Mock(side_effect=RuntimeError("execution failed"))
+        with patch.object(Path, "open", new=failing_log_open), patch.object(runner.sys, "stderr"):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        executor.assert_called_once()
+        result = self.read_json(Path(self.context["resultPath"]))
+        task = self.read_json(Path(self.context["taskPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["message"], "execution failed")
+        self.assertEqual(result["details"]["errorType"], "RuntimeError")
+        self.assertTrue(result["artifactsFinalized"])
+        self.assertEqual(task["status"], "failed")
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(heartbeat["agent"]["runId"], "")
+    def test_existing_directory_error_183_does_not_block_execution(self):
+        # verify that a failure to create the artifacts directory due to an existing directory does not block execution
+        task = self.write_task()
+        original_mkdir = Path.mkdir
+        executor = Mock(return_value={"status": "completed"})
+        def shared_mkdir(directory, *args, **kwargs):
+            if directory == self.run_root:
+                raise FileExistsError(17, "Already exists", str(directory), 183)
+            return original_mkdir(directory, *args, **kwargs)
+        with patch.object(Path, "mkdir", new=shared_mkdir):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        executor.assert_called_once()
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
+        self.assertEqual(self.read_json(Path(self.context["resultPath"]))["status"], "completed")
+    def test_directory_helper_preserves_real_errors(self):
+        # verify that a failure to create the artifacts directory due to a real error is preserved
+        occupied = self.run_root / "occupied"
+        occupied.write_text("keep this", encoding="utf-8")
+        with self.assertRaises(OSError):
+            runner.ensure_directory(occupied)
+        self.assertEqual(occupied.read_text(encoding="utf-8"), "keep this")
+        with patch.object(Path, "mkdir", side_effect=PermissionError("denied")):
+            with self.assertRaises(PermissionError):
+                runner.ensure_directory(self.run_root / "denied")
+    def test_initialization_failure_is_terminal_without_replay(self):
+        # verify that a failure to initialize the run context is terminal and does not allow replay
+        self.write_task()
+        executor = Mock()
+        with patch.object(runner, "ensure_run_output_layout", side_effect=PermissionError("initialization failed")):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        task = self.read_json(Path(self.context["taskPath"]))
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(task["status"], "failed")
+        self.assertTrue(task["completedUtc"])
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["finishedUtc"])
+        self.assertEqual(result["details"]["errorType"], "PermissionError")
+        self.assertEqual(result["message"], "initialization failed")
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(heartbeat["agent"]["runId"], "")
+        self.assertFalse(runner.process_queued_active_task(self.shared_root, executor=executor))
+        executor.assert_not_called()
     @contextmanager
     def mocked_uploaded_process(self, *, stdout, stderr="", exit_code=0):
         """Return a mock process that simulates an uploaded runner execution."""
