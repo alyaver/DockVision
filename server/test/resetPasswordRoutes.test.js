@@ -128,6 +128,11 @@ async function createFixture(t, {
         }] : [],
       };
     }
+    if (sql.includes("SELECT password_hash") && sql.includes("FROM users")) {
+      //returns the transaction-local hash so same-password checks observe the state protected by the token lock.
+      const user = workingState.users.find((candidate) => candidate.userId === params[0]);
+      return { rows: user ? [{ password_hash: user.passwordHash }] : [] };
+    }
     if (sql.includes("UPDATE users") && sql.includes("password_hash")) {
       workingState.users.find((user) => user.userId === params[1]).passwordHash = params[0];
       return { rows: [], rowCount: 1 };
@@ -214,6 +219,40 @@ test("reset completion rejects expired tokens at and after the expiry boundary",
     //confirms completion uses the same strict expiry predicate as reset validation.
     assert.match(fixture.calls.find((call) => call.sql.includes("FOR UPDATE")).sql, /expires_at > CURRENT_TIMESTAMP/);
   }
+});
+
+//verifies a reset cannot replace the stored hash with an equivalent bcrypt hash for the same password.
+test("reset completion rejects the current password without consuming the reset token", async (t) => {
+  //captures durable state before rejection so every protected side effect can be compared afterward.
+  const fixture = await createFixture(t);
+  const initialState = JSON.stringify(fixture.state);
+
+  const rejectedResponse = await resetPassword(fixture, {
+    token: RESET_TOKEN,
+    newPassword: "OldPassword1!",
+  });
+
+  assert.equal(rejectedResponse.status, 400);
+  assert.deepEqual(await rejectedResponse.json(), {
+    message: "New password must be different from your current password",
+  });
+  //proves the rollback left the password, sessions, and token available for a different replacement.
+  assert.equal(JSON.stringify(fixture.state), initialState);
+  assert.equal(fixture.calls.some((call) => call.sql.includes("UPDATE users")), false);
+  assert.equal(fixture.calls.some((call) => call.sql.includes("DELETE FROM sessions")), false);
+  assert.equal(fixture.calls.some((call) => call.sql.includes("DELETE FROM password_reset_tokens")), false);
+  assert.equal(fixture.calls.at(-1).sql, "ROLLBACK");
+
+  //uses the same token with a different strong password to prove rejection does not consume the link.
+  const retryResponse = await resetPassword(fixture, {
+    token: RESET_TOKEN,
+    newPassword: NEW_PASSWORD,
+  });
+
+  assert.equal(retryResponse.status, 200);
+  assert.equal(await bcrypt.compare(NEW_PASSWORD, fixture.state.users[0].passwordHash), true);
+  assert.equal(fixture.state.tokens.some((token) => token.id === 41), false);
+  assert.equal(fixture.state.sessions.filter((session) => session.userId === 7).length, 0);
 });
 
 //verifies a token immediately before expiry updates one password, invalidates its sessions, and consumes only that token.

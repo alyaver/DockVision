@@ -17,6 +17,7 @@ import {
 import '../SetNewPassword.css';
 import '../NavBar.css';
 
+//renders token validation, password-strength guidance, and reset completion for one emailed reset link.
 const SetNewPassword = () => {
   const [isValid, setIsValid] = useState(null);
   const [newPassword, setNewPassword] = useState('');
@@ -26,12 +27,14 @@ const SetNewPassword = () => {
   const [loading, setLoading] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  //derives all visible strength feedback from the same shared rules used by registration.
   const { checks: passwordChecks, score: passwordScore, level: passwordLevel } = getPasswordStrength(newPassword);
   const passwordRules = getPasswordRules(newPassword);
   const isPasswordValid = passwordRules.every((rule) => rule.valid);
   const isConfirmationValid = confirmPassword === newPassword;
   const strengthBar = getStrengthBarPresentation(passwordScore);
 
+  //validates the URL token before exposing the form so expired or consumed links cannot be submitted.
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const token = urlParams.get('token');
@@ -42,6 +45,7 @@ const SetNewPassword = () => {
       return;
     }
 
+    //asks the backend because token validity depends on server-side expiry and consumption state.
     fetch(`/api/auth/reset/validate?token=${token}`)
       .then(res => res.json())
       .then(data => {
@@ -58,19 +62,23 @@ const SetNewPassword = () => {
       });
   }, []);
 
- const handleSetPassword = async () => {
+  //submits a confirmed, locally valid replacement password to the server-owned reset flow.
+  const handleSetPassword = async () => {
     setError('');
 
+    //stops mismatched values before a reset request can be made.
     if (newPassword !== confirmPassword) {
       setError('Passwords do not match');
       return;
     }
 
+    //keeps browser feedback immediate while the server remains the authoritative password validator.
     if (!isPasswordValid) {
       setError('Please meet all password requirements.');
       return;
     }
 
+    //reads the original link token only when a valid form is ready for submission.
     const token = new URLSearchParams(window.location.search).get('token');
     setLoading(true);
 
@@ -135,6 +143,7 @@ const SetNewPassword = () => {
             <h1 className="set-new-password-heading">Set New Password</h1>
             <div className="set-new-password-info-fields">
               <h2 className="value-text">New Password</h2>
+              {/*wraps the field so its visibility toggle can sit inside the input without covering typed text.*/}
               <div className="set-new-password-input-wrapper">
                 <input
                   className="set-new-password-value-box"
@@ -151,13 +160,17 @@ const SetNewPassword = () => {
                 <button
                   type="button"
                   className="set-new-password-eye-button"
-                  onClick={() => setShowNewPassword((previous) => !previous)}
+                  onClick={() => {
+                    //keeps new-password visibility independent from confirmation visibility.
+                    setShowNewPassword((previous) => !previous);
+                  }}
                   disabled={loading}
                   aria-label={showNewPassword ? 'Hide new password' : 'Show new password'}
                 >
                   {showNewPassword ? <FiEyeOff /> : <FiEye />}
                 </button>
               </div>
+              {/*renders the same progress segments, score, and requirement list used on registration.*/}
               <div className="set-new-password-strength-checker">
                 {newPassword.length > 0 && (
                   <>
@@ -216,6 +229,7 @@ const SetNewPassword = () => {
                 </div>
               )}
               <h2 className="value-text">Confirm New Password</h2>
+              {/*uses a separate wrapper and state value so confirmation visibility does not expose the first field.*/}
               <div className="set-new-password-input-wrapper">
                 <input
                   className="set-new-password-value-box"
@@ -232,7 +246,10 @@ const SetNewPassword = () => {
                 <button
                   type="button"
                   className="set-new-password-eye-button"
-                  onClick={() => setShowConfirmPassword((previous) => !previous)}
+                  onClick={() => {
+                    //toggles only the confirmation value while preserving the field contents.
+                    setShowConfirmPassword((previous) => !previous);
+                  }}
                   disabled={loading}
                   aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
                 >

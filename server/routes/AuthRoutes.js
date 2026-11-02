@@ -495,6 +495,30 @@ module.exports = function authRoutes(db, { deletionService } = {}) {
         return res.status(400).json({ message: "Invalid or expired token" });
       }
 
+      //compares against the stored hash so the reset cannot preserve the user's current password.
+      const currentPasswordResult = await client.query(
+        `SELECT password_hash
+         FROM users
+         WHERE user_id = $1`,
+        [record.user_id]
+      );
+
+      //fails closed because a token without a current user cannot safely complete a reset.
+      if (currentPasswordResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+        return res.status(400).json({ message: "Invalid or expired token" });
+      }
+
+      //uses bcrypt against the stored hash so the raw current password never leaves server storage.
+      if (await bcrypt.compare(newPassword, currentPasswordResult.rows[0].password_hash)) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+        return res.status(400).json({
+          message: "New password must be different from your current password",
+        });
+      }
+
       const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
 
       await client.query(

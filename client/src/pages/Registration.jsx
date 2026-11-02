@@ -25,6 +25,7 @@ export default function Registration({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
+  //uses the shared helper so registration and reset-password strength feedback cannot drift.
   const { checks: pwChecks, score: pwScore, level: pwLevel } = getPasswordStrength(password);
   const strengthBar = getStrengthBarPresentation(pwScore);
 
@@ -48,6 +49,7 @@ export default function Registration({
     },
   ]; 
 
+  //uses the same blocking rules that the reset-password page uses before either form can submit.
   const passRules = getPasswordRules(password);
 
   const confirmPassRules = [
@@ -219,7 +221,8 @@ export default function Registration({
               </button>
             </div>
 
-           <div className="password-strength-checker">
+            {/*renders the shared strength score and each passed requirement while the user enters a password.*/}
+            <div className="password-strength-checker">
               {password.length > 0 && (
                 <>
                   <div className="strength-bar-track">
