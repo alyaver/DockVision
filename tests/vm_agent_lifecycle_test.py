@@ -446,30 +446,65 @@ class VmAgentLifecycleTest(unittest.TestCase):
             )
         self.assertEqual(checks, 2)
 
-    def test_notepad_window_is_closed_after_cancellation_or_automation_failure(self) -> None:
-        class FixtureWindow:
-            def __init__(self) -> None:
-                self.close_calls = 0
+    def test_notepad_cleanup_precedes_terminal_publication(self) -> None:
+        # The cleanup callback must run before the result is published.
+        cases = (
+            (None, None, "completed"),
+            (RuntimeError("execution failed"), None, "failed"),
+            (runner.AgentTaskCancelled("cancelled"), None, "cancelled"),
+            (runner.AgentTaskTimedOut("timed out"), None, "failed"),
+            (RuntimeError("execution failed"), OSError("cleanup failed"), "failed"),
+            (None, OSError("cleanup failed"), "failed"),
+        )
+        for failure, cleanup_error, expected_status in cases:
+            with self.subTest(failure=failure, cleanup_error=cleanup_error):
+                self.write_task()
+                application = Mock()
+                application.is_process_running.side_effect = [True, False]
+                application.kill.side_effect = cleanup_error
+                original_write_result = runner.write_active_result
+                def execute(plan, **kwargs):
+                    # The opened_app_callback must run before the result is published.
+                    kwargs["opened_app_callback"](application)
+                    if failure is not None:
+                        raise failure
+                    return {"status": "completed"}
+                def publish(context, result):
+                    # The result is published after the cleanup callback runs.
+                    application.kill.assert_called_once_with(soft=False)
+                    return original_write_result(context, result)
+                with patch.object(runner, "_execute_notepad_plan", side_effect=execute), patch.object(runner, "write_active_result", side_effect=publish), patch.object(runner.sys, "stderr"):
+                    self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=lambda *_: runner.execute_notepad_plan({"tasks": []})))
 
-            def close(self) -> None:
-                self.close_calls += 1
+                task = self.read_json(Path(self.context["taskPath"]))
+                result = self.read_json(Path(self.context["resultPath"]))
+                heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+                self.assertEqual(task["status"], expected_status)
+                self.assertTrue(task["completedUtc"])
+                self.assertEqual(result["status"], expected_status)
+                self.assertTrue(result["finishedUtc"])
+                self.assertEqual(heartbeat["agent"]["status"], "idle")
+                self.assertEqual(heartbeat["agent"]["runId"], "")
+                if failure is not None:
+                    self.assertEqual(result["message"], str(failure))
+                elif cleanup_error is not None:
+                    self.assertIn("cleanup failed", result["message"])
 
-        for failure in (runner.AgentTaskCancelled("fixture cancellation"), RuntimeError("fixture failure")):
-            window = FixtureWindow()
-            original_execute = runner._execute_notepad_plan
+    def test_notepad_startup_failure_cleans_up_owned_process(self):
+        for failing_stage in ("start", "window"):
+            with self.subTest(failing_stage=failing_stage):
+                application = Mock()
+                application.is_process_running.side_effect = [True, False]
+                getattr(application, failing_stage).side_effect = RuntimeError("startup failed")
+                pywinauto = Mock(Application=Mock(return_value=application))
 
-            def fixture_execute(*args, **kwargs):
-                kwargs["opened_window_callback"](window)
-                raise failure
+                def execute(plan, **kwargs):
+                    return runner.open_app({}, 1, opened_app_callback=kwargs["opened_app_callback"])
 
-            runner._execute_notepad_plan = fixture_execute
-            try:
-                with self.assertRaises(type(failure)):
-                    runner.execute_notepad_plan({"tasks": []})
-            finally:
-                runner._execute_notepad_plan = original_execute
-
-            self.assertEqual(window.close_calls, 1)
+                with patch.dict("sys.modules", {"pywinauto": pywinauto}), patch.object(runner, "_execute_notepad_plan", side_effect=execute):
+                    with self.assertRaisesRegex(RuntimeError, "startup failed"):
+                        runner.execute_notepad_plan({"tasks": []})
+                application.kill.assert_called_once_with(soft=False)
 
     def test_terminate_child_process_tree_uses_windows_taskkill(self) -> None:
         class FixtureProcess:

@@ -45,6 +45,7 @@ import socket
 import subprocess
 import sys
 import time
+import tempfile
 from ctypes import wintypes
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
@@ -140,8 +141,8 @@ NOTEPAD_TARGETS["notepad.helpMenu"] = NOTEPAD_TARGETS["helpMenu"]
 def ensure_directory(directory: Path) -> None:
     try:
         directory.mkdir(parents=True, exist_ok=True)
-    except FileExistsError:
-        with os.scandir(directory):
+    except (FileExistsError, FileNotFoundError):
+        with tempfile.TemporaryFile(dir=directory):
             pass  # directory exists and is accessible
 
 
@@ -286,11 +287,11 @@ def read_json_if_present(path: Path) -> dict[str, Any] | None:
     """Read an optional JSON object; reject empty, scalar, and array payloads."""
 
     # a missing or blank optional file means there is no active value to process
-    if not path.is_file():
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            raw = handle.read().strip()
+    except FileNotFoundError:
         return None
-
-    with path.open("r", encoding="utf-8-sig") as handle:
-        raw = handle.read().strip()
 
     if not raw:
         return None
@@ -2097,9 +2098,9 @@ def open_app(
     timeout_seconds: int,
     file_dir: Path | None = None,
     abort_check: Callable[[], None] | None = None,
-    opened_window_callback: Callable[[Any], None] | None = None,
+    opened_app_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
-    from pywinauto import Application, Desktop
+    from pywinauto import Application
 
     executable = str(step.get("executable") or "notepad.exe")
     file_name = step.get("fileName")
@@ -2124,9 +2125,11 @@ def open_app(
 
     if abort_check is not None:
         abort_check()
-    Application(backend="uia").start(command_line)
-
-    window_spec = Desktop(backend="uia").window(title_re=title_regex)
+    application = Application(backend="uia")
+    if opened_app_callback is not None:
+        opened_app_callback(application)
+    application.start(command_line)
+    window_spec = application.window(title_re=title_regex)
     deadline = time.monotonic() + max(timeout_seconds, 1)
     window = None
     last_error: Exception | None = None
@@ -2147,8 +2150,6 @@ def open_app(
     if window is None:
         detail = f": {type(last_error).__name__}: {last_error}" if last_error is not None else ""
         raise RuntimeError(f"Notepad window did not become visible and ready within {timeout_seconds} seconds{detail}")
-    if opened_window_callback is not None:
-        opened_window_callback(window)
 
     bounds = step.get("windowBounds") or {}
     if bounds:
@@ -2209,7 +2210,7 @@ def _execute_notepad_plan(
     screenshot_name: str | None = None,
     capture_screenshot: bool | None = None,
     abort_check: Callable[[], None] | None = None,
-    opened_window_callback: Callable[[Any], None] | None = None,
+    opened_app_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     from pywinauto import mouse
     from pywinauto.keyboard import send_keys
@@ -2240,7 +2241,7 @@ def _execute_notepad_plan(
         timeout_seconds,
         file_dir=file_dir,
         abort_check=check_abort,
-        opened_window_callback=opened_window_callback,
+        opened_app_callback=opened_app_callback,
     )
     active_window = opened["window"]
     check_abort()
@@ -2391,12 +2392,13 @@ def execute_notepad_plan(
 ) -> dict[str, Any]:
     """Run a plan and close only its run-owned Notepad window after a failure."""
 
-    # remember the window opened for this plan so error cleanup cannot close an unrelated Notepad window
-    opened_window: Any | None = None
+    # remember the application opened for this plan so error cleanup cannot close an unrelated Notepad window
+    opened_app: Any | None = None
+    execution_failed = False
 
-    def remember_opened_window(window: Any) -> None:
-        nonlocal opened_window
-        opened_window = window
+    def remember_opened_window(application: Any) -> None:
+        nonlocal opened_app
+        opened_app = application
 
     try:
         return _execute_notepad_plan(
@@ -2408,15 +2410,23 @@ def execute_notepad_plan(
             screenshot_name=screenshot_name,
             capture_screenshot=capture_screenshot,
             abort_check=abort_check,
-            opened_window_callback=remember_opened_window,
+            opened_app_callback=remember_opened_window,
         )
-    except Exception:
-        if opened_window is not None:
-            try:
-                opened_window.close()
-            except Exception:
-                pass
+    except Exception: # catch all exceptions to ensure we attempt cleanup
+        execution_failed = True
         raise
+    finally: # ensure that the Notepad process we opened is terminated after the plan execution, regardless of success or failure
+        if opened_app is not None:
+            try:
+                if opened_app.is_process_running():
+                    opened_app.kill(soft=False)
+                    if opened_app.is_process_running():
+                        raise RuntimeError("Notepad is still running after attempted termination.")
+            except Exception as exc:
+                message = f"Could not close run-owned Notepad: {type(exc).__name__}: {exc}"
+                if not execution_failed:
+                    raise RuntimeError(message) from exc
+                print(message, file=sys.stderr)
 
 
 # Compatibility boundary for existing direct callers and uploaded copies of this
