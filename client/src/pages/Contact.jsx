@@ -1,8 +1,75 @@
 import Navigation from '../components/Navigation';
 import '../Contact.css';
 import '../NavBar.css';
+import { useState } from "react";
 
 const Contact = () => {
+  const [formData, setFormData] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    message: "",
+  });
+
+  const [statusMessage, setStatusMessage] = useState("");
+  const [isError, setIsError] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+
+    setFormData((currentFormData) => ({
+      ...currentFormData,
+      [name]: value,
+    }));
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    setIsSubmitting(true);
+    setStatusMessage("");
+    setIsError(false);
+
+    const payload = {
+      firstName: formData.firstName.trim(),
+      lastName: formData.lastName.trim(),
+      email: formData.email.trim().toLowerCase(),
+      message: formData.message.trim(),
+    };
+
+
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || "Something went wrong. Try again.");
+      }
+
+      setStatusMessage(data.message || "Your support request was submitted successfully.");
+      setIsError(false);
+
+      setFormData({
+        firstName: "",
+        lastName: "",
+        email: "",
+        message: "",
+      });
+    } catch (error) {
+      setStatusMessage(error.message || "Network error. Try again.");
+      setIsError(true);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+
   return(
     <>
       <Navigation />
