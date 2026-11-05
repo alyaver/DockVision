@@ -2,31 +2,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 import { useState } from "react";
 import Navigation from "../components/Navigation";
+import {
+  getPasswordRules,
+  getPasswordStrength,
+  getStrengthBarPresentation,
+} from "../lib/passwordStrength.mjs";
 import "../Registration.css";
 import "../NavBar.css";
-
-
-function getPasswordStrength(password) {
-  const checks = {
-    length:     password.length >= 8,
-    longEnough: password.length >= 12,
-    uppercase:  /[A-Z]/.test(password),
-    lowercase:  /[a-z]/.test(password),
-    number:     /\d/.test(password),
-    symbol:     /[^A-Za-z0-9]/.test(password),
-  };
-  const score = Object.values(checks).filter(Boolean).length;
-  const levels = [
-    { label: '',            pct: 0,   color: '#ccc'    },
-    { label: 'Very weak',   pct: 16,  color: '#E24B4A' },
-    { label: 'Weak',        pct: 32,  color: '#E24B4A' },
-    { label: 'Fair',        pct: 52,  color: '#EF9F27' },
-    { label: 'Good',        pct: 72,  color: '#639922' },
-    { label: 'Strong',      pct: 88,  color: '#1D9E75' },
-    { label: 'Very strong', pct: 100, color: '#1D9E75' },
-  ];
-  return { checks, score, level: password.length === 0 ? levels[0] : levels[Math.max(1, score)] };
-}
 
 
 export default function Registration({
@@ -43,7 +25,9 @@ export default function Registration({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
-const { checks: pwChecks, score: pwScore, level: pwLevel } = getPasswordStrength(password);
+  //uses the shared helper so registration and reset-password strength feedback cannot drift.
+  const { checks: pwChecks, score: pwScore, level: pwLevel } = getPasswordStrength(password);
+  const strengthBar = getStrengthBarPresentation(pwScore);
 
   const navigate = useNavigate();
 
@@ -65,23 +49,8 @@ const { checks: pwChecks, score: pwScore, level: pwLevel } = getPasswordStrength
     },
   ]; 
 
-  const passRules = [
-    { label: "At least 8 characters", valid: password.length >= 8 },
-    { label: "At most 64 characters", valid: password.length <= 64 },
-    {
-      label: "Contains at least 1 lowercase letter",
-      valid: /[a-z]/.test(password),
-    },
-    {
-      label: "Contains at least 1 uppercase letter",
-      valid: /[A-Z]/.test(password),
-    },
-    { label: "Contains at least 1 number", valid: /\d/.test(password) },
-    {
-      label: "Contains at least 1 symbol",
-      valid: /[^A-Za-z\d]/.test(password),
-    },
-  ];
+  //uses the same blocking rules that the reset-password page uses before either form can submit.
+  const passRules = getPasswordRules(password);
 
   const confirmPassRules = [
     {
@@ -252,27 +221,17 @@ const { checks: pwChecks, score: pwScore, level: pwLevel } = getPasswordStrength
               </button>
             </div>
 
-           <div className="password-strength-checker">
+            {/*renders the shared strength score and each passed requirement while the user enters a password.*/}
+            <div className="password-strength-checker">
               {password.length > 0 && (
                 <>
                   <div className="strength-bar-track">
                     {[1, 2, 3, 4].map((seg) => {
-                      const filledCount = (
-                        pwScore <= 2 ? 1 :
-                        pwScore <= 3 ? 2 :
-                        pwScore <= 4 ? 3 : 4
-                      );
-                      const color = (
-                        pwScore <= 2 ? '#E24B4A' :
-                        pwScore <= 3 ? '#EF9F27' :
-                        pwScore <= 4 ? '#639922' :
-                                       '#1D9E75'
-                      );
                       return (
                         <div
                           key={seg}
                           className="strength-bar-segment"
-                          style={{ background: filledCount >= seg ? color : '#e0e0e0' }}
+                          style={{ background: strengthBar.filledSegmentCount >= seg ? strengthBar.color : '#e0e0e0' }}
                         />
                       );
                     })}

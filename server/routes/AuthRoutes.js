@@ -9,6 +9,15 @@ const MAX_EMAIL_LENGTH = 50;
 const MAX_PASSWORD_LENGTH = 64;
 const SESSION_COOKIE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
+//logs stable failure metadata without exposing reset tokens, passwords, or database messages.
+function logSafeFailure(label, error) {
+  //keeps server diagnostics useful while excluding potentially sensitive error-message content.
+  console.error(label, {
+    code: typeof error?.code === "string" ? error.code : undefined,
+    name: typeof error?.name === "string" ? error.name : "Error",
+  });
+}
+
 // Normalize name input so the database receives a clean value.
 function normalizeName(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
@@ -441,12 +450,11 @@ module.exports = function authRoutes(db, { deletionService } = {}) {
       return next(error);
     }
   });
-
-
-
+  //completes a single-use reset inside one transaction so password, session, and token state change together.
   router.post("/reset-password", async (req, res) => {
     const { token, newPassword } = req.body;
 
+    //rejects malformed input before acquiring a connection or changing durable authentication state.
     if (!token || typeof token !== "string") {
       return res.status(400).json({ message: "Invalid or expired token" });
     }
@@ -458,26 +466,57 @@ module.exports = function authRoutes(db, { deletionService } = {}) {
       });
     }
 
+    //hashes the submitted secret before lookup so raw reset tokens never become a database comparison value.
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-
-    const client = await db.connect();
+    let client;
+    let transactionStarted = false;
 
     try {
+      //uses one database client so the row lock and all dependent mutations share one transaction.
+      client = await db.connect();
       await client.query("BEGIN");
+      transactionStarted = true;
 
       const { rows } = await client.query(
         `SELECT password_reset_token_id, user_id, expires_at
          FROM password_reset_tokens
          WHERE token_hash = $1
+           AND expires_at > CURRENT_TIMESTAMP
          FOR UPDATE`,
         [tokenHash]
       );
 
       const record = rows[0];
 
-      if (!record || new Date() > new Date(record.expires_at)) {
+      //treats the exact expiry instant as invalid because only timestamps strictly after the database clock are selected.
+      if (!record) {
         await client.query("ROLLBACK");
+        transactionStarted = false;
         return res.status(400).json({ message: "Invalid or expired token" });
+      }
+
+      //compares against the stored hash so the reset cannot preserve the user's current password.
+      const currentPasswordResult = await client.query(
+        `SELECT password_hash
+         FROM users
+         WHERE user_id = $1`,
+        [record.user_id]
+      );
+
+      //fails closed because a token without a current user cannot safely complete a reset.
+      if (currentPasswordResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+        return res.status(400).json({ message: "Invalid or expired token" });
+      }
+
+      //uses bcrypt against the stored hash so the raw current password never leaves server storage.
+      if (await bcrypt.compare(newPassword, currentPasswordResult.rows[0].password_hash)) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+        return res.status(400).json({
+          message: "New password must be different from your current password",
+        });
       }
 
       const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
@@ -489,26 +528,37 @@ module.exports = function authRoutes(db, { deletionService } = {}) {
         [passwordHash, record.user_id]
       );
 
-      await client.query(
-        `DELETE FROM password_reset_tokens WHERE password_reset_token_id = $1`,
-        [record.password_reset_token_id]
-      );
-
+      //invalidates every session before consuming the token so the successful commit revokes existing authenticated access.
       await client.query(
         `DELETE FROM sessions WHERE user_id = $1`,
         [record.user_id]
       );
 
+      //consumes the locked token so a later request cannot use the same reset secret after this commit.
+      await client.query(
+        `DELETE FROM password_reset_tokens WHERE password_reset_token_id = $1`,
+        [record.password_reset_token_id]
+      );
+
       await client.query("COMMIT");
+      transactionStarted = false;
 
       return res.status(200).json({ message: "Password reset successful" });
 
     } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("RESET PASSWORD SERVER ERROR:", error);
+      //rolls back partial password, session, or token work so an infrastructure failure cannot leave a partial reset.
+      if (transactionStarted) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (rollbackError) {
+          logSafeFailure("RESET PASSWORD ROLLBACK ERROR", rollbackError);
+        }
+      }
+      logSafeFailure("RESET PASSWORD SERVER ERROR", error);
       return res.status(500).json({ message: "Server error" });
     } finally {
-      client.release();
+      //releases the checked-out client after commit, explicit rejection rollback, or an unexpected failure.
+      client?.release();
     }
   });
 
