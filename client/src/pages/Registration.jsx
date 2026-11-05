@@ -372,7 +372,7 @@ const { checks: pwChecks, score: pwScore, level: pwLevel } = getPasswordStrength
             <Link to="/forgot-password" className="register-secondary-link">
               Forgot Password
             </Link>
-            <Link to="/sign-in" className="register-secondary-link">
+            <Link to="/login" className="register-secondary-link">
               Sign In
             </Link>
           </form>
