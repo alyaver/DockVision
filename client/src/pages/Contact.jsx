@@ -82,15 +82,50 @@ const Contact = () => {
               </p>
             </h1>
 
-            <div className="info-fields">
-              <input className="value-box" type="text" placeholder="First Name" />
-              <input className="value-box" type="text" placeholder="Last Name" />
-              <input className="value-box" type="text" placeholder="Email" />
-              <input className="msg-box" type="text" placeholder="Message" />
-              <button className="submit-button">
-                Submit
+            <form className="info-fields" onSubmit={handleSubmit}>
+              <input 
+                className="value-box" 
+                type="text" 
+                id= "firstName"
+                name="firstName"
+                placeholder="First Name"
+                value={formData.firstName}
+                onChange={handleChange}
+              />
+              <input
+                className="value-box"
+                type="text"
+                id="lastName"
+                name="lastName"
+                placeholder="Last Name"
+                value={formData.lastName}
+                onChange={handleChange}
+              />
+              <input 
+                className="value-box" 
+                type="text" 
+                id="email"
+                name="email"
+                placeholder="Email"
+                value={formData.email}
+                onChange={handleChange}
+              />
+              <textarea 
+                className="msg-box"  
+                id="message"
+                name="message"
+                placeholder="Message"
+                value={formData.message}
+                onChange={handleChange}
+              />
+              <button 
+                className="submit-button"
+                type="submit"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "Submitting..." : "Submit"}
               </button>
-            </div>
+            </form>
           </section>
         </main>
     </>

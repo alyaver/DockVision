@@ -48,6 +48,7 @@
   margin-bottom: 10px;
   margin: 0 auto;
   width: 85%;
+  font-family: inherit;
 
   text-align: left;
   padding: 10px 10px 10px;
@@ -65,6 +66,7 @@
   margin-bottom: 10px;
   margin: 0 auto;
   width: 85%;
+  font-family: inherit;
 
   text-align: left;
   padding: 10px 10px 100px;
@@ -75,6 +77,13 @@
   border: 2px solid #ced0d6;
   border-radius: 10px;
   box-sizing: border-box;
+}
+
+.msg-box::placeholder,
+.value-box::placeholder {
+  font-family: inherit;
+  color: rgb(109, 109, 109);
+  opacity: 1;
 }
 
 .submit-button {
