@@ -208,6 +208,19 @@ The email settings in `server/.env.example` are optional. You only need them if 
 
 Run the schema file against the same database you configured
 
+The normal automated server tests do not write to this configured database. The
+PostgreSQL integration tests create a uniquely named temporary database, load
+the schema, run constraint and transaction checks, and drop that temporary
+database afterward. Run them explicitly only when PostgreSQL is available:
+
+```powershell
+npm run test:postgres -w server
+```
+
+The integration test reads the local `server/.env` connection settings but does
+not use `DB_NAME`; it connects to the PostgreSQL administrative database to
+create and remove its temporary test database.
+
 
 
 
