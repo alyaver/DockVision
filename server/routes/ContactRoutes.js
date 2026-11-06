@@ -5,12 +5,12 @@ const MAX_LAST_NAME_LENGTH = 50;
 const MAX_EMAIL_LENGTH = 254;
 const MAX_MESSAGE_LENGTH = 2000;
 
-function normalizeFirstName(firstname) {
-    return typeof firstname === "string" ? firstname.trim().replace(/\s+/g, " ") : "";
+function normalizeFirstName(firstName) {
+    return typeof firstName === "string" ? firstName.trim().replace(/\s+/g, " ") : "";
 }
 
-function normalizeLastName(lastname) {
-    return typeof lastname === "string" ? lastname.trim().replace(/\s+/g, " ") : "";
+function normalizeLastName(lastName) {
+    return typeof lastName === "string" ? lastName.trim().replace(/\s+/g, " ") : "";
 }
 
 function normalizeEmail(email) {
@@ -21,18 +21,18 @@ function normalizeMessage(message) {
     return typeof message === "string" ? message.trim() : "";
 }
 
-function isValidFirstName(firstname) {
-    if (firstname.length < 0 || firstname.length > MAX_FIRST_NAME_LENGTH) {
+function isValidFirstName(firstName) {
+    if (firstName.length < 0 || firstName.length > MAX_FIRST_NAME_LENGTH) {
         return false;
     }
-    return /^[A-Za-z][A-Za-z\s'-]{2,49}$/.test(firstname);
+    return /^[A-Za-z][A-Za-z\s'-]{2,49}$/.test(firstName);
 }
 
-function isValidLastName(lastname) {
-    if (lastname.length < 0 || lastname.length > MAX_LAST_NAME_LENGTH) {
+function isValidLastName(lastName) {
+    if (lastName.length < 0 || lastName.length > MAX_LAST_NAME_LENGTH) {
         return false;
     }
-    return /^[A-Za-z][A-Za-z\s'-]{2,49}$/.test(lastname);
+    return /^[A-Za-z][A-Za-z\s'-]{2,49}$/.test(lastName);
 }
 
 function isValidEmail(email) {
@@ -53,23 +53,24 @@ function createContactRouter(transporter, supportRecipient, fromAddress) {
             return res.status(503).json({
                  message: "Your support request could not be submitted. Please try again." });
         }
-        const firstname = normalizeFirstName(req.body.firstname);
-        const lastname = normalizeLastName(req.body.lastname);
+        const firstName = normalizeFirstName(req.body.firstName);
+        const lastName = normalizeLastName(req.body.lastName);
         const email = normalizeEmail(req.body.email);
         const message = normalizeMessage(req.body.message);
 
-        if (!isValidFirstName(firstname) || !isValidLastName(lastname) || !isValidEmail(email) || !isValidMessage(message)) {
+        if (!isValidFirstName(firstName) || !isValidLastName(lastName) || !isValidEmail(email) || !isValidMessage(message)) {
             return res.status(400).json({ message: "One or more fields exceed the allowed length." });
         }
 
         const mailOptions = {
             from: fromAddress,
             to: supportRecipient,
-            subject: `DockVision Support Request from ${firstname} ${lastname}`,
+            replyTo: email,
+            subject: `DockVision Support Request from ${firstName} ${lastName}`,
             text: [
                 "A new DockVision support request was submitted.",
                 "",
-                `Name: ${firstname} ${lastname}`,
+                `Name: ${firstName} ${lastName}`,
                 `Email: ${email}`,
                 "",
                 `Message: ${message}`
