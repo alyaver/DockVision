@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "nodemon index.js",
     "start": "node index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:postgres": "node test/runPostgresIntegration.cjs"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
