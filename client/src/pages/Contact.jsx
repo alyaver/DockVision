@@ -1,7 +1,13 @@
 import Navigation from '../components/Navigation';
 import '../Contact.css';
 import '../NavBar.css';
+import './Auth.css';
 import { useState } from "react";
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
+}
+
 
 const Contact = () => {
   const [formData, setFormData] = useState({
@@ -22,12 +28,16 @@ const Contact = () => {
       ...currentFormData,
       [name]: value,
     }));
+
+    if (isError) {
+      setStatusMessage("");
+      setIsError(false);
+    }
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    setIsSubmitting(true);
     setStatusMessage("");
     setIsError(false);
 
@@ -38,6 +48,27 @@ const Contact = () => {
       message: formData.message.trim(),
     };
 
+    if (!payload.firstName || !payload.lastName ||
+      !payload.email || !payload.message) {
+      setStatusMessage("Complete all required fields.");
+      setIsError(true);
+      return;
+    }
+
+    if (payload.firstName.length > 50 || payload.lastName.length > 50 ||
+      payload.email.length > 254 || payload.message.length > 2000) {
+      setStatusMessage("One or more fields exceed the allowed length.");
+      setIsError(true);
+      return;
+    }
+
+    if (!isValidEmail(payload.email)) {
+      setStatusMessage("Enter a valid email address.");
+      setIsError(true);
+      return;
+    }
+
+    setIsSubmitting(true);
 
     try {
       const res = await fetch("/api/contact", {
@@ -128,6 +159,24 @@ const Contact = () => {
             </form>
           </section>
         </main>
+
+        <div className="toast-stack">
+          {statusMessage && (
+            <div
+              className="toast"
+              role={isError ? "alert" : "status"}
+              aria-live="polite"
+            >
+              <div className="toast-title">
+                {isError ? "Unable to Submit" : "Message Submitted"}
+              </div>
+
+              <div className="toast-message">
+                {statusMessage}
+              </div>
+            </div>
+          )}
+        </div>
     </>
   );
 };
