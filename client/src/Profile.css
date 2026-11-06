@@ -8,7 +8,7 @@ body, #root {
 
 /* Profile Main Layout */
 .profile-page {
-    background-color: #f0f0f0;
+    background-color: #8FD8FF;
     min-height: calc(100vh - 112px);
     padding: 0 0 40px;
     box-sizing: border-box;
@@ -179,7 +179,7 @@ body, #root {
     padding: 10px 16px;
     border: 1px solid #555;
     border-radius: 6px;
-    background: #333;
+    background: #00255F;
     color: #fff;
     cursor: pointer;
 }
@@ -368,7 +368,7 @@ body, #root {
     padding: 9px 14px;
     border: 1px solid #555;
     border-radius: 6px;
-    background: #333;
+    background: #00255F;
     color: #fff;
     cursor: pointer;
 }
