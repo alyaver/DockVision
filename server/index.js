@@ -21,6 +21,7 @@ const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
 const { createRunAccessRouter } = require("./routes/RunAccessRoutes");
 const { createProfileRouter } = require("./routes/ProfileRoutes");
+const { createContactRouter } = require("./routes/ContactRoutes");
 const {
   createRequireAuthenticatedUser,
 } = require("./middleware/requireAuthenticatedUser");
@@ -38,6 +39,8 @@ const app = express();
 const PORT = 5000;
 const requireAuthenticatedUser = createRequireAuthenticatedUser({ db });
 const accountDeletionService = createAccountDeletionService({ db });
+const contactTransporter = createMailTransporter();
+
 const launch = createLaunchService({
   beforePublish: pruneCompletedRuns,
   assertOwnerCanLaunch: async (userId) => {
@@ -79,6 +82,14 @@ app.use(createRunLaunchRouter({ requireAuthenticatedUser, launch }));
 app.use(createRunAccessRouter({ requireAuthenticatedUser }));
 app.use(express.json({ limit: "8mb" }));
 app.use("/api/profile", createProfileRouter({ db, requireAuthenticatedUser }));
+app.use(
+  "/api/contact",
+  createContactRouter(
+    contactTransporter,
+    process.env.CONTACT_SUPPORT_EMAIL,
+    process.env.EMAIL_USER,
+  )
+);
 
 /**
  * Build the mail transporter only when all required email settings exist.
