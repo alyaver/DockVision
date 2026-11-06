@@ -84,11 +84,11 @@ app.use(express.json({ limit: "8mb" }));
 app.use("/api/profile", createProfileRouter({ db, requireAuthenticatedUser }));
 app.use(
   "/api/contact",
-  createContactRouter({
-    transporter: contactTransporter,
-    supportRecipient: process.env.CONTACT_SUPPORT_EMAIL,
-    fromAddress: process.env.EMAIL_USER,
-  })
+  createContactRouter(
+    contactTransporter,
+    process.env.CONTACT_SUPPORT_EMAIL,
+    process.env.EMAIL_USER,
+  )
 );
 
 /**
