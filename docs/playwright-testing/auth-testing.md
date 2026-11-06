@@ -24,7 +24,7 @@ Samples covered uses the real frontend with stubbed API responsed. It does not a
 ## Validation
 To reproduce the results
 1. npm.cmd ci
-2. npx.cmd playwright install chromium
+2. npx.cmd playwright install chromium firefox
 3. node --test server/test/runOwnership.test.js server/test/profileRoutes.test.js
 4. npx.cmd playwright test e2e/auth.spec.js
 
