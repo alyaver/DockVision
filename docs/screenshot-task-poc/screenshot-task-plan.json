@@ -1,0 +1,66 @@
+{
+  "_comment": "Native Windows screenshot proof-of-concept starter. Screenshot tasks currently call an empty Python placeholder and do not save PNG files.",
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "name": "Screenshot Task Proof of Concept",
+  "app": {
+    "name": "notepad",
+    "executable": "notepad.exe",
+    "fileName": "screenshot-task-test.txt",
+    "uniqueFilePerRun": true,
+    "resetFile": true,
+    "windowBounds": {
+      "x": 100,
+      "y": 100,
+      "width": 900,
+      "height": 650
+    }
+  },
+  "settings": {
+    "stepDelayMs": 225,
+    "timeoutSeconds": 20,
+    "typingDelayMs": 22
+  },
+  "tasks": [
+    {
+      "id": "capture-blank-notepad",
+      "action": "SCREENSHOT",
+      "fileName": "before-typing.png"
+    },
+    {
+      "id": "focus-editor",
+      "action": "CLICK",
+      "target": "editor",
+      "xPercent": 10,
+      "yPercent": 10,
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "type-test-text",
+      "action": "TYPE",
+      "text": "dockvision screenshot task test"
+    },
+    {
+      "id": "capture-after-typing",
+      "action": "SCREENSHOT",
+      "fileName": "after-typing.png"
+    },
+    {
+      "id": "open-edit-menu",
+      "action": "CLICK",
+      "target": "editMenu",
+      "button": "left",
+      "clickCount": 1
+    },
+    {
+      "id": "wait-for-edit-menu",
+      "action": "WAIT",
+      "delayMs": 700
+    },
+    {
+      "id": "capture-edit-menu",
+      "action": "SCREENSHOT",
+      "fileName": "menu-click.png"
+    }
+  ]
+}

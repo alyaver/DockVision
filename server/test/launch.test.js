@@ -30,9 +30,16 @@ async function fixture(t, options = {}) {
   let readinessCalls = 0;
   const store = createLaunchStore({ sharedRoot: root, io: options.io || fs });
   const readiness = options.readiness || (async () => { readinessCalls++; return { containerId: "stub-windows" }; });
-  const launch = createLaunchService({ store, readiness });
+  const launchService = createLaunchService({ store, readiness });
+  const launch = (input) => launchService(input, { ownerUserId: 101 });
+  const supervisedRuns = [];
+  const supervise = options.supervise || (async (runId) => { supervisedRuns.push(runId); });
+  const requireAuthenticatedUser = (req, res, next) => {
+    req.auth = { userId: 101 };
+    next();
+  };
   const app = express();
-  app.use(createRunLaunchRouter({ launch }));
+  app.use(createRunLaunchRouter({ launch: launchService, supervise, requireAuthenticatedUser }));
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
   });
@@ -48,7 +55,7 @@ async function fixture(t, options = {}) {
     return { status: response.status, body: await response.json() };
   };
   return { root, store, launch, post, readinessCalls: () => readinessCalls,
-    pointer: () => json(path.join(root, "active/current-run.json")) };
+    supervisedRuns, pointer: () => json(path.join(root, "active/current-run.json")) };
 }
 
 test("built-in admission writes a complete normalized envelope before publication", async (t) => {
@@ -61,6 +68,7 @@ test("built-in admission writes a complete normalized envelope before publicatio
     const meta = await json(path.join(run, "meta.json"));
     assert.deepEqual(task.payload, await json(path.join(run, "task-plan.json")));
     assert.equal(meta.containerId, "stub-windows");
+    assert.equal(meta.ownerUserId, 101);
     await fs.access(path.join(run, "uploaded-config.json"));
     await fs.access(path.join(run, "logs/task.log"));
     observed = true;
@@ -70,13 +78,20 @@ test("built-in admission writes a complete normalized envelope before publicatio
   const result = await f.post(builtin());
   assert.equal(result.status, 202);
   assert.equal(result.body.containerId, "stub-windows");
+  assert.match(result.body.runId, /^run-\d+-[a-f0-9]{6}$/);
   assert.equal(observed, true);
   const task = await json(path.join(f.root, "runs", result.body.runId, "task.json"));
+  const pointer = await f.pointer();
+  const iterationTask = await json(path.join(f.root, pointer.channel.taskPath));
   assert.equal(task.taskType, "task_sequence");
   assert.equal(task.payload.tasks[1].text, plan().tasks[1].text);
   assert.equal(task.payload.tasks[0].button, "left");
   assert.deepEqual(task.runOptions, { iterations: 1, captureIntervalSeconds: 5, iterationTimeoutSeconds: 300 });
-  assert.equal((await f.pointer()).runId, result.body.runId);
+  assert.equal(pointer.runId, result.body.runId);
+  assert.equal(pointer.iterationNumber, 1);
+  assert.equal(pointer.channel.screenshotsDir, `runs/${result.body.runId}/iterations/1/screenshots`);
+  assert.equal(iterationTask.parentTaskId, task.taskId);
+  assert.deepEqual(f.supervisedRuns, [result.body.runId]);
 });
 
 for (const language of ["python", "powershell"]) {
@@ -94,6 +109,26 @@ for (const language of ["python", "powershell"]) {
     assert.equal(await fs.readFile(path.join(root, task.payload.configPath), "utf8"), request.configContent);
     assert.deepEqual(task.runOptions, request.runOptions);
     assert.equal((await json(path.join(root, "meta.json"))).executionMode, "custom");
+  });
+}
+
+for (const configContent of [
+  '\uFEFF{ "tasks": [{"id":"custom", "action":"WAIT", "seconds":2}], "extra":"世界\\t\\n" }\r\n',
+  "null",
+  "[]",
+  "42",
+  '"text"',
+  '{"tasks":[]}',
+]) {
+  test(`custom JSON ${JSON.stringify(configContent)} is preserved verbatim`, async (t) => {
+    const f = await fixture(t);
+    const request = { ...custom(), configContent };
+    const result = await f.post(request);
+    assert.equal(result.status, 202);
+    const root = path.join(f.root, "runs", result.body.runId);
+    const task = await json(path.join(root, "task.json"));
+    assert.equal(await fs.readFile(path.join(root, "uploaded-config.json"), "utf8"), configContent);
+    assert.equal(await fs.readFile(path.join(root, task.payload.configPath), "utf8"), configContent);
   });
 }
 
@@ -120,6 +155,28 @@ test("invalid requests and malformed JSON fail before readiness or storage", asy
   assert.equal((await f.post('{"broken":', "/api/runs/start2", true)).status, 400);
   assert.equal(f.readinessCalls(), 0);
   assert.deepEqual(await fs.readdir(f.root), []);
+});
+
+test("client-supplied ownership is rejected before readiness or storage", async (t) => {
+  const f = await fixture(t);
+  for (const field of ["ownerUserId", "userId", "owner"]) {
+    const result = await f.post({ ...builtin(), [field]: 999 });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.code, "INVALID_LAUNCH_REQUEST");
+  }
+  assert.equal(f.readinessCalls(), 0);
+  assert.deepEqual(await fs.readdir(f.root), []);
+});
+
+test("launch routes accept uploads above Express's default limit and reject uploads above 10 MB", async (t) => {
+  const f = await fixture(t);
+  const accepted = await f.post({ ...custom(), runnerScriptContent: "#".repeat(150 * 1024) });
+  assert.equal(accepted.status, 202);
+
+  const rejected = await f.post({ ...custom(), runnerScriptContent: "#".repeat(10 * 1024 * 1024) });
+  assert.equal(rejected.status, 413);
+  assert.equal(rejected.body.code, "REQUEST_TOO_LARGE");
+  assert.match(rejected.body.message, /10 MB/i);
 });
 
 test("built-in validation reports task fields; legacy targetApp and steps normalize", async (t) => {
@@ -171,6 +228,145 @@ for (const status of ["queued", "running", "cancelling"]) {
     assert.equal((await f.pointer()).runId, accepted.body.runId);
   });
 }
+
+test("a terminal iteration pointer releases admission when the full run is terminal", async (t) => {
+  const f = await fixture(t);
+  const runId = "run-legacy-completed";
+  const runRoot = path.join(f.root, "runs", runId);
+  const iterationRoot = path.join(runRoot, "iterations", "1");
+  await fs.mkdir(iterationRoot, { recursive: true });
+  await fs.mkdir(path.join(f.root, "active"), { recursive: true });
+  await fs.writeFile(path.join(runRoot, "meta.json"), JSON.stringify({
+    status: "completed",
+    iterationState: { total: 1, current: 1, completed: 1, failed: 0 },
+  }));
+  await fs.writeFile(path.join(runRoot, "task.json"), JSON.stringify({ status: "queued" }));
+  await fs.writeFile(path.join(iterationRoot, "task.json"), JSON.stringify({ status: "completed" }));
+  await fs.writeFile(path.join(iterationRoot, "result.json"), JSON.stringify({ status: "completed" }));
+  await fs.writeFile(path.join(f.root, "active", "current-run.json"), JSON.stringify({
+    runId,
+    iterationNumber: 1,
+    channel: {
+      taskPath: `runs/${runId}/iterations/1/task.json`,
+      resultPath: `runs/${runId}/iterations/1/result.json`,
+      logsDir: `runs/${runId}/iterations/1/logs`,
+      screenshotsDir: `runs/${runId}/iterations/1/screenshots`,
+      artifactsDir: `runs/${runId}/iterations/1/artifacts`,
+    },
+  }));
+
+  const accepted = await f.post(builtin());
+  assert.equal(accepted.status, 202);
+  assert.notEqual(accepted.body.runId, runId);
+});
+
+test("a completed iteration does not release a run with remaining iterations", async (t) => {
+  const f = await fixture(t);
+  const runId = "run-multiple-iterations";
+  const runRoot = path.join(f.root, "runs", runId);
+  const iterationRoot = path.join(runRoot, "iterations", "1");
+  await fs.mkdir(iterationRoot, { recursive: true });
+  await fs.mkdir(path.join(f.root, "active"), { recursive: true });
+  // Iteration 1 is terminal, but metadata says iteration 2 is still outstanding.
+  // A new launch must not replace the pointer during this supervisor handoff.
+  await fs.writeFile(path.join(runRoot, "meta.json"), JSON.stringify({
+    status: "running",
+    iterationState: { total: 2, current: 1, completed: 1, failed: 0 },
+  }));
+  await fs.writeFile(path.join(runRoot, "task.json"), JSON.stringify({ status: "queued" }));
+  await fs.writeFile(path.join(iterationRoot, "result.json"), JSON.stringify({ status: "completed" }));
+  await fs.writeFile(path.join(f.root, "active", "current-run.json"), JSON.stringify({
+    runId,
+    iterationNumber: 1,
+    channel: {
+      taskPath: `runs/${runId}/iterations/1/task.json`,
+      resultPath: `runs/${runId}/iterations/1/result.json`,
+      logsDir: `runs/${runId}/iterations/1/logs`,
+      screenshotsDir: `runs/${runId}/iterations/1/screenshots`,
+      artifactsDir: `runs/${runId}/iterations/1/artifacts`,
+    },
+  }));
+
+  const rejected = await f.post(builtin());
+  assert.equal(rejected.status, 409);
+  assert.equal(rejected.body.code, "RUN_ACTIVE");
+  assert.equal(rejected.body.activeRunId, runId);
+  assert.equal(f.readinessCalls(), 0);
+});
+
+test("aggregate cancellation releases admission after a completed fifth iteration", async (t) => {
+  const f = await fixture(t);
+  const runId = "run-cancelled-five-of-seven";
+  const runRoot = path.join(f.root, "runs", runId);
+  const iterationRoot = path.join(runRoot, "iterations", "5");
+  await fs.mkdir(iterationRoot, { recursive: true });
+  await fs.mkdir(path.join(f.root, "active"), { recursive: true });
+  // The pointer remains useful for displaying iteration 5 artifacts, but the
+  // aggregate cancellation must release the single-active-run admission gate.
+  await fs.writeFile(path.join(runRoot, "meta.json"), JSON.stringify({
+    status: "cancelled",
+    iterationState: { total: 7, current: 5, completed: 5, failed: 0 },
+  }));
+  await fs.writeFile(path.join(runRoot, "task.json"), JSON.stringify({ status: "queued" }));
+  await fs.writeFile(path.join(iterationRoot, "task.json"), JSON.stringify({ status: "completed" }));
+  await fs.writeFile(path.join(iterationRoot, "result.json"), JSON.stringify({ status: "completed" }));
+  await fs.writeFile(path.join(f.root, "active", "current-run.json"), JSON.stringify({
+    runId,
+    iterationNumber: 5,
+    channel: {
+      taskPath: `runs/${runId}/iterations/5/task.json`,
+      resultPath: `runs/${runId}/iterations/5/result.json`,
+      logsDir: `runs/${runId}/iterations/5/logs`,
+      screenshotsDir: `runs/${runId}/iterations/5/screenshots`,
+      artifactsDir: `runs/${runId}/iterations/5/artifacts`,
+    },
+  }));
+
+  const accepted = await f.post(builtin());
+  assert.equal(accepted.status, 202);
+  assert.notEqual(accepted.body.runId, runId);
+  assert.equal(f.readinessCalls(), 1);
+});
+
+test("non-iteration and cross-run pointers fail closed", async (t) => {
+  const f = await fixture(t);
+  const runId = "run-invalid-result-path";
+  await fs.mkdir(path.join(f.root, "runs", runId), { recursive: true });
+  await fs.mkdir(path.join(f.root, "active"), { recursive: true });
+  const pointerPath = path.join(f.root, "active", "current-run.json");
+  const invalidPointers = [
+    {
+      runId,
+      channel: {
+        taskPath: `runs/${runId}/task.json`,
+        resultPath: `runs/${runId}/result.json`,
+        logsDir: `runs/${runId}/logs`,
+        screenshotsDir: `runs/${runId}/screenshots`,
+        artifactsDir: `runs/${runId}/artifacts`,
+      },
+    },
+    {
+      runId,
+      iterationNumber: 1,
+      channel: {
+        taskPath: "runs/another-run/iterations/1/task.json",
+        resultPath: "runs/another-run/iterations/1/result.json",
+        logsDir: "runs/another-run/iterations/1/logs",
+        screenshotsDir: "runs/another-run/iterations/1/screenshots",
+        artifactsDir: "runs/another-run/iterations/1/artifacts",
+      },
+    },
+  ];
+
+  for (const pointer of invalidPointers) {
+    await fs.writeFile(pointerPath, JSON.stringify(pointer));
+    const rejected = await f.post(builtin());
+    assert.equal(rejected.status, 409);
+    assert.equal(rejected.body.code, "ACTIVE_RUN_STATE_INVALID");
+    assert.equal(rejected.body.activeRunId, runId);
+  }
+  assert.equal(f.readinessCalls(), 0);
+});
 
 test("readiness errors return useful 409 and publish nothing", async (t) => {
   const f = await fixture(t, { readiness: async () => { throw new LaunchError(409, "AGENT_NOT_READY", "Start the agent."); } });
@@ -228,7 +424,10 @@ test("separate service instances sharing storage use the same admission lock", a
   const f = await fixture(t);
   const other = createLaunchService({ store: createLaunchStore({ sharedRoot: f.root }),
     readiness: async () => ({ containerId: "stub-other" }) });
-  const results = await Promise.allSettled([f.launch(builtin()), other(custom())]);
+  const results = await Promise.allSettled([
+    f.launch(builtin()),
+    other(custom(), { ownerUserId: 202 }),
+  ]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(results.find((result) => result.status === "rejected").reason.code, "RUN_ACTIVE");
 });
@@ -278,11 +477,11 @@ test("cold launch starts the VM without publishing; ready retry admits the run",
     ensureRunning: async () => { starts++; status = { running: true, containerId: "cold-start-stub" }; },
   });
   const launch = createLaunchService({ store: f.store, readiness });
-  await assert.rejects(launch(custom()), { code: "GUEST_STARTING" });
+  await assert.rejects(launch(custom(), { ownerUserId: 101 }), { code: "GUEST_STARTING" });
   assert.deepEqual(await fs.readdir(f.root), []);
-  await assert.rejects(launch(custom()), { code: "AGENT_NOT_READY" });
+  await assert.rejects(launch(custom(), { ownerUserId: 101 }), { code: "AGENT_NOT_READY" });
   await fs.writeFile(path.join(f.root, "agent-heartbeat.json"), JSON.stringify({ agent: { status: "idle", runId: "", intervalSeconds: 15 } }));
-  const accepted = await launch(custom());
+  const accepted = await launch(custom(), { ownerUserId: 101 });
   assert.equal(accepted.containerId, "cold-start-stub");
   assert.equal(starts, 1);
   assert.equal((await f.pointer()).runId, accepted.runId);
@@ -295,7 +494,7 @@ test("VM startup failures produce actionable conflicts without publication", asy
     ensureRunning: async () => { throw new Error("Docker is unavailable"); },
   });
   const launch = createLaunchService({ store: f.store, readiness });
-  await assert.rejects(launch(builtin()), (error) => {
+  await assert.rejects(launch(builtin(), { ownerUserId: 101 }), (error) => {
     assert.equal(error.status, 409);
     assert.equal(error.code, "GUEST_START_FAILED");
     assert.match(error.message, /Docker is unavailable/);

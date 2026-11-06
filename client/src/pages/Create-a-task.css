@@ -104,7 +104,7 @@
 }
 
 .edit-button, .delete-button, .move-up-button, .move-down-button{
-    background-color: #007bff;
+    background-color: #00255F;
     color: white;
     border: none;
     padding: 6px 12px;
@@ -181,8 +181,27 @@
     font-size: 1.2em;
 }
 
+.exit-buttons {
+    display: flex;
+    gap: 40px;       
+    margin-top: 50px;
+    align-items: center; 
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.create-task-form .task-container .exit-message button {
+    color: white;
+}
+.create-task-form .task-container .exit-message .exit-button {
+    background-color: #0192F9;
+}
+.create-task-form .task-container .exit-message .cancel-button {
+    background-color: #0192F9;
+}
+
 .create-task-form .task-container button {
-    background-color: #1a1a1a;
+    background-color: #00255F;
     border-radius: 6px;
     font-family: inherit;
     transition: opacity 0.15s;
@@ -204,7 +223,7 @@
 }
 
 .create-task-form .task-container :is(input, select, button):focus-visible {
-    outline: 2px solid #1a1a1a;
+    outline: 2px solid #00255F;
     outline-offset: 2px;
 }
 
@@ -213,3 +232,66 @@
     gap: 10px;
 }
 
+.coordinate-preview {
+    flex-basis: 100%;
+    max-width: 100%;
+}
+
+.coordinate-preview-screen {
+    position: relative;
+    width: 100%;
+    border: 1px solid #d0d0d0;
+    border-radius: 5px;
+    overflow: hidden;
+    background-color: #f9f9f9;
+}
+
+.coordinate-preview-screen img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.coordinate-preview-screen {
+    cursor: pointer;
+}
+
+.coordinate-image-navigation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.reference-image-index {
+    font-size: 14px;
+    color: #666;
+}
+
+.reference-image-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    color: #888;
+    font-size: 1.2em;
+}
+
+.coordinate-marker {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background-color: red;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+.click-fields {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}

@@ -16,18 +16,19 @@ const checkDiskSpace = require("check-disk-space").default;
 const path = require("path");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const { superviseRun } = require("./lib/runSupervisior");
-
 const db = require("./db/db");
 const authRoutes = require("./routes/AuthRoutes");
 const { createRunLaunchRouter } = require("./routes/RunLaunchRoutes");
+const { createRunAccessRouter } = require("./routes/RunAccessRoutes");
+const { createProfileRouter } = require("./routes/ProfileRoutes");
 const {
-  readRun,
-  requestRunCancellation,
-  listRuns,
-  resolveRunFilePath,
-  requestRunCancellation2,
-} = require("./lib/runStore");
+  createRequireAuthenticatedUser,
+} = require("./middleware/requireAuthenticatedUser");
+const { resumeActiveRun } = require("./lib/runRecovery");
+const { createAccountDeletionService } = require("./lib/accountDeletion");
+const { createLaunchService } = require("./lib/launchService");
+const { pruneCompletedRuns } = require("./lib/runStore");
+const { createRunCleanupScheduler } = require("./lib/runCleanupScheduler");
 const {
   ensureWindowsVmRunning,
   getWindowsVmStatus,
@@ -35,6 +36,20 @@ const {
 
 const app = express();
 const PORT = 5000;
+const requireAuthenticatedUser = createRequireAuthenticatedUser({ db });
+const accountDeletionService = createAccountDeletionService({ db });
+const launch = createLaunchService({
+  beforePublish: pruneCompletedRuns,
+  assertOwnerCanLaunch: async (userId) => {
+    const result = await db.query("SELECT deletion_status FROM users WHERE user_id = $1", [userId]);
+    if (result.rows[0]?.deletion_status !== "active") {
+      const error = new Error("This account is being deleted and cannot start new work.");
+      error.status = 423;
+      error.code = "ACCOUNT_DELETION_PENDING";
+      throw error;
+    }
+  },
+});
 
 // Limit the forgot-password surface in two directions:
 // - many distinct email lookups from one IP (enumeration)
@@ -59,9 +74,11 @@ app.use(
   })
 );
 
-app.use(createRunLaunchRouter());
-app.use(express.json());
 app.use(cookieParser());
+app.use(createRunLaunchRouter({ requireAuthenticatedUser, launch }));
+app.use(createRunAccessRouter({ requireAuthenticatedUser }));
+app.use(express.json({ limit: "8mb" }));
+app.use("/api/profile", createProfileRouter({ db, requireAuthenticatedUser }));
 
 /**
  * Build the mail transporter only when all required email settings exist.
@@ -128,181 +145,6 @@ app.get("/api/docker/ping", (req, res) => {
 });
 
 /**
- * Create the run record first so the guest agent has a scoped task folder to
- * read from, then ensure the Windows VM is available for that run. If the VM
- * launch fails, we immediately mark the run as failed instead of leaving the
- * active channel stranded in a queued or running state.
- */
-async function handleStartRun(req, res) {
-  let createdRun = null;
-
-  try {
-    createdRun = await createRunRecord(req.body ?? {});
-  } catch (error) {
-    if (error.code === "INVALID_TASK_PLAN") {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-        code: error.code,
-        fieldErrors: error.fieldErrors,
-      });
-    }
-
-    if (error.code === "RUN_ACTIVE") {
-      return res.status(409).json({
-        success: false,
-        message: error.message,
-        activeRunId: error.activeRunId,
-      });
-    }
-
-    console.error("RUN CREATION SERVER ERROR:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to create isolated run",
-    });
-  }
-
-  try {
-    const windowsVm = await ensureWindowsVmRunning();
-    const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
-
-    await attachContainerId(createdRun.runId, containerId);
-    const run = await readRun(createdRun.runId);
-
-    return res.json({
-      success: true,
-      message: "Isolated test run started in the Windows VM guest",
-      runId: createdRun.runId,
-      containerId,
-      windowsVm,
-      run,
-    });
-  } catch (error) {
-    try {
-      await markRunLaunchFailure(
-        createdRun.runId,
-        error.message || "Windows VM failed to start for the requested run."
-      );
-    } catch (markError) {
-      console.error("RUN FAILURE MARK ERROR:", markError);
-    }
-
-    console.error("RUN START SERVER ERROR:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to start isolated test run",
-      error: error.message,
-      runId: createdRun.runId,
-    });
-  }
-}
-
-app.post("/api/runs/start", handleStartRun);
-// Keep the legacy route alive while older client code and saved workflows
-// still refer to the original smoke-start endpoint name.
-app.post("/api/docker/start-smoke", handleStartRun);
-
-// Forward the uploaded configuration unchanged; the run store validates and parses it.
-async function handleStartRun2(req, res) {
-let createdRun = null;
-
-  try {
-    createdRun = await createRunRecord2(req.body ?? {});
-  } catch (error) {
-    if (error.code === "INVALID_TASK_PLAN") {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-        code: error.code,
-        fieldErrors: error.fieldErrors,
-      });
-    }
-
-    if (error.code === "RUN_ACTIVE") {
-      return res.status(409).json({
-        success: false,
-        message: error.message,
-        activeRunId: error.activeRunId,
-      });
-    }
-
-    console.error("RUN CREATION SERVER ERROR:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to create isolated run",
-    });
-  }
-
-  try {
-    const windowsVm = await ensureWindowsVmRunning();
-    const containerId = windowsVm.containerId || WINDOWS_VM_CONTAINER_NAME;
-
-    await attachContainerId(createdRun.runId, containerId);
-    superviseRun(createdRun.runId).catch((error) => { console.error("RUN SUPERVISOR ERROR:", error); });
-    const run = await readRun(createdRun.runId);
-
-    return res.json({
-      success: true,
-      message: "Isolated test run started in the Windows VM guest",
-      runId: createdRun.runId,
-      containerId,
-      windowsVm,
-      run,
-    });
-  } catch (error) {
-    try {
-      await markRunLaunchFailure(
-        createdRun.runId,
-        error.message || "Windows VM failed to start for the requested run."
-      );
-    } catch (markError) {
-      console.error("RUN FAILURE MARK ERROR:", markError);
-    }
-
-    console.error("RUN START SERVER ERROR:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to start isolated test run",
-      error: error.message,
-      runId: createdRun.runId,
-    });
-  }
-}
-
-app.post("/api/runs/start2", handleStartRun2);
-
-app.post("/api/runs/:runId/cancel", async (req, res) => {
-  try {
-    const run = await requestRunCancellation(req.params.runId);
-
-    if (!run) {
-      return res.status(404).json({
-        success: false,
-        message: "Run not found.",
-      });
-    }
-
-    return res.json({
-      success: true,
-      message:
-        run.status === "cancelling"
-          ? "Cancellation requested."
-          : `Run is already ${run.status}.`,
-      run,
-    });
-  } catch (error) {
-    console.error("RUN CANCELLATION ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to request run cancellation.",
-      error: error.message,
-    });
-  }
-});
-
-/**
  * Report the current Docker-backed Windows guest status without creating a run.
  * The dashboard polls this so users can tell "Docker is down" apart from
  * "Docker is fine, but the Windows guest has not been created yet."
@@ -345,110 +187,6 @@ app.post("/api/windows-vm/start", async (req, res) => {
       success: false,
       message: "Failed to start the Windows VM service",
       error: error.message,
-    });
-  }
-});
-
-app.get("/api/runs", async (req, res) => {
-  try {
-    const runs = await listRuns();
-
-    return res.json({
-      success: true,
-      runs,
-    });
-  } catch (error) {
-    console.error("RUN LIST SERVER ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to load run history",
-    });
-  }
-});
-
-/**
- * Poll the current state of a single run and return its scoped artifacts/logs.
- */
-app.get("/api/runs/:runId", async (req, res) => {
-  try {
-    const run = await readRun(req.params.runId);
-
-    if (!run) {
-      return res.status(404).json({
-        success: false,
-        message: "Run not found",
-      });
-    }
-
-    return res.json({
-      success: true,
-      run,
-    });
-  } catch (error) {
-    console.error("RUN STATUS SERVER ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to read run status",
-    });
-  }
-});
-
-app.post("/api/runs/:runId/cancel2", async (req, res) => {
-  try {
-    const cancellation = await requestRunCancellation2(req.params.runId);
-
-    if (!cancellation) {
-      return res.status(404).json({
-        success: false,
-        message: "Run not found",
-      })
-    }
-    const { run, terminal } = cancellation;
-    
-    if (terminal) {
-      return res.status(200).json({
-        success: true,
-        run,
-      });
-    }
-
-    return res.status(202).json({
-      success: true,
-      run: cancellingRun,
-    })
-  } catch (error) {
-    console.error("RUN CANCELATION SERVER ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to request run cancellation",
-    });
-  }
-})
-
-/**
- * Serve a file from a single run folder. This keeps screenshots and saved
- * artifacts scoped to the current run instead of reading from shared globals.
- */
-app.get("/api/runs/:runId/files/*", async (req, res) => {
-  try {
-    const filePath = await resolveRunFilePath(req.params.runId, req.params[0] || "");
-    return res.sendFile(filePath, (sendError) => {
-      if (sendError && !res.headersSent) {
-        res.status(sendError.statusCode || 404).json({
-          success: false,
-          message: "Run file not found",
-        });
-      }
-    });
-  } catch (error) {
-    console.error("RUN FILE SERVER ERROR:", error);
-
-    return res.status(404).json({
-      success: false,
-      message: "Run file not found",
     });
   }
 });
@@ -669,7 +407,7 @@ if (typeof authRoutes !== "function") {
  *
  * No second auth server. No split-brain startup path.
  */
-app.use("/api/auth", authRoutes(db)); //updated path to /api/auth according to jira task #211
+app.use("/api/auth", authRoutes(db, { deletionService: accountDeletionService })); //updated path to /api/auth according to jira task #211
 
 /**
  * Final 404 for unknown API routes.
@@ -700,7 +438,6 @@ const SESSION_CLEANUP_INTERVAL_MS = 60 * 1000; // 1 minute for testing
 
 async function cleanupExpiredSessions() {
   try {
-    console.log("cleanup tick");
     const result = await db.query(
       `DELETE FROM sessions
        WHERE expires_at <= CURRENT_TIMESTAMP`
@@ -713,6 +450,16 @@ async function cleanupExpiredSessions() {
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 
+  // A restart destroys the previous in-process supervision promise. Reattach it
+  // after the listener is ready so persisted active work can continue advancing.
+  resumeActiveRun().then((runId) => {
+    if (runId) console.log(`Resumed supervision for active run '${runId}'.`);
+  }).catch((error) => {
+    console.error("RUN RECOVERY STARTUP ERROR:", error);
+  });
+  //request retention after the listener starts so cleanup cannot delay backend availability
+  //starts fail-closed retention passes without delaying backend availability or guest recovery
+  createRunCleanupScheduler().start();
   cleanupExpiredSessions();
   setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL_MS);
 });

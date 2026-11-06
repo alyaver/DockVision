@@ -81,11 +81,6 @@ function ConfigurationSettings() {
     // each display label should be converted to seconds, 1min -> 60secs
     const toSeconds = secondsByLabel[captureFrequency];
 
-    console.log("Selected interval: ", toSeconds)
-    console.log("Selected iterations ", parsedIterations)
-
-    console.log("iterations", typeof parsedIterations)
-
     writeStoredRun({
       runOptions: {
         iterations: parsedIterations,

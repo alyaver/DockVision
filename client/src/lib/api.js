@@ -29,6 +29,7 @@ export async function startTestRun(payload = {}, { signal, timeoutMs = 30000 } =
   try {
   const response = await fetch(`${API_BASE}/api/runs/start`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -47,13 +48,18 @@ export async function startTestRun(payload = {}, { signal, timeoutMs = 30000 } =
 }
 
 export async function getRun(runId) {
-  const response = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}`);
+  const response = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}`, {
+    credentials: "include",
+  });
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     const message = data?.message || data?.error || "Failed to load run status.";
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.code = data.code;
+    throw error;
   }
 
   return data;
@@ -62,6 +68,7 @@ export async function getRun(runId) {
 export async function cancelRun(runId) {
   const response = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}/cancel`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -78,6 +85,21 @@ export async function cancelRun(runId) {
   }
 
   return data;
+}
+
+//deletes one authorized history entry after the caller supplies exact confirmation text
+export async function deleteRun(runId, confirmation) {
+  //send only confirmation because the server derives deletion ownership from the current session
+  const response = await fetch(`${API_BASE}/api/runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirmation }),
+  });
+
+  return parseJson(response);
 }
 
 // Expose direct Windows guest controls for readiness views and manual recovery.

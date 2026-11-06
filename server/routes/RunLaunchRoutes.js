@@ -1,16 +1,23 @@
 const express = require("express");
 const { createLaunchService } = require("../lib/launchService");
-const { pruneCompletedRuns } = require("../lib/runStore");
+const { pruneOwnedCompletedRuns } = require("../lib/runStore");
+const { superviseRun } = require("../lib/runSupervisior");
+
+//uploaded scripts can be bigger than the normal request limit
+//only allow bigger uploads on the test run routes
+const RUN_LAUNCH_JSON_LIMIT = "10mb";
 
 function launchErrorHandler(error, req, res, next) {
   if (res.headersSent) return next(error);
   const validation = error.code === "INVALID_TASK_PLAN";
   const malformed = error.type === "entity.parse.failed";
-  const status = malformed || validation ? 400 : error.status || 500;
+  //tell the user when their uploaded files are too big
+  const tooLarge = error.type === "entity.too.large";
+  const status = tooLarge ? 413 : malformed || validation ? 400 : error.status || 500;
   const body = {
     success: false,
-    code: malformed ? "INVALID_JSON" : status >= 500 ? "LAUNCH_FAILED" : error.code || "INVALID_LAUNCH_REQUEST",
-    message: malformed ? "Request body must contain valid JSON." : status >= 500 ? "Failed to admit the run. No new task was published." : error.message,
+    code: tooLarge ? "REQUEST_TOO_LARGE" : malformed ? "INVALID_JSON" : status >= 500 ? "LAUNCH_FAILED" : error.code || "INVALID_LAUNCH_REQUEST",
+    message: tooLarge ? "Runner script and task-plan uploads must be 10 MB or smaller." : malformed ? "Request body must contain valid JSON." : status >= 500 ? "Failed to admit the run. No new task was published." : error.message,
     fieldErrors: error.fieldErrors || [],
   };
   if (error.activeRunId) body.activeRunId = error.activeRunId;
@@ -18,13 +25,30 @@ function launchErrorHandler(error, req, res, next) {
   return res.status(status).json(body);
 }
 
-function createRunLaunchRouter({ launch = createLaunchService({ beforePublish: pruneCompletedRuns }) } = {}) {
+//creates authenticated launch routes that prune only persisted owner scopes before admission
+function createRunLaunchRouter({
+  //use ownership-derived cleanup because this route has no safe single-user history scope before launch
+  launch = createLaunchService({ beforePublish: pruneOwnedCompletedRuns }),
+  supervise = superviseRun,
+  requireAuthenticatedUser,
+} = {}) {
+  if (typeof requireAuthenticatedUser !== "function") {
+    throw new Error("Run launch routes require authenticated-user middleware.");
+  }
   const router = express.Router();
-  // Parse here, before the application's general parser, so aliases share JSON errors too.
+  //parse here, before the application's general parser, so aliases share JSON errors too.
   router.post(["/api/runs/start", "/api/runs/start2", "/api/docker/start-smoke"],
-    express.json(), async (req, res, next) => {
+    requireAuthenticatedUser,
+    //let these routes accept uploaded scripts up to 10mb
+    express.json({ limit: RUN_LAUNCH_JSON_LIMIT }), async (req, res, next) => {
       try {
-        const accepted = await launch(req.body);
+        const accepted = await launch(req.body, { ownerUserId: req.auth.userId });
+        // Supervision continues after the 202 response and advances the active
+        // pointer through each iteration. Admission has already published the
+        // first iteration, so starting supervision here cannot expose root paths.
+        supervise(accepted.runId).catch((error) => {
+          console.error("RUN SUPERVISOR ERROR:", error);
+        });
         return res.status(202).json({ success: true, ...accepted });
       } catch (error) {
         return next(error);
@@ -34,4 +58,4 @@ function createRunLaunchRouter({ launch = createLaunchService({ beforePublish: p
   return router;
 }
 
-module.exports = { createRunLaunchRouter };
+module.exports = { createRunLaunchRouter, RUN_LAUNCH_JSON_LIMIT };

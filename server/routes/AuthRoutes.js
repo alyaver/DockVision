@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
+const { createRequireAuthenticatedUser } = require("../middleware/requireAuthenticatedUser");
 
 const SALT_ROUNDS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
@@ -57,7 +58,7 @@ function setSessionCookie(res, sessionToken) {
  * Build the auth router against the shared database connection used by the
  * main backend entry point.
  */
-module.exports = function authRoutes(db) {
+module.exports = function authRoutes(db, { deletionService } = {}) {
   if (!db || typeof db.query !== "function") {
     throw new Error(
       "AuthRoutes requires a database pool/client object with a query() method."
@@ -65,6 +66,10 @@ module.exports = function authRoutes(db) {
   }
 
   const router = express.Router();
+  const requireDeletionAccess = createRequireAuthenticatedUser({
+    db,
+    allowDeletionStatus: true,
+  });
 
   /**
    * Return the authenticated user for the current session token.
@@ -109,7 +114,8 @@ module.exports = function authRoutes(db) {
         `SELECT
            u.user_id,
            u.name,
-           u.email
+           u.email,
+           u.deletion_status
          FROM sessions s
          JOIN users u ON u.user_id = s.user_id
          WHERE s.session_token = $1
@@ -384,6 +390,55 @@ module.exports = function authRoutes(db) {
     } catch (error) {
       console.error("LOGOUT SERVER ERROR:", error);
       return res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  router.get("/deletion-status", requireDeletionAccess, async (req, res, next) => {
+    try {
+      if (!deletionService) {
+        return res.status(503).json({ success: false, message: "Account deletion is not configured." });
+      }
+      const job = await deletionService.getJob(req.auth.userId);
+      return res.json({ success: true, job });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post("/delete-account", requireDeletionAccess, async (req, res, next) => {
+    try {
+      if (!deletionService) {
+        return res.status(503).json({ success: false, message: "Account deletion is not configured." });
+      }
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      const confirmation = typeof req.body?.confirmation === "string" ? req.body.confirmation : "";
+      if (confirmation !== "CONFIRM") {
+        return res.status(400).json({ success: false, code: "CONFIRMATION_REQUIRED", message: "Type CONFIRM exactly to continue." });
+      }
+      const result = await db.query("SELECT password_hash FROM users WHERE user_id = $1", [req.auth.userId]);
+      if (result.rows.length === 0) {
+        return res.status(401).json({ success: false, code: "NOT_AUTHENTICATED", message: "Authentication is required." });
+      }
+      if (!(await bcrypt.compare(password, result.rows[0].password_hash))) {
+        return res.status(401).json({ success: false, code: "INVALID_PASSWORD", message: "The current password is incorrect." });
+      }
+      await deletionService.accept(req.auth.userId);
+      const job = await deletionService.resume(req.auth.userId);
+      return res.status(job?.status === "completed" ? 200 : 202).json({ success: true, job });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post("/delete-account/resume", requireDeletionAccess, async (req, res, next) => {
+    try {
+      if (!deletionService) {
+        return res.status(503).json({ success: false, message: "Account deletion is not configured." });
+      }
+      const job = await deletionService.resume(req.auth.userId);
+      return res.status(job?.status === "completed" ? 200 : 202).json({ success: true, job });
+    } catch (error) {
+      return next(error);
     }
   });
 

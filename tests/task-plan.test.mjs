@@ -1,44 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { serializeTaskPlan } from '../client/src/lib/serializeTaskPlan.mjs';
 import parser from '../server/lib/test-script/readTestScript.js';
 
 const app = { name: 'notepad', executable: 'notepad.exe' };
 
 for (const legacy of [false, true]) {
+  // Run the same checks for the current plan shape and the older plan shape.
   const envelope = task => legacy
     ? { schemaVersion: 'dockvision.plan.v1', targetApp: app, steps: [task] }
     : plan([task]);
   const prefix = legacy ? 'steps[0]' : 'tasks[0]';
   for (const target of ['editor', 'notepad.editor', { type: 'namedControl', name: 'editor' }]) {
     test(`normalizes demo percentages (legacy=${legacy}, ${JSON.stringify(target)})`, () => {
+      // Parse a supported target that uses the older top-level percentage fields.
       const result = parse(envelope({ ...click, target, xPercent: 0, yPercent: 100 }));
+      // The parser moves the percentages into the canonical target object.
       assert.deepEqual(result.tasks[0], { ...click,
         target: { type: 'namedControl', name: 'editor', xPercent: 0, yPercent: 100 } });
+      // Parsing the normalized plan again should not change it.
       assert.deepEqual(parse(result), result);
     });
   }
-  test(`merges matching and complementary percentages (legacy=${legacy})`, () => {
-    const result = parse(envelope({ ...click,
-      target: { type: 'namedControl', name: 'editor', xPercent: 25 }, xPercent: 25, yPercent: 75 }));
-    assert.deepEqual(result.tasks[0], { ...click,
-      target: { type: 'namedControl', name: 'editor', xPercent: 25, yPercent: 75 } });
+  test(`rejects duplicate nested and top-level percentages (legacy=${legacy})`, () => {
+    // A supplied top-level percentage competes with its normalized target form;
+    // the parser reports the original conflicting field for this case.
+    rejects(envelope({ ...click,
+      target: { type: 'namedControl', name: 'editor', xPercent: 25 }, xPercent: 25, yPercent: 75 }), `${prefix}.xPercent`, 'click');
   });
   for (const field of ['xPercent', 'yPercent']) {
     test(`rejects conflicting ${field} (legacy=${legacy})`, () => {
+      // Do not allow two different values for the same percentage.
       rejects(envelope({ ...click, target: { type: 'namedControl', name: 'editor', [field]: 20 }, [field]: 30 }), `${prefix}.${field}`, 'click');
     });
     for (const value of [-1, 101, '50', null, false]) {
       test(`rejects invalid task ${field}=${JSON.stringify(value)} (legacy=${legacy})`, () => {
-        rejects(envelope({ ...click, [field]: value }), `${prefix}.${field}`, 'click');
+        // Top-level demo coordinates are normalized under target before range validation.
+        rejects(envelope({ ...click, [field]: value }), `${prefix}.target.${field}`, 'click');
       });
     }
     for (const target of [{ type: 'screenPoint', x: 1, y: 2 }, { type: 'windowPoint', x: 1, y: 2 }]) {
       test(`rejects task ${field} on ${target.type} (legacy=${legacy})`, () => {
-        rejects(envelope({ ...click, target, [field]: 50 }), `${prefix}.${field}`, 'click');
+        // Point targets use x/y coordinates and cannot use percentage fields.
+        rejects(envelope({ ...click, target, [field]: 50 }), `${prefix}.target`, 'click');
       });
     }
     test(`rejects ${field} on TYPE (legacy=${legacy})`, () => {
+      // TYPE tasks do not have a click target.
       rejects(envelope({ ...type, [field]: 50 }), `${prefix}.${field}`, 'type');
     });
   }
@@ -51,6 +60,7 @@ test('single demo percentage leaves the other axis unspecified for runner defaul
 const text = '  Punctuation: !? + ^ % {ENTER} "quoted" \\ 世界 🧪\tTabbed\nNext\r\nEnd  ';
 const type = { id: 'type', action: 'TYPE', text };
 const click = { id: 'click', action: 'CLICK', target: 'editor', button: 'left', clickCount: 1 };
+const wait = { id: 'wait', action: 'WAIT', delayMs: 1000 };
 const plan = (tasks = [click, type]) => ({ schemaVersion: 'dockvision.user-task-plan.v1', app, tasks });
 const parse = value => parser.readTestScript({ fileName: 'plan.json', content: JSON.stringify(value) });
 function rejects(value, path, stepId = null) {
@@ -63,11 +73,43 @@ function rejects(value, path, stepId = null) {
   });
 }
 
+test('accepts WAIT with a positive integer delay', () => {
+  const result = parse(plan([wait]));
+
+  assert.deepEqual(result.tasks[0], {
+    id: 'wait',
+    action: 'WAIT',
+    delayMs: 1000,
+  });
+});
+
+test('WAIT fixture preserves mixed-task order and individual durations', () => {
+  const content = readFileSync(
+    new URL('./fixtures/wait-click-type.json', import.meta.url),
+    'utf8',
+  );
+  const result = parser.readTestScript({ fileName: 'wait-click-type.json', content });
+
+  assert.deepEqual(result.tasks.map(({ id, action }) => ({ id, action })), [
+    { id: 'click-before-wait', action: 'CLICK' },
+    { id: 'type-before-wait', action: 'TYPE' },
+    { id: 'wait-between-text', action: 'WAIT' },
+    { id: 'click-after-wait', action: 'CLICK' },
+    { id: 'type-after-wait', action: 'TYPE' },
+    { id: 'second-wait', action: 'WAIT' },
+    { id: 'click-after-second-wait', action: 'CLICK' },
+    { id: 'type-after-second-wait', action: 'TYPE' },
+  ]);
+  assert.deepEqual(result.tasks.filter(task => task.action === 'WAIT').map(task => task.delayMs),
+    [2000, 1000]);
+  assert.equal(result.settings.stepDelayMs, 0);
+});
+
 test('builder exports canonical JSON that round-trips with order, IDs and literal text intact', () => {
   const drafts = [
     { id: 'click', task: 'CLICK', targetType: 'named', target: 'editor' },
     { id: 'type', task: 'TYPE', text },
-    { id: 'point', task: 'CLICK', targetType: 'coordinates', details: { x: '350', y: '240' } },
+    { id: 'point', task: 'CLICK', targetType: 'coordinates', details: { xPercent: '42.5', yPercent: '33.21' } },
   ];
   for (const ordered of [drafts, [...drafts].reverse()]) {
     const content = serializeTaskPlan(' Example ', ordered);
@@ -78,7 +120,7 @@ test('builder exports canonical JSON that round-trips with order, IDs and litera
     assert.equal(Object.hasOwn(exported, 'steps'), false);
     assert.deepEqual(exported.tasks.map(t => t.id), ordered.map(t => t.id));
     assert.equal(exported.tasks.find(t => t.id === 'type').text, text);
-    assert.deepEqual(exported.tasks.find(t => t.id === 'point').target, { type: 'screenPoint', x: 350, y: 240 });
+    assert.deepEqual(exported.tasks.find(t => t.id === 'point').target, { type: 'namedControl', name: 'editor', xPercent: 42.5, yPercent: 33.21 });
     assert.deepEqual(parser.readTestScript({ fileName: 'plan.json', content }), exported);
   }
 });
@@ -116,12 +158,19 @@ test('rejects malformed JSON with a configuration error', () => {
 });
 
 const invalid = [
+  ['missing WAIT delay', plan([{ id: 'wait', action: 'WAIT' }]), 'tasks[0].delayMs', 'wait'],
+  ['negative WAIT delay', plan([{ ...wait, delayMs: -1 }]), 'tasks[0].delayMs', 'wait'],
+  ['zero WAIT delay', plan([{ ...wait, delayMs: 0 }]), 'tasks[0].delayMs', 'wait'],
+  ['fractional WAIT delay', plan([{ ...wait, delayMs: 1.5 }]), 'tasks[0].delayMs', 'wait'],
+  ['boolean WAIT delay', plan([{ ...wait, delayMs: true }]), 'tasks[0].delayMs', 'wait'],
+  ['string WAIT delay', plan([{ ...wait, delayMs: '1000' }]), 'tasks[0].delayMs', 'wait'],
+  ['WAIT with unsupported text field', plan([{ ...wait, text: 'wrong' }]), 'tasks[0].text', 'wait'],
   ['empty tasks', plan([]), 'tasks'],
   ['duplicate IDs', plan([type, type]), 'tasks[1].id', 'type'],
   ['missing ID', plan([{ action: 'TYPE', text: 'a' }]), 'tasks[0].id'],
   ['empty TYPE', plan([{ ...type, text: '' }]), 'tasks[0].text', 'type'],
   ['nonstring TYPE', plan([{ ...type, text: 42 }]), 'tasks[0].text', 'type'],
-  ['unsupported action', plan([{ ...type, action: 'WAIT' }]), 'tasks[0].action', 'type'],
+  ['unsupported action', plan([{ ...type, action: 'PAUSE' }]), 'tasks[0].action', 'type'],
   ['lowercase action', plan([{ ...type, action: 'type' }]), 'tasks[0].action', 'type'],
   ['TYPE target', plan([{ ...type, target: 'editor' }]), 'tasks[0].target', 'type'],
   ['CLICK text', plan([{ ...click, text: 'a' }]), 'tasks[0].text', 'click'],

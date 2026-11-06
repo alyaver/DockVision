@@ -11,6 +11,7 @@ import ForgotPassword from "./pages/ForgotPassword.jsx";
 import SetNewPassword from "./pages/SetNewPassword.jsx";
 import Login from "./components/LoginContainer.jsx";
 import CreateATask from "./pages/Create-a-task.jsx";
+import Profile from "./pages/Profile.jsx";
 
 /**
  * Central router.
@@ -33,12 +34,15 @@ function App() {
         <Route path="/configuration-settings" element={<ConfigurationSettings />} />
         <Route path="/running-test" element={<TestPage />} />
         <Route path="/running-test/:runId" element={<TestPage />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/Login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         <Route path="/Register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/set-new-password" element={<SetNewPassword />} />
         <Route path="/reset-password" element={<SetNewPassword />} />
         <Route path="/create-a-task" element={<CreateATask />} />
+        <Route path="/profile" element={<Profile />} />
       </Routes>
     </Router>
   );

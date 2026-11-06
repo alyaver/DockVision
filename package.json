@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "test:task-plan": "node --test tests/task-plan.test.mjs tests/custom-config.test.cjs",
+    "test:vm-agent": "python -m unittest tests/vm_agent_lifecycle_test.py",
     "dev": "concurrently -k -n client,server \"npm run dev -w client\" \"npm run dev -w server\"",
     "dev:client": "npm run dev -w client",
     "dev:server": "npm run dev -w server",
