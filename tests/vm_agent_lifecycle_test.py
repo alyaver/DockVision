@@ -216,6 +216,45 @@ class VmAgentLifecycleTest(unittest.TestCase):
                     self.assertEqual(result["details"]["process"]["stderr"], "runner stderr")
                 self.write_task(task_type="noop")
 
+    def test_artifacts_are_finalized_after_builtin_execution(self) -> None:
+        self.write_task()
+
+        def executor(context, task, shared_root):
+            return {"status": "completed", "message": "completed fixture"}
+
+        self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(result["artifactsFinalized"])
+
+    def test_custom_runner_without_shutdown_confirmation_keeps_artifacts_pending(self) -> None:
+        self.write_task(task_type="script_runner")
+
+        def executor(context, task, shared_root):
+            return {
+                "status": "failed",
+                "message": "worker shutdown was not confirmed",
+                "details": {"process": {"pid": 4321}},
+            }
+
+        self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertFalse(result["artifactsFinalized"])
+
+    def test_custom_runner_process_termination_confirms_artifacts(self) -> None:
+        self.write_task(task_type="script_runner")
+
+        def executor(context, task, shared_root):
+            return {
+                "status": "failed",
+                "message": "worker terminated",
+                "details": {"process": {"processTreeTerminated": True}},
+            }
+
+        self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        result = self.read_json(Path(self.context["resultPath"]))
+        self.assertTrue(result["artifactsFinalized"])
+
     def test_script_runner_preserves_stderr_for_successful_json_output(self) -> None:
         # Diagnostics on stderr are retained even when stdout contains a valid success payload.
         self.write_custom_runner_task(
