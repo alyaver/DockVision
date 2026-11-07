@@ -200,7 +200,71 @@ DB_USER=postgres
 DB_PASSWORD=your_postgres_password
 DB_NAME=postgres
 ```
-The email settings in `server/.env.example` are optional. You only need them if you want forgot-password emails to send from your machine.
+To enable server-side forgot-password email, configure these values only in the
+untracked `server/.env` file or the deployment secret store:
+
+```env
+EMAIL_HOST=your_smtp_host
+EMAIL_PORT=587
+EMAIL_USER=approved_sending_account@example.com
+EMAIL_PASS=provider_app_password_or_smtp_secret
+CLIENT_URL=https://your-dockvision-application-origin
+```
+
+`EMAIL_PASS` is a credential and must never be committed, copied into browser
+code, returned by an API, or included in logs. `CLIENT_URL` must be a bare
+absolute `http` or `https` application origin (for example,
+`http://localhost:5173` during local development); do not include a path,
+query string, or fragment because the server appends the reset route.
+
+Forgot-password delivery is acknowledged only after the configured mail
+transport accepts the message. Missing configuration returns a service error,
+and database or transport failures return a non-confirming error without
+revealing account existence. If mail submission fails after a reset token is
+prepared, the server deletes that specific token by user and token hash before
+reporting the delivery failure. If that cleanup fails, the server reports a
+server error; retrying the request replaces any prior token for the account.
+
+#### Password-reset email operations and recovery
+
+The committed `server/.env.example` contains placeholders only. Keep the real
+SMTP host, sending-account address, application origin, and `EMAIL_PASS` in
+the ignored `server/.env` file for local development or in the deployment
+secret store. The owner of the sending account is responsible for approving
+its use, rotating or revoking its SMTP credential, and updating the secret
+store without committing the replacement value. Confirm the provider's host,
+port, authentication method, and TLS requirements with that owner before
+deployment. The current server enables implicit TLS when `EMAIL_PORT=465`; a
+provider using port `587` uses Nodemailer's STARTTLS negotiation.
+
+`CLIENT_URL` is the application origin shown in reset links. Use the deployed
+HTTPS origin outside local development, and use `http://localhost:5173` only
+when that is the local client origin. The server rejects a missing or malformed
+mail configuration before rate-limit storage, account lookup, token creation,
+or message submission.
+
+| Request outcome | HTTP response | Operational meaning |
+| --- | --- | --- |
+| Valid registered or unregistered address under normal service | `200` with the generic acknowledgement | Do not infer account existence from the response. Only an active registered account receives a message. |
+| Invalid email/body | `400` | Correct the request; no rate-limit row, reset token, or message is created. |
+| Distinct-address or repeated-address limit reached | `429` | Wait for the existing 15-minute window before retrying; the rejected request is not retained. |
+| Missing or invalid server mail configuration | `503` | Restore the server-only mail settings and restart/redeploy as required by the environment before retrying. |
+| Database failure or failed token-cleanup after transport rejection | `500` | Do not claim delivery. Investigate server diagnostics and database health before retrying. |
+| Mail transport rejection after token preparation | `502` | No delivery is confirmed. The server conditionally deletes the token created by that request using both user and token hash; retry only after the provider issue is resolved. |
+
+If the conditional cleanup after a transport rejection also fails, the token
+may remain until a later reset request replaces the account's prior token. Do
+not manually expose, reuse, or copy a raw reset token from server diagnostics;
+resolve the storage/provider issue and have the user request a fresh link.
+
+Before a release, perform one separately authorized controlled delivery check
+using a team-owned test inbox. Do not record that inbox address, credentials,
+or the issued reset token in committed files. Confirm that the request reaches
+the intended inbox, the link begins with the configured `CLIENT_URL` and uses
+`/set-new-password`, the message says it expires in one hour, the token resets
+the password once, and a second use is rejected. This check requires confirmed
+ownership of the sending account, credential, deployed origin, and test inbox;
+automated tests intentionally use a fake transport instead of sending mail.
 
 
 ### 3. Create the database tables
@@ -255,7 +319,10 @@ the backend health check should respond at `http://localhost:5000/api/health`
 
 - Start Docker Desktop before using test-run, container, or Windows VM routes.
 - If registration or login fails on a new setup, make sure PostgreSQL is running and that `server/db/schema.sql` has been applied.
-- Forgot-password requests will return a configuration message until the optional `EMAIL_*` values are set.
+- Forgot-password requests return a configuration error until valid server-only
+  `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, and `CLIENT_URL`
+  values are configured. The backend does not use browser-provided mail or
+  origin settings.
 
 
 
