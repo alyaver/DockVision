@@ -4,6 +4,20 @@ const { stubAuthenticatedDashboard, stubExportStorage } = require("./support/api
 
 const fixture = (name) => path.resolve(__dirname, "fixtures", name);
 
+// Wait for the 'runner file ready' message, which signals that the file was uploaded.
+// To be used after a .setInputFiles() call to verify that the file finished uploading before continuing with the test
+const waitForRunnerRead = (page, fileName) =>
+  expect(page.locator(".Notify-msg").filter({
+    hasText: `${fileName} was read and is ready for the next step.`,
+  })).toBeVisible();
+
+// Wait for the 'task plan file ready' message, which signals that the file was uploaded.
+// To be used after a .setInputFiles() call to verify that the file finished uploading before continuing with the test
+const waitForPlanRead = (page, fileName) =>
+  expect(page.locator(".Notify-msg").filter({
+    hasText: `${fileName} is ready for the next step.`,
+  })).toBeVisible();
+
 // Before each test, reference a new page with freshly stubbed Dashboard API requests.
 // This provides a predictable and consist start to each test
 test.beforeEach(async ({ page }) => {
@@ -18,7 +32,9 @@ test("valid custom setup reaches Confirmation with selected content and options"
   // Fill in the required fields to run a test
   await page.getByPlaceholder("Name #1").fill("Browser preparation");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.py"));
+  await waitForRunnerRead(page, "runner.py");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
 
   // Fill in Config Settings, and return to Dashboard
   await page.getByRole("button", { name: "Configure Settings" }).click();
@@ -50,6 +66,7 @@ test("missing required custom runner is rejected on Dashboard", async ({ page })
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Missing runner script");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
   await page.getByRole("button", { name: /Start Test Run/ }).click();
 
   // Check that the test doesn't run, keeping us on the Dashboard, and gives the proper error message
@@ -62,6 +79,7 @@ test("missing task plan is rejected on Dashboard", async ({ page }) => {
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Missing task plan");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.py"));
+  await waitForRunnerRead(page, "runner.py");
   await page.getByRole("button", { name: /Start Test Run/ }).click();
 
   // Check that the test doesn't run, keeping us on the Dashboard, and gives the proper error message
@@ -96,6 +114,7 @@ test("accepts a runner script at 256 KiB and rejects one byte over that limit", 
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Runner size boundary");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
 
   // Use a runner that is exactly equal to the runner script size limit, and verify that it is accepted
   await page.locator('input[type="file"]').nth(0).setInputFiles({
@@ -103,6 +122,7 @@ test("accepts a runner script at 256 KiB and rejects one byte over that limit", 
     mimeType: "text/x-python",
     buffer: Buffer.alloc(256 * 1024, "#"),
   });
+  await waitForRunnerRead(page, "boundary.py");
   await expect(page.getByText("Selected: boundary.py")).toBeVisible();
 
   // Use a runner that is one byte over the runner script size limit, and verify that it gives the proper error message
@@ -125,7 +145,9 @@ test("switching from custom to built-in ignores stale custom runner content", as
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Mode switching");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.py"));
+  await waitForRunnerRead(page, "runner.py");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
   
   // Switch to 'Built-In Notepad' and verify that the runner script section is gone
   await page.getByRole("radio", { name: "Built-In Notepad" }).check();
@@ -144,6 +166,7 @@ test("switching from built-in to custom requires a runner again", async ({ page 
   await page.getByPlaceholder("Name #1").fill("Reverse mode switching");
   await page.getByRole("radio", { name: "Built-In Notepad" }).check();
   await page.locator('input[type="file"]').setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
   
   // Switch back to 'Custom Runner' and verify that the test can't run without uploading a custom script
   await page.getByRole("radio", { name: "Custom Runner" }).check();
@@ -158,7 +181,9 @@ test("clear current run removes the browser handoff and selected files", async (
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Reset preparation");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.py"));
+  await waitForRunnerRead(page, "runner.py");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
 
   // Check that the 'Clear Current Run' button properly clears the run and delivers the appropriate message
   await page.getByRole("button", { name: "Clear Current Run" }).click();
@@ -174,7 +199,9 @@ test("dashboard recovers a valid preparation from session storage after refresh"
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Dashboard refresh");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.py"));
+  await waitForRunnerRead(page, "runner.py");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
 
   // Refresh the page, and check that all the previously filled in info is still there
   await page.reload();
@@ -188,7 +215,9 @@ test("refresh preserves the selected custom content and options on Confirmation"
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Refresh recovery");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.ps1"));
+  await waitForRunnerRead(page, "runner.ps1");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
   await page.getByRole("button", { name: /Start Test Run/ }).click();
   await expect(page).toHaveURL(/\/confirmation$/);
 
@@ -222,6 +251,7 @@ test("partial runner storage renders safely and is replaced by a complete upload
 
   // Upload 'runner.py', and make sure that its content was properly added to the sessionStorage entry
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.py"));
+  await waitForRunnerRead(page, "runner.py");
   const stored = await page.evaluate(() => JSON.parse(sessionStorage.getItem("dockvision-current-run")));
   expect(stored.runnerScriptContent).toContain("fixture-not-executed");
 });
@@ -231,13 +261,17 @@ test("replacing runner and task-plan uploads updates names, language, and conten
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Replacement uploads");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.py"));
+  await waitForRunnerRead(page, "runner.py");
   await page.locator('input[type="file"]').nth(1).setInputFiles(fixture("plan.json"));
+  await waitForPlanRead(page, "plan.json");
   await page.locator('input[type="file"]').nth(0).setInputFiles(fixture("runner.ps1"));
+  await waitForRunnerRead(page, "runner.ps1");
   await page.locator('input[type="file"]').nth(1).setInputFiles({
     name: "replacement.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify({ schemaVersion: "replacement", tasks: [{ id: "replacement", action: "WAIT", seconds: 2 }] })),
   });
+  await waitForPlanRead(page, "replacement.json");
 
   // Check that the newly uploaded runner and task-plan are properly displayed on the page
   await expect(page.getByText("Selected: runner.ps1")).toBeVisible();
