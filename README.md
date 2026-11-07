@@ -259,6 +259,83 @@ the backend health check should respond at `http://localhost:5000/api/health`
 
 
 
+## Using DockVision Test Runs
+
+Before starting a Test Run, choose the mode that matches the workflow you need.
+
+### Built-In Notepad
+
+Use **Built-In Notepad** for supported standard Notepad workflows. You provide one JSON **Task Plan**; you do not upload a Python or PowerShell Runner Script. The built-in plan currently supports ordered `TYPE` and `CLICK` tasks for `notepad.exe`.
+
+The Task Plan uses the `dockvision.user-task-plan.v1` schema. For example:
+
+```json
+{
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "name": "Notepad example",
+  "app": { "name": "notepad", "executable": "notepad.exe" },
+  "tasks": [
+    { "id": "click-editor", "action": "CLICK", "target": "editor" },
+    { "id": "type-message", "action": "TYPE", "text": "Hello from DockVision" }
+  ]
+}
+```
+
+Use **Custom Runner** instead when the workflow needs custom Python or PowerShell logic or actions outside the supported Built-In Notepad plan.
+
+### Custom Runner
+
+Custom Runner requires both of these files:
+
+1. One `.py` or `.ps1` **Runner Script**.
+2. One `.json` Task Plan or configuration file.
+
+DockVision copies both files into an isolated folder for the Test Run. The original Runner Script filename is retained as metadata, but the guest executes a canonical copied runner file for that run. A Custom Runner is responsible for interpreting the JSON and performing the requested automation; its JSON does not have to use the Built-In Notepad schema.
+
+The guest supplies the Task Plan path through the runner command-line contract:
+
+```text
+python.exe <runner-script> --plan <task-plan>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File <runner-script> -ConfigPath <task-plan>
+```
+
+A compatible runner should read the supplied path rather than relying on a path from the user's computer. It should perform its automation in the Windows guest, write a structured JSON result to standard output, and return a nonzero exit code when execution fails. When a result includes `status`, a successful result reports `completed`.
+
+#### What is my `.py` script looking for?
+
+A Python Runner Script should:
+
+1. Parse `--plan <path>`.
+2. Read and interpret the JSON file at that supplied path.
+3. Perform the requested automation inside the Windows guest.
+4. Print a structured JSON result to standard output.
+5. Return a nonzero exit code when execution fails.
+
+PowerShell runners follow the same responsibilities using `-ConfigPath <path>`. Use the supplied command-line path or paths derived from it; do not depend on a local path that only exists on the user's computer.
+
+#### Prompting an AI assistant for a compatible runner
+
+Give the assistant the DockVision contract explicitly. For example:
+
+```text
+Create a DockVision Python runner. It must accept --plan <path>, read the JSON file at that supplied path, perform the requested automation inside the Windows guest, print one structured JSON result object to stdout, and exit with a nonzero code on failure. If it reports status, use "completed" on success. Do not use a path from the developer's computer or require the user to install guest dependencies.
+```
+
+DockVision does not automatically generate or install a Runner Script from this prompt.
+
+### Troubleshooting
+
+| Message | What it means | What to do |
+| --- | --- | --- |
+| **Python is not available inside the Windows guest** | Guest runtime provisioning has not completed or the agent is not ready. | Wait for the VM/agent to finish setup and retry. Normal users should not manually install Python or pywinauto. |
+| **Runner script was not found** | The uploaded runner was not present in the isolated Test Run folder. | Verify the Runner Script upload and retry. |
+| **Uploaded task plan was not found** | The runner did not receive or correctly use the supplied Task Plan path. | Check the command-line argument handling and use the run-local path supplied by DockVision. |
+| **Runner failed with exit code 1** | The script started but reported an execution failure. | Inspect the Test Run logs and Runner Script output. |
+| **Invalid Task Plan** | The JSON is malformed or does not match the supported Built-In Task Plan contract. | Validate the JSON and confirm that the selected mode matches the file format. |
+
+The guest environment owns runtime setup. End users should not manually install Python, pywinauto, or other guest dependencies.
+
+
 
 
 
