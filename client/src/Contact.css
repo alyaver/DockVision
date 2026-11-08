@@ -102,5 +102,5 @@
 }
 
 .submit-button:hover {
-  background-color: #464646;
+  opacity: 0.85;
 }
