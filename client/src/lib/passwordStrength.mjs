@@ -46,7 +46,11 @@ export function getPasswordRules(password) {
     { label: "Contains at least 1 number", valid: /\d/.test(password) },
     {
       label: "Contains at least 1 symbol",
-      valid: /[^A-Za-z\d]/.test(password),
+      valid: /[!@#$%^&*]/.test(password),
+    },
+    {
+      label: "Uses only supported password characters",
+      valid: /^[A-Za-z\d!@#$%^&*]*$/.test(password),
     },
   ];
 }
