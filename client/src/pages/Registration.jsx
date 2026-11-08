@@ -32,20 +32,22 @@ export default function Registration({
   const navigate = useNavigate();
 
   const validExtensions = [".com", ".org", ".net", ".gov", ".edu", ".mil"];
+  const normalizedName = name.trim().replace(/\s+/g, " ");
+  const normalizedEmail = email.trim().toLowerCase();
 
   // Basic email splitting for validation rules.
-  const emailParts = email.split("@");
+  const emailParts = normalizedEmail.split("@");
   const localPart = emailParts.length === 2 ? emailParts[0] : "";
   const domainPart = emailParts.length === 2 ? emailParts[1] : "";
 
   const nameRules = [
     {
       label: "Name must be 2 to 30 characters",
-      valid: name.length >= 2 && name.length <= 30,
+      valid: normalizedName.length >= 2 && normalizedName.length <= 30,
     },
     {
-      label: "Name must only contain alphanumeric characters and spaces",
-      valid: /^[a-zA-Z0-9 ]+$/.test(name),
+      label: "Name must start with a letter and use only letters, spaces, apostrophes, or hyphens",
+      valid: /^[A-Za-z][A-Za-z\s'-]*$/.test(normalizedName),
     },
   ]; 
 
@@ -64,6 +66,10 @@ export default function Registration({
     { label: "Starts with local-part", valid: localPart.length > 0 },
     { label: "Ends with domain-part", valid: domainPart.length > 0 },
     {
+      label: "Email is at most 50 characters",
+      valid: normalizedEmail.length > 0 && normalizedEmail.length <= 50,
+    },
+    {
       label: "Local-part is at most 64 characters",
       valid: localPart.length > 0 && localPart.length < 65,
     },
@@ -81,6 +87,10 @@ export default function Registration({
     {
       label: "Domain-part must end with a valid extension",
       valid: validExtensions.some((ext) => domainPart.endsWith(ext)),
+    },
+    {
+      label: "Email has no whitespace",
+      valid: !/\s/.test(normalizedEmail),
     },
   ];
 
@@ -116,8 +126,8 @@ export default function Registration({
     // Normalize values before they leave the UI layer.
     // This reduces backend cleanup and avoids duplicate accounts due to casing/spaces.
     const formData = {
-      name: name.trim().replace(/\s+/g, " "),
-      email: email.trim().toLowerCase(),
+      name: normalizedName,
+      email: normalizedEmail,
       password,
       // Use the original payload key expected by the earlier working implementation.
       confirmPassword: confirm_password,

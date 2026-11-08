@@ -32,14 +32,18 @@ function normalizeEmail(value) {
  * Basic name validation for the current project rules.
  */
 function isValidName(value) {
-  return /^[A-Za-z][A-Za-z\s'-]{2,29}$/.test(value);
+  return value.length >= 2 && value.length <= 30 && /^[A-Za-z][A-Za-z\s'-]*$/.test(value);
 }
 
 /**
  * Basic email validation for the current project rules.
  */
 function isValidEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.(com|gov|edu|net|org)$/i.test(value);
+  if (value.length > MAX_EMAIL_LENGTH || /\s/.test(value)) return false;
+  const parts = value.split("@");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
+  if (parts[0].startsWith(".") || parts[0].endsWith(".")) return false;
+  return /\.(com|gov|edu|net|org|mil)$/i.test(parts[1]);
 }
 
 /**
@@ -174,7 +178,7 @@ module.exports = function authRoutes(db, { deletionService } = {}) {
       if (email.length > MAX_EMAIL_LENGTH || !isValidEmail(email)) {
         return res.status(400).json({
           message:
-            "Email must be valid and end in .com, .gov, .edu, .net, or .org",
+            "Email must be valid, be at most 50 characters, and end in .com, .gov, .edu, .net, .org, or .mil",
         });
       }
 
@@ -201,39 +205,49 @@ module.exports = function authRoutes(db, { deletionService } = {}) {
       }
 
       const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+      const client = await db.connect();
 
-      const insertedUser = await db.query(
-        `INSERT INTO users (
-          name,
-          email,
-          password_hash,
-          created_at,
-          updated_at,
-          failed_login_count,
-          lock_until
-        )
-        VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, NULL)
-        RETURNING user_id, name, email, created_at`,
-        [name, email, passwordHash]
-      );
+      try {
+        await client.query("BEGIN");
 
-      const user = insertedUser.rows[0];
-      const sessionToken = crypto.randomBytes(32).toString("hex");
+        const insertedUser = await client.query(
+          `INSERT INTO users (
+            name,
+            email,
+            password_hash,
+            created_at,
+            updated_at,
+            failed_login_count,
+            lock_until
+          )
+          VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, NULL)
+          RETURNING user_id, name, email, created_at`,
+          [name, email, passwordHash]
+        );
 
-      await db.query(
-        `INSERT INTO sessions (
-          user_id,
-          session_token,
-          created_at,
-          expires_at
-        )
-        VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '2 hours')`,
-        [user.user_id, sessionToken]
-      );
+        const user = insertedUser.rows[0];
+        const sessionToken = crypto.randomBytes(32).toString("hex");
 
-      setSessionCookie(res, sessionToken);
+        await client.query(
+          `INSERT INTO sessions (
+            user_id,
+            session_token,
+            created_at,
+            expires_at
+          )
+          VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '2 hours')`,
+          [user.user_id, sessionToken]
+        );
 
-      return res.status(201).json({ user });
+        await client.query("COMMIT");
+        setSessionCookie(res, sessionToken);
+        return res.status(201).json({ user });
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     } catch (error) {
       if (error.code === "23505") { // Unique violation error code from PostgreSQL
         return res.status(409).json({ message: "Email already exists" });
@@ -262,7 +276,7 @@ module.exports = function authRoutes(db, { deletionService } = {}) {
       if (email.length > MAX_EMAIL_LENGTH || !isValidEmail(email)) {
         return res.status(400).json({
           message:
-            "Email must be valid and end in .com, .gov, .edu, .net, or .org",
+            "Email must be valid, be at most 50 characters, and end in .com, .gov, .edu, .net, .org, or .mil",
         });
       }
 
