@@ -327,13 +327,6 @@ export default function Registration({
               className="register-button"
               type="submit"
               disabled={!isRegistrationValid || isSubmitting}
-              style={{
-                opacity: !isRegistrationValid || isSubmitting ? 0.5 : 1,
-                cursor:
-                  !isRegistrationValid || isSubmitting
-                    ? "not-allowed"
-                    : "pointer",
-              }}
             >
               {isSubmitting ? "Creating Account..." : "Create Account"}
             </button>
