@@ -8,13 +8,14 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from contextlib import contextmanager
 
 
 RUNNER_PATH = (
     Path(__file__).resolve().parents[1]
-    / "docs"
-    / "pywinauto-vm-notepad-demo"
+    / "WindowsVm"
+    / "shared"
     / "vm-notepad-runner.py"
 )
 RUNNER_SPEC = importlib.util.spec_from_file_location("vm_notepad_runner", RUNNER_PATH)
@@ -37,6 +38,14 @@ class VmAgentLifecycleTest(unittest.TestCase):
         (active_root / "current-run.json").write_text(
             json.dumps({"runId": self.run_id}), encoding="utf-8"
         )
+        # Catches any test that attempts an actual process launch
+        platform_stub = patch.object(runner.platform, "platform", return_value="Windows")
+        platform_stub.start()
+        self.addCleanup(platform_stub.stop)
+        process_stub = patch.object(runner.subprocess, "Popen", side_effect=AssertionError("Unexpected process launch during test"))
+        blocked = process_stub.start()
+        self.addCleanup(process_stub.stop)
+        self.addCleanup(blocked.assert_not_called)
 
     def tearDown(self) -> None:
         # remove the temporary shared folder after the test has inspected its files
@@ -54,6 +63,7 @@ class VmAgentLifecycleTest(unittest.TestCase):
             "createdUtc": "2026-10-04T00:00:00Z",
             "payload": {} if payload is None else payload,
         }
+        Path(self.context["resultPath"]).unlink(missing_ok=True)
         # Put the task in this temporary run folder for the agent to read.
         runner.write_json_atomically(Path(self.context["taskPath"]), task)
         return task
@@ -202,15 +212,16 @@ class VmAgentLifecycleTest(unittest.TestCase):
     def test_script_runner_reports_nonzero_and_invalid_json_output(self) -> None:
         # A launched runner can fail at the process or result-contract boundary.
         fixtures = [
-            ("nonzero", "import sys\nsys.stderr.write('runner stderr')\nsys.exit(7)\n", "failed with exit code 7"),
-            ("empty", "# no stdout\n", "did not return valid JSON"),
-            ("malformed", "print('{')\n", "did not return valid JSON"),
+            ("nonzero", "", "runner stderr", 7, "failed with exit code 7"),
+            ("empty", "", "", 0, "did not return valid JSON"),
+            ("malformed", "{", "", 0, "did not return valid JSON"),
         ]
-        for label, source, message in fixtures:
+        for label, stdout, stderr, exit_code, message in fixtures:
             with self.subTest(label=label):
                 # Run a small real Python fixture so stdout and stderr use the normal process path.
-                self.write_custom_runner_task("python", "uploaded-runner.py", source)
-                result = self.assert_failed_result(message)
+                self.write_custom_runner_task("python", "uploaded-runner.py", "# Not executed.")
+                with self.mocked_uploaded_process(stdout=stdout, stderr=stderr, exit_code=exit_code):
+                    result = self.assert_failed_result(message)
                 # A non-zero runner should still retain its stderr diagnostic.
                 if label == "nonzero":
                     self.assertEqual(result["details"]["process"]["stderr"], "runner stderr")
@@ -225,7 +236,8 @@ class VmAgentLifecycleTest(unittest.TestCase):
         )
 
         # Run the task normally and read the published result.
-        self.assertTrue(runner.process_queued_active_task(self.shared_root))
+        with self.mocked_uploaded_process(stdout=json.dumps({"status": "completed", "message": "ok"}), stderr="success diagnostic"):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
         result = self.read_json(Path(self.context["resultPath"]))
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["details"]["process"]["stderr"], "success diagnostic")
@@ -282,6 +294,9 @@ class VmAgentLifecycleTest(unittest.TestCase):
         self.assertEqual(result["details"], {"executor": "fixture"})
         self.assertEqual(heartbeat["agent"]["status"], "idle")
         self.assertEqual(heartbeat["agent"]["runId"], "")
+        next_executor = Mock()
+        self.assertFalse(runner.process_queued_active_task(self.shared_root, executor=next_executor))
+        next_executor.assert_not_called()
 
     def test_executor_failure_publishes_failed_task_and_result(self) -> None:
         self.write_task()
@@ -297,6 +312,14 @@ class VmAgentLifecycleTest(unittest.TestCase):
         self.assertEqual(result["message"], "fixture failure")
         self.assertEqual(result["details"]["errorType"], "ValueError")
         self.assertIn("completedUtc", task)
+        self.assertIn("finishedUtc", result)
+        # The agent must return to idle after a failed executor.
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(heartbeat["agent"]["runId"], "")
+        next_executor = Mock()
+        self.assertFalse(runner.process_queued_active_task(self.shared_root, executor=next_executor))
+        next_executor.assert_not_called()
 
     def test_cancellation_before_execution_publishes_cancelled_task_and_result(self) -> None:
         self.write_task()
@@ -423,30 +446,65 @@ class VmAgentLifecycleTest(unittest.TestCase):
             )
         self.assertEqual(checks, 2)
 
-    def test_notepad_window_is_closed_after_cancellation_or_automation_failure(self) -> None:
-        class FixtureWindow:
-            def __init__(self) -> None:
-                self.close_calls = 0
+    def test_notepad_cleanup_precedes_terminal_publication(self) -> None:
+        # The cleanup callback must run before the result is published.
+        cases = (
+            (None, None, "completed"),
+            (RuntimeError("execution failed"), None, "failed"),
+            (runner.AgentTaskCancelled("cancelled"), None, "cancelled"),
+            (runner.AgentTaskTimedOut("timed out"), None, "failed"),
+            (RuntimeError("execution failed"), OSError("cleanup failed"), "failed"),
+            (None, OSError("cleanup failed"), "failed"),
+        )
+        for failure, cleanup_error, expected_status in cases:
+            with self.subTest(failure=failure, cleanup_error=cleanup_error):
+                self.write_task()
+                application = Mock()
+                application.is_process_running.side_effect = [True, False]
+                application.kill.side_effect = cleanup_error
+                original_write_result = runner.write_active_result
+                def execute(plan, **kwargs):
+                    # The opened_app_callback must run before the result is published.
+                    kwargs["opened_app_callback"](application)
+                    if failure is not None:
+                        raise failure
+                    return {"status": "completed"}
+                def publish(context, result):
+                    # The result is published after the cleanup callback runs.
+                    application.kill.assert_called_once_with(soft=False)
+                    return original_write_result(context, result)
+                with patch.object(runner, "_execute_notepad_plan", side_effect=execute), patch.object(runner, "write_active_result", side_effect=publish), patch.object(runner.sys, "stderr"):
+                    self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=lambda *_: runner.execute_notepad_plan({"tasks": []})))
 
-            def close(self) -> None:
-                self.close_calls += 1
+                task = self.read_json(Path(self.context["taskPath"]))
+                result = self.read_json(Path(self.context["resultPath"]))
+                heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+                self.assertEqual(task["status"], expected_status)
+                self.assertTrue(task["completedUtc"])
+                self.assertEqual(result["status"], expected_status)
+                self.assertTrue(result["finishedUtc"])
+                self.assertEqual(heartbeat["agent"]["status"], "idle")
+                self.assertEqual(heartbeat["agent"]["runId"], "")
+                if failure is not None:
+                    self.assertEqual(result["message"], str(failure))
+                elif cleanup_error is not None:
+                    self.assertIn("cleanup failed", result["message"])
 
-        for failure in (runner.AgentTaskCancelled("fixture cancellation"), RuntimeError("fixture failure")):
-            window = FixtureWindow()
-            original_execute = runner._execute_notepad_plan
+    def test_notepad_startup_failure_cleans_up_owned_process(self):
+        for failing_stage in ("start", "window"):
+            with self.subTest(failing_stage=failing_stage):
+                application = Mock()
+                application.is_process_running.side_effect = [True, False]
+                getattr(application, failing_stage).side_effect = RuntimeError("startup failed")
+                pywinauto = Mock(Application=Mock(return_value=application))
 
-            def fixture_execute(*args, **kwargs):
-                kwargs["opened_window_callback"](window)
-                raise failure
+                def execute(plan, **kwargs):
+                    return runner.open_app({}, 1, opened_app_callback=kwargs["opened_app_callback"])
 
-            runner._execute_notepad_plan = fixture_execute
-            try:
-                with self.assertRaises(type(failure)):
-                    runner.execute_notepad_plan({"tasks": []})
-            finally:
-                runner._execute_notepad_plan = original_execute
-
-            self.assertEqual(window.close_calls, 1)
+                with patch.dict("sys.modules", {"pywinauto": pywinauto}), patch.object(runner, "_execute_notepad_plan", side_effect=execute):
+                    with self.assertRaisesRegex(RuntimeError, "startup failed"):
+                        runner.execute_notepad_plan({"tasks": []})
+                application.kill.assert_called_once_with(soft=False)
 
     def test_terminate_child_process_tree_uses_windows_taskkill(self) -> None:
         class FixtureProcess:
@@ -479,8 +537,9 @@ class VmAgentLifecycleTest(unittest.TestCase):
             {"iterationTimeoutSeconds": 5, "captureIntervalSeconds": 60},
         )
 
-        self.assertTrue(runner.process_queued_active_task(self.shared_root))
-
+        with self.mocked_uploaded_process(stdout=json.dumps({"status": "completed", "message": "Python fixture completed.", "artifacts": {"report": "artifacts/report.txt"}, "details": {"runner": "python"}})) as popen:
+            self.assertTrue(runner.process_queued_active_task(self.shared_root))
+            popen.assert_called_once()
         result = self.read_json(Path(self.context["resultPath"]))
         heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
         self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
@@ -703,9 +762,9 @@ class VmAgentLifecycleTest(unittest.TestCase):
         }
         runner.write_json_atomically(Path(self.context["resultPath"]), existing_result)
 
-        self.assertFalse(runner.process_queued_active_task(self.shared_root))
+        self.assertTrue(runner.process_queued_active_task(self.shared_root))
         self.assertEqual(self.read_json(Path(self.context["resultPath"])), existing_result)
-        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "running")
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
 
     def test_bounded_agent_loop_claims_and_completes_one_noop_task(self) -> None:
         self.write_task(task_type="noop")
@@ -865,6 +924,106 @@ class VmAgentLifecycleTest(unittest.TestCase):
             runner.resolve_notepad_file_path("nested/proof.txt", file_dir=artifacts_root),
             artifacts_root / "proof.txt",
         )
+    def test_terminal_result_finalizes_queued_task_without_execution(self):
+        # verify that a queued task with an existing terminal result is finalized without execution
+        task = self.write_task()
+        result_path = Path(self.context["resultPath"])
+        existing = runner.build_active_result(self.context, task, "failed", "previous failure")
+        runner.write_json_atomically(result_path, existing)
+        original_result = result_path.read_bytes()
+        executer = Mock()
+        self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executer))
+        persisted = self.read_json(Path(self.context["taskPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(persisted["status"], "failed")
+        self.assertTrue(persisted["completedUtc"])
+        self.assertEqual(result_path.read_bytes(), original_result)
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(heartbeat["agent"]["runId"], "")
+        self.assertFalse(runner.process_queued_active_task(self.shared_root, executor=executer))
+        executer.assert_not_called()
+    def test_logging_failure_prserves_execution_failure(self):
+        # verify that a failure to write the result does not mask the execution failure
+        task = self.write_task()
+        original_open = Path.open
+        log_paths = {self.shared_root / "agent-install-log.txt", Path(self.context["taskLogPath"]),}
+        def failing_log_open(path, *args, **kwargs):
+            if path in log_paths:
+                raise PermissionError(f"log unavailable")
+            return original_open(path, *args, **kwargs)
+        executor = Mock(side_effect=RuntimeError("execution failed"))
+        with patch.object(Path, "open", new=failing_log_open), patch.object(runner.sys, "stderr"):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        executor.assert_called_once()
+        result = self.read_json(Path(self.context["resultPath"]))
+        task = self.read_json(Path(self.context["taskPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["message"], "execution failed")
+        self.assertEqual(result["details"]["errorType"], "RuntimeError")
+        self.assertTrue(result["artifactsFinalized"])
+        self.assertEqual(task["status"], "failed")
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(heartbeat["agent"]["runId"], "")
+    def test_existing_directory_error_183_does_not_block_execution(self):
+        # verify that a failure to create the artifacts directory due to an existing directory does not block execution
+        task = self.write_task()
+        original_mkdir = Path.mkdir
+        executor = Mock(return_value={"status": "completed"})
+        def shared_mkdir(directory, *args, **kwargs):
+            if directory == self.run_root:
+                raise FileExistsError(17, "Already exists", str(directory), 183)
+            return original_mkdir(directory, *args, **kwargs)
+        with patch.object(Path, "mkdir", new=shared_mkdir):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        executor.assert_called_once()
+        self.assertEqual(self.read_json(Path(self.context["taskPath"]))["status"], "completed")
+        self.assertEqual(self.read_json(Path(self.context["resultPath"]))["status"], "completed")
+    def test_directory_helper_preserves_real_errors(self):
+        # verify that a failure to create the artifacts directory due to a real error is preserved
+        occupied = self.run_root / "occupied"
+        occupied.write_text("keep this", encoding="utf-8")
+        with self.assertRaises(OSError):
+            runner.ensure_directory(occupied)
+        self.assertEqual(occupied.read_text(encoding="utf-8"), "keep this")
+        with patch.object(Path, "mkdir", side_effect=PermissionError("denied")):
+            with self.assertRaises(PermissionError):
+                runner.ensure_directory(self.run_root / "denied")
+    def test_initialization_failure_is_terminal_without_replay(self):
+        # verify that a failure to initialize the run context is terminal and does not allow replay
+        self.write_task()
+        executor = Mock()
+        with patch.object(runner, "ensure_run_output_layout", side_effect=PermissionError("initialization failed")):
+            self.assertTrue(runner.process_queued_active_task(self.shared_root, executor=executor))
+        task = self.read_json(Path(self.context["taskPath"]))
+        result = self.read_json(Path(self.context["resultPath"]))
+        heartbeat = self.read_json(self.shared_root / "agent-heartbeat.json")
+        self.assertEqual(task["status"], "failed")
+        self.assertTrue(task["completedUtc"])
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["finishedUtc"])
+        self.assertEqual(result["details"]["errorType"], "PermissionError")
+        self.assertEqual(result["message"], "initialization failed")
+        self.assertEqual(heartbeat["agent"]["status"], "idle")
+        self.assertEqual(heartbeat["agent"]["runId"], "")
+        self.assertFalse(runner.process_queued_active_task(self.shared_root, executor=executor))
+        executor.assert_not_called()
+    @contextmanager
+    def mocked_uploaded_process(self, *, stdout, stderr="", exit_code=0):
+        """Return a mock process that simulates an uploaded runner execution."""
+        process = Mock(pid=8765)
+        process.poll.return_value = exit_code
+        process.wait.return_value = exit_code
+        def launch(command, **kwargs): # simulate the process launch and write stdout/stderr to the provided streams
+            kwargs["stdout"].write(stdout.encode("utf-8"))
+            kwargs["stderr"].write(stderr.encode("utf-8"))
+            return process
+        def capture(context, task_id, file_name): # simulate capturing a screenshot and returning its relative path
+            path = Path(context["screenshotsRoot"]) / file_name
+            path.write_bytes(b"fake screenshot")
+            return path.relative_to(Path(context["runRoot"])).as_posix()
+        with patch.object(runner.subprocess, "Popen", side_effect=launch) as popen, patch.object(runner, "capture_custom_runner_screenshot", side_effect=capture):
+            yield popen
 
 
 if __name__ == "__main__":
