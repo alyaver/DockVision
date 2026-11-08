@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import Navigation from "../components/Navigation";
 import "../ConfigurationSettings.css";
+import RunInstructions from "../components/RunInstructions.jsx";
 
 const CURRENT_RUN_STORAGE_KEY = "dockvision-current-run";
 
@@ -80,11 +81,6 @@ function ConfigurationSettings() {
     // each display label should be converted to seconds, 1min -> 60secs
     const toSeconds = secondsByLabel[captureFrequency];
 
-    console.log("Selected interval: ", toSeconds)
-    console.log("Selected iterations ", parsedIterations)
-
-    console.log("iterations", typeof parsedIterations)
-
     writeStoredRun({
       runOptions: {
         iterations: parsedIterations,
@@ -109,6 +105,8 @@ function ConfigurationSettings() {
       <main className="page">
         <section className="card">
           <h1 className="title">Configuration Settings</h1>
+
+          <RunInstructions location="configuration" />
 
           <div className="form-row">
             <label htmlFor="capture-frequency">Capture Screenshots</label>

@@ -200,7 +200,71 @@ DB_USER=postgres
 DB_PASSWORD=your_postgres_password
 DB_NAME=postgres
 ```
-The email settings in `server/.env.example` are optional. You only need them if you want forgot-password emails to send from your machine.
+To enable server-side forgot-password email, configure these values only in the
+untracked `server/.env` file or the deployment secret store:
+
+```env
+EMAIL_HOST=your_smtp_host
+EMAIL_PORT=587
+EMAIL_USER=approved_sending_account@example.com
+EMAIL_PASS=provider_app_password_or_smtp_secret
+CLIENT_URL=https://your-dockvision-application-origin
+```
+
+`EMAIL_PASS` is a credential and must never be committed, copied into browser
+code, returned by an API, or included in logs. `CLIENT_URL` must be a bare
+absolute `http` or `https` application origin (for example,
+`http://localhost:5173` during local development); do not include a path,
+query string, or fragment because the server appends the reset route.
+
+Forgot-password delivery is acknowledged only after the configured mail
+transport accepts the message. Missing configuration returns a service error,
+and database or transport failures return a non-confirming error without
+revealing account existence. If mail submission fails after a reset token is
+prepared, the server deletes that specific token by user and token hash before
+reporting the delivery failure. If that cleanup fails, the server reports a
+server error; retrying the request replaces any prior token for the account.
+
+#### Password-reset email operations and recovery
+
+The committed `server/.env.example` contains placeholders only. Keep the real
+SMTP host, sending-account address, application origin, and `EMAIL_PASS` in
+the ignored `server/.env` file for local development or in the deployment
+secret store. The owner of the sending account is responsible for approving
+its use, rotating or revoking its SMTP credential, and updating the secret
+store without committing the replacement value. Confirm the provider's host,
+port, authentication method, and TLS requirements with that owner before
+deployment. The current server enables implicit TLS when `EMAIL_PORT=465`; a
+provider using port `587` uses Nodemailer's STARTTLS negotiation.
+
+`CLIENT_URL` is the application origin shown in reset links. Use the deployed
+HTTPS origin outside local development, and use `http://localhost:5173` only
+when that is the local client origin. The server rejects a missing or malformed
+mail configuration before rate-limit storage, account lookup, token creation,
+or message submission.
+
+| Request outcome | HTTP response | Operational meaning |
+| --- | --- | --- |
+| Valid registered or unregistered address under normal service | `200` with the generic acknowledgement | Do not infer account existence from the response. Only an active registered account receives a message. |
+| Invalid email/body | `400` | Correct the request; no rate-limit row, reset token, or message is created. |
+| Distinct-address or repeated-address limit reached | `429` | Wait for the existing 15-minute window before retrying; the rejected request is not retained. |
+| Missing or invalid server mail configuration | `503` | Restore the server-only mail settings and restart/redeploy as required by the environment before retrying. |
+| Database failure or failed token-cleanup after transport rejection | `500` | Do not claim delivery. Investigate server diagnostics and database health before retrying. |
+| Mail transport rejection after token preparation | `502` | No delivery is confirmed. The server conditionally deletes the token created by that request using both user and token hash; retry only after the provider issue is resolved. |
+
+If the conditional cleanup after a transport rejection also fails, the token
+may remain until a later reset request replaces the account's prior token. Do
+not manually expose, reuse, or copy a raw reset token from server diagnostics;
+resolve the storage/provider issue and have the user request a fresh link.
+
+Before a release, perform one separately authorized controlled delivery check
+using a team-owned test inbox. Do not record that inbox address, credentials,
+or the issued reset token in committed files. Confirm that the request reaches
+the intended inbox, the link begins with the configured `CLIENT_URL` and uses
+`/set-new-password`, the message says it expires in one hour, the token resets
+the password once, and a second use is rejected. This check requires confirmed
+ownership of the sending account, credential, deployed origin, and test inbox;
+automated tests intentionally use a fake transport instead of sending mail.
 
 
 ### 3. Create the database tables
@@ -268,8 +332,88 @@ the backend health check should respond at `http://localhost:5000/api/health`
 
 - Start Docker Desktop before using test-run, container, or Windows VM routes.
 - If registration or login fails on a new setup, make sure PostgreSQL is running and that `server/db/schema.sql` has been applied.
-- Forgot-password requests will return a configuration message until the optional `EMAIL_*` values are set.
+- Forgot-password requests return a configuration error until valid server-only
+  `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, and `CLIENT_URL`
+  values are configured. The backend does not use browser-provided mail or
+  origin settings.
 
+
+
+## Using DockVision Test Runs
+
+Before starting a Test Run, choose the mode that matches the workflow you need.
+
+### Built-In Notepad
+
+Use **Built-In Notepad** for supported standard Notepad workflows. You provide one JSON **Task Plan**; you do not upload a Python or PowerShell Runner Script. The built-in plan currently supports ordered `TYPE` and `CLICK` tasks for `notepad.exe`.
+
+The Task Plan uses the `dockvision.user-task-plan.v1` schema. For example:
+
+```json
+{
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "name": "Notepad example",
+  "app": { "name": "notepad", "executable": "notepad.exe" },
+  "tasks": [
+    { "id": "click-editor", "action": "CLICK", "target": "editor" },
+    { "id": "type-message", "action": "TYPE", "text": "Hello from DockVision" }
+  ]
+}
+```
+
+Use **Custom Runner** instead when the workflow needs custom Python or PowerShell logic or actions outside the supported Built-In Notepad plan.
+
+### Custom Runner
+
+Custom Runner requires both of these files:
+
+1. One `.py` or `.ps1` **Runner Script**.
+2. One `.json` Task Plan or configuration file.
+
+DockVision copies both files into an isolated folder for the Test Run. The original Runner Script filename is retained as metadata, but the guest executes a canonical copied runner file for that run. A Custom Runner is responsible for interpreting the JSON and performing the requested automation; its JSON does not have to use the Built-In Notepad schema.
+
+The guest supplies the Task Plan path through the runner command-line contract:
+
+```text
+python.exe <runner-script> --plan <task-plan>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File <runner-script> -ConfigPath <task-plan>
+```
+
+A compatible runner should read the supplied path rather than relying on a path from the user's computer. It should perform its automation in the Windows guest, write a structured JSON result to standard output, and return a nonzero exit code when execution fails. When a result includes `status`, a successful result reports `completed`.
+
+#### What is my `.py` script looking for?
+
+A Python Runner Script should:
+
+1. Parse `--plan <path>`.
+2. Read and interpret the JSON file at that supplied path.
+3. Perform the requested automation inside the Windows guest.
+4. Print a structured JSON result to standard output.
+5. Return a nonzero exit code when execution fails.
+
+PowerShell runners follow the same responsibilities using `-ConfigPath <path>`. Use the supplied command-line path or paths derived from it; do not depend on a local path that only exists on the user's computer.
+
+#### Prompting an AI assistant for a compatible runner
+
+Give the assistant the DockVision contract explicitly. For example:
+
+```text
+Create a DockVision Python runner. It must accept --plan <path>, read the JSON file at that supplied path, perform the requested automation inside the Windows guest, print one structured JSON result object to stdout, and exit with a nonzero code on failure. If it reports status, use "completed" on success. Do not use a path from the developer's computer or require the user to install guest dependencies.
+```
+
+DockVision does not automatically generate or install a Runner Script from this prompt.
+
+### Troubleshooting
+
+| Message | What it means | What to do |
+| --- | --- | --- |
+| **Python is not available inside the Windows guest** | Guest runtime provisioning has not completed or the agent is not ready. | Wait for the VM/agent to finish setup and retry. Normal users should not manually install Python or pywinauto. |
+| **Runner script was not found** | The uploaded runner was not present in the isolated Test Run folder. | Verify the Runner Script upload and retry. |
+| **Uploaded task plan was not found** | The runner did not receive or correctly use the supplied Task Plan path. | Check the command-line argument handling and use the run-local path supplied by DockVision. |
+| **Runner failed with exit code 1** | The script started but reported an execution failure. | Inspect the Test Run logs and Runner Script output. |
+| **Invalid Task Plan** | The JSON is malformed or does not match the supported Built-In Task Plan contract. | Validate the JSON and confirm that the selected mode matches the file format. |
+
+The guest environment owns runtime setup. End users should not manually install Python, pywinauto, or other guest dependencies.
 
 
 
