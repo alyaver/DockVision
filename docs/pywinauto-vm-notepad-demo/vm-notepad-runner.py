@@ -970,7 +970,10 @@ def process_queued_active_task(
     task_status = str(task.get("status") or "")
     # check for orphaned running tasks that were interrupted by a guest agent restart
     if task_status in {"queued", "running"}:
-        existing_result = read_json_if_present(Path(run_context["resultPath"]))
+        try: # read the existing result.json to see if this task was already completed
+            existing_result = read_json_if_present(Path(run_context["resultPath"]))
+        except (OSError, ValueError):
+            existing_result = None
         # If the result.json already contains a terminal outcome for this task, mark it finished and return.
         if (existing_result and existing_result.get("runId") == task.get("runId") and existing_result.get("taskId") == task.get("taskId")) and existing_result.get("status") in AGENT_TERMINAL_TASK_STATUSES:
             try:
@@ -979,8 +982,7 @@ def process_queued_active_task(
                 write_agent_heartbeat(shared_root, status="idle", task_name="waiting_for_task")
             return True
     if task_status == "running":
-        result_path = Path(run_context["resultPath"])
-        if result_path.is_file():
+        if existing_result is not None: # if the result.json already contains a terminal outcome for this task, mark it finished and return.
             return False
 
         task_id = str(task.get("taskId") or "unknown-task")
