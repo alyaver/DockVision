@@ -121,6 +121,13 @@ input paths, and timestamps for later history/supervisor work. Request-supplied
 cancellation, and run-file access return only records owned by the authenticated
 user. Legacy ownerless records remain stored but are inaccessible to accounts.
 
+The guest publishes `artifactsFinalized: true` only after terminal task state and
+the final task-log write are complete. Built-in execution is synchronous for this
+purpose. A custom runner must report a process exit or confirmed process-tree
+termination; otherwise the terminal result remains available for status and
+diagnostics, but artifact export remains pending. Interrupted running tasks are
+not re-executed and do not claim artifact finalization.
+
 ## Errors and verification
 
 Errors have `{success:false, code, message, fieldErrors:[]}`; validation errors

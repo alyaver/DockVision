@@ -88,6 +88,14 @@
   box-sizing: border-box;
   cursor: pointer;
 }
+.login-button:hover {
+  opacity: 0.85;
+}
+
+.login-value-box:hover,
+.login-password-box:hover {
+  background-color: #e4e4e4;
+} 
 
 .login-secondary-link {
   margin-left: 10px;
