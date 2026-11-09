@@ -8,13 +8,14 @@
   "scripts": {
     "test:task-plan": "node --test tests/task-plan.test.mjs tests/custom-config.test.cjs",
     "test:vm-agent": "python -m unittest tests/vm_agent_lifecycle_test.py",
+    "test:e2e": "playwright test e2e",
     "dev": "concurrently -k -n client,server \"npm run dev -w client\" \"npm run dev -w server\"",
     "dev:client": "npm run dev -w client",
     "dev:server": "npm run dev -w server",
     "install:all": "npm install"
   },
   "devDependencies": {
-    "@playwright/test": "^1.64.1",
+    "@playwright/test": "^1.52.0",
     "concurrently": "^9.0.0"
   },
   "dependencies": {

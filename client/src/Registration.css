@@ -100,7 +100,19 @@
   box-sizing: border-box;
   cursor: pointer;
 }
+.register-button:not(:disabled):hover {
+  opacity: 0.85;
+}
 
+.register-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.register-value-box:hover,
+.register-password-box:hover {
+  background-color: #e4e4e4;
+}
 .register-secondary-link {
   margin-left: 10px;
   text-align: left;

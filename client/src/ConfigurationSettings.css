@@ -2,7 +2,8 @@
   display: flex;
   justify-content: center; 
   align-items: center;    
-  min-height: 100vh;        
+  min-height: calc(100vh - 96px);    
+  background-color:#8FD8FF ;
 }
 
 
@@ -11,6 +12,10 @@
   margin: 40px auto;
   padding: 60px;
   text-align: center;
+}
+
+.card .run-instructions {
+  text-align: left;
 }
 
 .title {
