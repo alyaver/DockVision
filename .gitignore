@@ -170,6 +170,10 @@ client/.vite/*
 /docs/Sprint-08-Team-Review.docx
 tests/__pycache__/vm_agent_lifecycle_test.cpython-312.pyc
 
-docs/password-reset-email-implementation-plan.md
 # Playwright
 /test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+docs/password-reset-email-implementation-plan.md
