@@ -15,6 +15,10 @@ test(
       }),
 
       makeRun({
+        status: 'queued',
+      }),
+
+      makeRun({
         status: 'running',
 
         progress: {
@@ -61,15 +65,24 @@ test(
       })
     );
 
+    await page.route('**/api/profile', route =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            user_id: 'user-poc-001',
+            name: 'E2E User',
+            email: 'e2e@example.test',
+          },
+        }),
+      })
+    );
+
     // Control run polling responses.
     await page.route(
-      `**/api/runs/${RUN_ID}**`,
+      new RegExp(`/api/runs/${RUN_ID}$`),
       async route => {
-
-        if (route.request().method() !== 'GET') {
-          return route.continue();
-        }
-
         const state = states[
           Math.min(pollCount, states.length - 1)
         ];
@@ -87,46 +100,13 @@ test(
         });
       }
     );
-    /*
-    await page.goto(
-      `/running-test?runId=${RUN_ID}`
-    );
-    */
-    // Log browser network requests.
-    page.on('request', request => {
-      console.log(
-        'REQUEST:',
-        request.method(),
-        request.url()
-      );
-    });
-
-    // Log browser network responses.
-    page.on('response', response => {
-      console.log(
-        'RESPONSE:',
-        response.status(),
-        response.url()
-      );
-    });
-
     // Open the Running Test page.
-    await page.goto(
-      `/running-test?runId=${RUN_ID}`
-    );
+    await page.goto(`/running-test/${RUN_ID}`);
 
-
-    await expect(
-      page.getByText(/queued/i).first()
-    ).toBeVisible();
-
-    await expect(
-      page.getByText(/running/i).first()
-    ).toBeVisible();
-
-    await expect(
-      page.getByText(/completed/i).first()
-    ).toBeVisible();
+    const statusBadge = page.locator('.TestPage__statusBadge');
+    await expect(statusBadge).toHaveText('Queued');
+    await expect(statusBadge).toHaveText('Running', { timeout: 5000 });
+    await expect(statusBadge).toHaveText('Completed', { timeout: 5000 });
 
     expect(pollCount).toBeGreaterThanOrEqual(3);
   }
@@ -136,8 +116,6 @@ test(
 test(
   'Running-Test presents a recoverable polling error',
   async ({ page }) => {
-
-    let shouldFail = true;
 
     await page.route('**/api/auth/me', route =>
       route.fulfill({
@@ -153,50 +131,41 @@ test(
       })
     );
 
+    await page.route('**/api/profile', route =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            user_id: 'user-poc-001',
+            name: 'E2E User',
+            email: 'e2e@example.test',
+          },
+        }),
+      })
+    );
+
     await page.route(
-      `**/api/runs/${RUN_ID}**`,
+      new RegExp(`/api/runs/${RUN_ID}$`),
       async route => {
-
-        if (route.request().method() !== 'GET') {
-          return route.continue();
-        }
-
-        if (shouldFail) {
-          shouldFail = false;
-
-          return route.fulfill({
-            status: 503,
-            contentType: 'application/json',
-
-            body: JSON.stringify({
-              success: false,
-              message: 'Fixture API unavailable',
-            }),
-          });
-        }
-
         return route.fulfill({
-          status: 200,
+          status: 503,
           contentType: 'application/json',
 
           body: JSON.stringify({
-            success: true,
-            run: makeRun({
-              status: 'running',
-            }),
+            success: false,
+            message: 'Fixture API unavailable',
           }),
         });
       }
     );
 
     await page.goto(
-      `/running-test?runId=${RUN_ID}`
+      `/running-test/${RUN_ID}`
     );
 
     await expect(
-      page.getByText(
-        /error|unavailable|try again|retry/i
-      ).first()
+      page.getByText('Temporary network issue. Retrying for the latest run status.')
     ).toBeVisible();
   }
 );

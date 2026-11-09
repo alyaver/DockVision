@@ -30,15 +30,24 @@ test(
       })
     );
 
+    await page.route('**/api/profile', route =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            user_id: 'user-poc-001',
+            name: 'E2E User',
+            email: 'e2e@example.test',
+          },
+        }),
+      })
+    );
+
     // Mock completed run with an artifact.
     await page.route(
-      `**/api/runs/${RUN_ID}**`,
+      new RegExp(`/api/runs/${RUN_ID}$`),
       async route => {
-
-        if (route.request().method() !== 'GET') {
-          return route.continue();
-        }
-
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -49,13 +58,12 @@ test(
             run: makeRun({
               status: 'completed',
 
-              artifacts: [
-                {
-                  name: 'text-fixture.bin',
-                  filename: 'text-fixture.bin',
+              artifacts: {
+                artifact: {
+                  fileName: 'text-fixture.bin',
                   url: `/api/runs/${RUN_ID}/files/text-fixture.bin`,
                 },
-              ],
+              },
             }),
           }),
         });
@@ -81,18 +89,16 @@ test(
     );
 
     await page.goto(
-      `/running-test?runId=${RUN_ID}`
+      `/running-test/${RUN_ID}`
     );
 
     const downloadPromise =
       page.waitForEvent('download');
 
-    const downloadControl = page.getByRole(
-      'button',
-      {
-        name: /download.*text-fixture\.bin|text-fixture\.bin.*download/i,
-      }
-    );
+    const downloadControl = page
+      .locator('li')
+      .filter({ hasText: 'text-fixture.bin' })
+      .getByRole('button', { name: 'Download' });
 
     await expect(downloadControl).toBeVisible();
 
@@ -143,8 +149,22 @@ test(
       })
     );
 
+    await page.route('**/api/profile', route =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            user_id: 'user-poc-001',
+            name: 'E2E User',
+            email: 'e2e@example.test',
+          },
+        }),
+      })
+    );
+
     await page.route(
-      `**/api/runs/${RUN_ID}**`,
+      new RegExp(`/api/runs/${RUN_ID}$`),
       route =>
         route.fulfill({
           status: 200,
@@ -156,13 +176,12 @@ test(
             run: makeRun({
               status: 'completed',
 
-              artifacts: [
-                {
-                  name: 'missing.png',
-                  filename: 'missing.png',
+              artifacts: {
+                artifact: {
+                  fileName: 'missing.png',
                   url: `/api/runs/${RUN_ID}/files/missing.png`,
                 },
-              ],
+              },
             }),
           }),
         })
@@ -184,24 +203,22 @@ test(
     );
 
     await page.goto(
-      `/running-test?runId=${RUN_ID}`
+      `/running-test/${RUN_ID}`
     );
 
-    const downloadControl = page.getByRole(
-      'button',
-      {
-        name: /download.*missing\.png|missing\.png.*download/i,
-      }
-    );
+    const downloadControl = page
+      .locator('li')
+      .filter({ hasText: 'missing.png' })
+      .getByRole('button', { name: 'Download' });
 
     await expect(downloadControl).toBeVisible();
 
     await downloadControl.click();
 
     await expect(
-      page.getByText(
-        /not found|unavailable|failed to download/i
-      ).first()
+      page.getByRole('alert').filter({
+        hasText: 'Could not download this artifact.',
+      })
     ).toBeVisible();
   }
 );

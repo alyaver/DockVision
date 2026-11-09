@@ -15,6 +15,21 @@ test(
           success: true,
           user: {
             id: 'user-a',
+            user_id: 'user-a',
+          },
+        }),
+      })
+    );
+
+    await page.route('**/api/profile', route =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: {
+            user_id: 'user-a',
+            name: 'User A',
+            email: 'user-a@example.test',
           },
         }),
       })
@@ -22,7 +37,7 @@ test(
 
     // Mock history response.
     await page.route(
-      '**/api/runs/history**',
+      '**/api/runs',
       route =>
         route.fulfill({
           status: 200,
@@ -33,15 +48,17 @@ test(
 
             runs: [
               {
-                id: 'run-new',
+                runId: 'run-new',
+                testName: 'run-new',
                 status: 'completed',
-                createdAt: '2026-11-04T12:00:00Z',
+                createdUtc: '2026-11-04T12:00:00Z',
               },
 
               {
-                id: 'run-old',
+                runId: 'run-old',
+                testName: 'run-old',
                 status: 'failed',
-                createdAt: '2026-11-03T12:00:00Z',
+                createdUtc: '2026-11-03T12:00:00Z',
               },
             ],
           }),
@@ -51,11 +68,11 @@ test(
     await page.goto('/profile');
 
     await expect(
-      page.getByText('run-new')
+      page.getByText('run-new', { exact: true })
     ).toBeVisible();
 
     await expect(
-      page.getByText('run-old')
+      page.getByText('run-old', { exact: true })
     ).toBeVisible();
 
     // Verify newest run appears first.

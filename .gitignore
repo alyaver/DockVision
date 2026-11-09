@@ -15,6 +15,7 @@ WindowsVm/windows.vars.backup
 !WindowsVm/shared/agent.py
 !WindowsVm/shared/dockvision_notepad_task.py
 !WindowsVm/shared/install-agent.bat
+!WindowsVm/shared/ensure-python-runtime.ps1
 !WindowsVm/shared/vm-notepad-runner.py
 WindowsVm/shared/active/
 WindowsVm/shared/runs/
@@ -168,3 +169,18 @@ client/.vite/*
 # Local sprint review document
 /docs/Sprint-08-Team-Review.docx
 tests/__pycache__/vm_agent_lifecycle_test.cpython-312.pyc
+
+# Playwright test results
+test-results/contact-invalid-input-does-not-submit-a-Contact-request/trace.zip
+test-results/contact-malformed-email-does-not-submit-a-Contact-request/trace.zip
+test-results/contact-network-failure-preserves-content-and-shows-an-error/trace.zip
+test-results/contact-pending-submission-prevents-duplicate-requests/trace.zip
+test-results/contact-successful-submiss-0d111-ed-data-and-clears-the-form/trace.zip
+test-results/contact-pending-submission-prevents-duplicate-requests/error-context.md
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+docs/password-reset-email-implementation-plan.md
