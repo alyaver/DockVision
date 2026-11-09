@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 const {
   RUN_ID,
   makeRun,
-} = require('../fixtures/runFixtures');
+} = require('./fixtures/runFixtures');
 
 test(
   'Running-Test renders queued -> running -> completed progress',

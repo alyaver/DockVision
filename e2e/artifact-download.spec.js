@@ -8,7 +8,7 @@ const {
   makeRun,
   artifactBytes,
   artifactSha256,
-} = require('../fixtures/runFixtures');
+} = require('./fixtures/runFixtures');
 
 
 test(
