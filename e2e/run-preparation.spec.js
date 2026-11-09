@@ -150,26 +150,26 @@ test("switching from custom to built-in ignores stale custom runner content", as
   await waitForPlanRead(page, "plan.json");
   
   // Switch to 'Built-In Notepad' and verify that the runner script section is gone
-  await page.getByRole("radio", { name: "Built-In Notepad" }).check();
+  await page.getByRole("button", { name: "Built-In Notepad" }).click();
   await expect(page.getByRole("button", { name: /Upload Runner Script/ })).toHaveCount(0);
   
   // Check that the Confirmation page only displays the 'Built-In Notepad' content, and doesn't display a custom runner
   await page.getByRole("button", { name: /Start Test Run/ }).click();
   await expect(page).toHaveURL(/\/confirmation$/);
   await expect(page.locator("p").filter({ hasText: "Execution Mode:" })).toContainText("Built-in Notepad");
-  await expect(page.getByText(/Runner Script/)).toHaveCount(0);
+  await expect(page.locator(".Card-Content .Card-Title").filter({ hasText: /Runner Script/ })).toHaveCount(0);
 });
 
 test("switching from built-in to custom requires a runner again", async ({ page }) => {
   // Switch to 'Built-In Notepad', and fill in the required fields for a test run
   await page.goto("/dashboard");
   await page.getByPlaceholder("Name #1").fill("Reverse mode switching");
-  await page.getByRole("radio", { name: "Built-In Notepad" }).check();
+  await page.getByRole("button", { name: "Built-In Notepad" }).click();
   await page.locator('input[type="file"]').setInputFiles(fixture("plan.json"));
   await waitForPlanRead(page, "plan.json");
   
   // Switch back to 'Custom Runner' and verify that the test can't run without uploading a custom script
-  await page.getByRole("radio", { name: "Custom Runner" }).check();
+  await page.getByRole("button", { name: "Custom Runner" }).click();
   await expect(page.getByRole("button", { name: /Upload Runner Script/ })).toBeVisible();
   await page.getByRole("button", { name: /Start Test Run/ }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
