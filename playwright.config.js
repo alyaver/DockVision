@@ -1,60 +1,28 @@
-// @ts-check
-import { defineConfig, devices } from '@playwright/test';
+const { defineConfig, devices } = require('@playwright/test');
 
-const baseURL = 'http://127.0.0.1:4175';
-
-/**
- * Read environment variables from file.
- * https://github.com/motdotla/dotenv
- */
-// import dotenv from 'dotenv';
-// import path from 'path';
-// dotenv.config({ path: path.resolve(__dirname, '.env') });
-
-/**
- * @see https://playwright.dev/docs/test-configuration
- */
-export default defineConfig({
+module.exports = defineConfig({
   testDir: './e2e',
-  /* Run tests in files in parallel */
-  // fullyParallel: true,
-  /* Fail the build on CI if you accidentally left test.only in the source code. */
-  // forbidOnly: !!process.env.CI,
-  /* Retry on CI only */
-  retries: 0,
-  /* Opt out of parallel tests on CI. */
+  fullyParallel: false,
   workers: 1,
-  /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: 'list',
-  /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
+  retries: 0,
+  reporter: [['list']],
+  timeout: 30000,
+  expect: {
+    timeout: 5000,
+  },
   use: {
-    /* Base URL to use in actions like `await page.goto('')`. */
-    // baseURL: 'http://localhost:3000',
-    baseURL,
-    /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
+    baseURL: 'http://localhost:5173',
+    ...devices['Desktop Chrome'],
+    headless: true,
+    acceptDownloads: true,
     trace: 'retain-on-failure',
-
-    /* Block service workers to avoid caching issues during tests */
-    serviceWorkers: 'block',
   },
 
-  /* Configure projects for major browsers */
-  projects: [
-    {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
-    },
-
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
-    },
-  ],
-
-  /* Run your local dev server before starting the tests */
-   webServer: {
-     command:  'npm run dev --workspace client -- --host 127.0.0.1 --port 4175 --strictPort',
-     url: baseURL,
-     reuseExistingServer: false,
+  webServer: {
+    command:
+      'npm run dev -w client -- --host 127.0.0.1 --port 5173 --strictPort',
+    url: 'http://127.0.0.1:5173',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
   },
 });

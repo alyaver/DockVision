@@ -170,6 +170,13 @@ client/.vite/*
 /docs/Sprint-08-Team-Review.docx
 tests/__pycache__/vm_agent_lifecycle_test.cpython-312.pyc
 
+# Playwright test results
+test-results/contact-invalid-input-does-not-submit-a-Contact-request/trace.zip
+test-results/contact-malformed-email-does-not-submit-a-Contact-request/trace.zip
+test-results/contact-network-failure-preserves-content-and-shows-an-error/trace.zip
+test-results/contact-pending-submission-prevents-duplicate-requests/trace.zip
+test-results/contact-successful-submiss-0d111-ed-data-and-clears-the-form/trace.zip
+test-results/contact-pending-submission-prevents-duplicate-requests/error-context.md
 # Playwright
 /test-results/
 /playwright-report/

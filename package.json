@@ -8,19 +8,25 @@
   "scripts": {
     "test:task-plan": "node --test tests/task-plan.test.mjs tests/custom-config.test.cjs",
     "test:vm-agent": "python -m unittest tests/vm_agent_lifecycle_test.py",
-    "test:e2e": "playwright test e2e",
+    "test:e2e": "playwright test",
+    "test:e2e:contact": "playwright test e2e/contact.spec.js",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
     "dev": "concurrently -k -n client,server \"npm run dev -w client\" \"npm run dev -w server\"",
     "dev:client": "npm run dev -w client",
     "dev:server": "npm run dev -w server",
     "install:all": "npm install"
   },
   "devDependencies": {
-    "@playwright/test": "^1.64.1",
+
+    "@playwright/test": "^1.65.0",
     "@types/node": "^26.6.6",
+
     "concurrently": "^9.0.0"
   },
   "dependencies": {
     "dotenv": "^17.4.1",
+    "playwright": "^1.65.0",
     "react-icons": "^5.6.0",
     "run": "^1.5.0"
   }
