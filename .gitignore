@@ -15,6 +15,7 @@ WindowsVm/windows.vars.backup
 !WindowsVm/shared/agent.py
 !WindowsVm/shared/dockvision_notepad_task.py
 !WindowsVm/shared/install-agent.bat
+!WindowsVm/shared/ensure-python-runtime.ps1
 !WindowsVm/shared/vm-notepad-runner.py
 WindowsVm/shared/active/
 WindowsVm/shared/runs/
@@ -168,3 +169,7 @@ client/.vite/*
 # Local sprint review document
 /docs/Sprint-08-Team-Review.docx
 tests/__pycache__/vm_agent_lifecycle_test.cpython-312.pyc
+
+docs/password-reset-email-implementation-plan.md
+# Playwright
+/test-results/
