@@ -1,0 +1,8 @@
+OS/
+Data/
+windows.vars.backup
+shared/*
+!shared/auto-install-agent.bat
+!shared/prepare-agent.ps1
+!shared/ensure-python-runtime.ps1
+!shared/vm-notepad-runner.py

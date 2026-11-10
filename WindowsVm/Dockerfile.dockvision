@@ -1,0 +1,11 @@
+FROM dockurr/windows
+
+LABEL org.opencontainers.image.source="https://github.com/alyaver/DockVision"
+
+# dockurr/windows copies /oem into C:\OEM and runs install.bat during the
+# final step of a new Windows installation. The preparer installs a persistent
+# scheduled task, so later VM starts do not repeat installation.
+COPY shared/auto-install-agent.bat /oem/install.bat
+COPY shared/prepare-agent.ps1 /oem/prepare-agent.ps1
+COPY shared/ensure-python-runtime.ps1 /oem/ensure-python-runtime.ps1
+COPY shared/vm-notepad-runner.py /oem/vm-notepad-runner.py

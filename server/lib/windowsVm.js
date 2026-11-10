@@ -26,7 +26,8 @@ const WINDOWS_VM_HOST_PORTS = {
 const RUNTIME_FILE_NAMES = [
   "vm-notepad-runner.py",
   "ensure-python-runtime.ps1",
-  "install-agent.bat",
+  "prepare-agent.ps1",
+  "auto-install-agent.bat",
 ];
 
 function nowIso() {
