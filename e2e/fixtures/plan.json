@@ -1,0 +1,5 @@
+{
+  "schemaVersion": "dockvision.user-task-plan.v1",
+  "app": { "name": "notepad", "executable": "notepad.exe" },
+  "tasks": [{ "id": "wait", "action": "WAIT", "seconds": 1 }]
+}

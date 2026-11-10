@@ -79,7 +79,7 @@ const ForgotPassword = () => {
               <button
                 className="cancel-Button"
                 type="button"
-                onClick={() => navigate("/sign-in")}
+                onClick={() => navigate("/login")}
               >
                 Cancel
               </button>

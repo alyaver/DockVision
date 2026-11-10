@@ -1,0 +1,148 @@
+.run-instructions {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #303030;
+  text-align: left;
+}
+
+.run-instructions-heading h2,
+.run-mode-summary h3 {
+  margin: 0;
+}
+
+.run-instructions-heading h2 {
+  font-size: 16px;
+}
+
+.run-instructions-eyebrow {
+  margin: 0 0 4px;
+  color: #666;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.run-instructions-summary {
+  margin: 8px 0 0;
+  color: #555;
+  font-size: 13px;
+}
+
+.run-instructions-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.run-mode-summary {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e1e1e1;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+.run-mode-summary--selected {
+  border-color: #555;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
+}
+
+.run-mode-summary:hover {
+  border-color: #777;
+}
+
+.run-mode-summary:focus-visible {
+  outline: 3px solid #2f80ed;
+  outline-offset: 2px;
+}
+
+.run-mode-summary p,
+.run-mode-summary strong,
+.run-instructions-content p,
+.run-instructions-content li,
+.run-instructions-content dd {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.run-mode-summary p {
+  margin: 8px 0;
+}
+
+.run-mode-summary strong {
+  display: block;
+}
+
+.run-instructions-section {
+  margin-top: 8px;
+  border-top: 1px solid #e1e1e1;
+}
+
+.run-instructions-section summary {
+  padding: 10px 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.run-instructions-content {
+  padding: 0 0 8px;
+}
+
+.run-instructions-content p {
+  margin: 6px 0 10px;
+}
+
+.run-instructions-content ul,
+.run-instructions-content ol {
+  padding-left: 22px;
+}
+
+.run-instructions-content dl {
+  margin: 0;
+}
+
+.run-instructions-content dt {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.run-instructions-content dd {
+  margin: 2px 0 0;
+}
+
+.run-instructions-content code,
+.run-instructions-content pre {
+  font-family: Consolas, "Courier New", monospace;
+}
+
+.run-instructions-content pre {
+  max-width: 100%;
+  margin: 10px 0;
+  padding: 10px;
+  overflow-x: auto;
+  border-radius: 5px;
+  background: #202020;
+  color: #f5f5f5;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 640px) {
+  .run-instructions-mode-grid {
+    grid-template-columns: 1fr;
+  }
+}

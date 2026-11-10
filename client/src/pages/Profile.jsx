@@ -654,13 +654,6 @@ export default function Profile() {
                                     <button
                                         type="submit"
                                         disabled={isSaving || !isNameValid || !isEmailValid}
-                                        style={{
-                                            opacity: isSaving || !isNameValid || !isEmailValid ? 0.5 : 1,
-                                            cursor:
-                                            isSaving || !isNameValid || !isEmailValid
-                                                ? "not-allowed"
-                                                : "pointer",
-                                        }}
                                     >
                                             {isSaving ? "Saving..." : "Save changes"}
                                     </button>
@@ -839,13 +832,6 @@ export default function Profile() {
                                     <button
                                         type="submit"
                                         disabled={isSubmittingPassword || !isPasswordFormValid}
-                                        style={{
-                                            opacity: isSubmittingPassword || !isPasswordFormValid ? 0.5 : 1,
-                                            cursor:
-                                            isSubmittingPassword || !isPasswordFormValid
-                                                ? "not-allowed"
-                                                : "pointer",
-                                        }}
                                     >
                                         {isSubmittingPassword ? "Saving password..." : "Save password"}
                                     </button>

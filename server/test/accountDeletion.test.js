@@ -5,8 +5,9 @@ const os = require("node:os");
 const path = require("node:path");
 const { createAccountDeletionService } = require("../lib/accountDeletion");
 
-function fakeDb(userId = 7) {
+function fakeDb(userId = 7, options = {}) {
   let job = null;
+  let connectFailures = options.connectFailures || 0;
   const queries = [];
   return {
     queries,
@@ -28,6 +29,10 @@ function fakeDb(userId = 7) {
       return { rows: [] };
     },
     async connect() {
+      if (connectFailures > 0) {
+        connectFailures -= 1;
+        throw new Error("database transaction unavailable");
+      }
       return {
         query: this.query.bind(this),
         release() {},
@@ -86,4 +91,27 @@ test("account deletion cleanup uses its configured shared root", async (t) => {
   const result = await service.resume(7);
   assert.equal(result.status, "completed");
   await assert.rejects(fs.access(path.join(root, "runs", "owned")));
+});
+
+test("account deletion records a transaction failure and succeeds on retry", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dockvision-delete-retry-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const db = fakeDb(7, { connectFailures: 1 });
+  const service = createAccountDeletionService({
+    db,
+    sharedRoot: root,
+    runs: {
+      listRuns: async () => [],
+      isTerminalStatus: (value) => value === "completed",
+    },
+  });
+
+  await service.accept(7);
+  const failed = await service.resume(7);
+  assert.equal(failed.status, "failed");
+  assert.match(failed.last_error, /transaction unavailable/i);
+
+  const completed = await service.resume(7);
+  assert.equal(completed.status, "completed");
+  assert.equal(db.queries.filter(([sql]) => sql === "COMMIT").length, 1);
 });

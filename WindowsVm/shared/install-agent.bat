@@ -53,6 +53,9 @@ if defined PYTHON_RUNTIME_SOURCE (
     call :log "ERROR: DockVision Python runtime setup failed."
     exit /b 1
   )
+) else (
+  echo DockVision Python runtime setup script is missing. Cannot start the guest agent.
+  exit /b 1
 )
 
 if exist "C:\DockVision\Python311\python.exe" (

@@ -45,6 +45,7 @@ import socket
 import subprocess
 import sys
 import time
+import tempfile
 from ctypes import wintypes
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
@@ -136,6 +137,14 @@ NOTEPAD_TARGETS["notepad.formatMenu"] = NOTEPAD_TARGETS["formatMenu"]
 NOTEPAD_TARGETS["notepad.viewMenu"] = NOTEPAD_TARGETS["viewMenu"]
 NOTEPAD_TARGETS["notepad.helpMenu"] = NOTEPAD_TARGETS["helpMenu"]
 
+# create a directory and its parents if they do not exist
+def ensure_directory(directory: Path) -> None:
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, FileNotFoundError):
+        with tempfile.TemporaryFile(dir=directory):
+            pass  # directory exists and is accessible
+
 
 # Load task-plan.json from disk. This is the first boundary between the planned
 # frontend-generated task list and the runner that executes it.
@@ -148,7 +157,7 @@ def read_json(path: Path) -> dict[str, Any]:
 # Persist result.json in a readable format. This lets teammates verify each
 # resolved control, click point, and completed step after the demo finishes.
 def write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(path.parent)
     with path.open("w", encoding="utf-8") as handle:
         json.dump(value, handle, indent=2)
 
@@ -157,7 +166,6 @@ def write_json_atomically(path: Path, value: dict[str, Any]) -> None:
     """Publish JSON by replacement so readers do not observe a partial file."""
 
     # write a complete temporary file first, then replace the public file in one step
-    path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         with temporary_path.open("w", encoding="utf-8") as handle:
@@ -186,7 +194,7 @@ def resolve_shared_root(
         if candidate.is_dir():
             return candidate
 
-    fallback.mkdir(parents=True, exist_ok=True)
+    ensure_directory(fallback)
     return fallback
 
 
@@ -209,16 +217,19 @@ def ensure_agent_shared_layout(shared_root: Path) -> dict[str, Path]:
     # create the common, active-channel, and run-history folders before writing agent files
     paths = agent_paths(shared_root)
     for key in ("sharedRoot", "activeRoot", "runsRoot"):
-        paths[key].mkdir(parents=True, exist_ok=True)
+        ensure_directory(paths[key])
     return paths
 
 
 def append_agent_install_log(shared_root: Path, message: str) -> None:
     """Append an agent diagnostic without coupling it to run-specific logging."""
 
-    paths = ensure_agent_shared_layout(shared_root)
-    with paths["installLogPath"].open("a", encoding="utf-8") as handle:
-        handle.write(f"[{utc_timestamp()}] {message}\n")
+    try:
+        paths = ensure_agent_shared_layout(shared_root)
+        with paths["installLogPath"].open("a", encoding="utf-8") as handle:
+            handle.write(f"[{utc_timestamp()}] {message}\n")
+    except OSError as exc:
+        print(f"Could not write task log: {exc}", file=sys.stderr)
 
 
 def build_agent_heartbeat(
@@ -276,11 +287,11 @@ def read_json_if_present(path: Path) -> dict[str, Any] | None:
     """Read an optional JSON object; reject empty, scalar, and array payloads."""
 
     # a missing or blank optional file means there is no active value to process
-    if not path.is_file():
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            raw = handle.read().strip()
+    except FileNotFoundError:
         return None
-
-    with path.open("r", encoding="utf-8-sig") as handle:
-        raw = handle.read().strip()
 
     if not raw:
         return None
@@ -531,28 +542,28 @@ def ensure_run_output_layout(run_context: dict[str, Path | str]) -> None:
     """Create the active run's output directories before publishing lifecycle files."""
 
     for context_key in ("runRoot", "logsRoot", "screenshotsRoot", "artifactsRoot"):
-        Path(run_context[context_key]).mkdir(parents=True, exist_ok=True)
+        ensure_directory(Path(run_context[context_key]))
 
 
 def append_run_log(run_context: dict[str, Path | str], message: str) -> None:
     """Append a timestamped diagnostic to the active run's task log."""
-
-    ensure_run_output_layout(run_context)
-    with Path(run_context["taskLogPath"]).open("a", encoding="utf-8") as handle:
-        handle.write(f"[{utc_timestamp()}] {message}\n")
+    try:
+        ensure_directory(Path(run_context["logsRoot"]))
+        with Path(run_context["taskLogPath"]).open("a", encoding="utf-8") as handle:
+            handle.write(f"[{utc_timestamp()}] {message}\n")
+    except OSError as exc:
+        print(f"Could not write task log: {exc}", file=sys.stderr)
 
 
 def write_active_task(run_context: dict[str, Path | str], task: dict[str, Any]) -> None:
     """Atomically publish task status changes to the active channel task path."""
 
-    ensure_run_output_layout(run_context)
     write_json_atomically(Path(run_context["taskPath"]), task)
 
 
 def write_active_result(run_context: dict[str, Path | str], result: dict[str, Any]) -> None:
     """Atomically publish a terminal result to the active channel result path."""
 
-    ensure_run_output_layout(run_context)
     write_json_atomically(Path(run_context["resultPath"]), result)
 
 
@@ -957,9 +968,21 @@ def process_queued_active_task(
 
     run_context, task = active_task
     task_status = str(task.get("status") or "")
+    # check for orphaned running tasks that were interrupted by a guest agent restart
+    if task_status in {"queued", "running"}:
+        try: # read the existing result.json to see if this task was already completed
+            existing_result = read_json_if_present(Path(run_context["resultPath"]))
+        except (OSError, ValueError):
+            existing_result = None
+        # If the result.json already contains a terminal outcome for this task, mark it finished and return.
+        if (existing_result and existing_result.get("runId") == task.get("runId") and existing_result.get("taskId") == task.get("taskId")) and existing_result.get("status") in AGENT_TERMINAL_TASK_STATUSES:
+            try:
+                mark_active_task_finished(run_context, task, existing_result.get("status"))
+            finally:
+                write_agent_heartbeat(shared_root, status="idle", task_name="waiting_for_task")
+            return True
     if task_status == "running":
-        result_path = Path(run_context["resultPath"])
-        if result_path.is_file():
+        if existing_result is not None: # if the result.json already contains a terminal outcome for this task, mark it finished and return.
             return False
 
         task_id = str(task.get("taskId") or "unknown-task")
@@ -994,13 +1017,6 @@ def process_queued_active_task(
 
     task_id = str(task.get("taskId") or "unknown-task")
     task_type = str(task.get("taskType") or "unknown")
-    append_agent_install_log(
-        shared_root, f"Handling task '{task_id}' of type '{task_type}' for run '{run_context['runId']}'."
-    )
-    # publish running state before execution so the server can observe that the agent owns this task
-    mark_active_task_running(run_context, task)
-    write_agent_heartbeat(shared_root, status="running", task_name=task_type, run_id=str(run_context["runId"]))
-    append_run_log(run_context, f"Task '{task_id}' started ({task_type}).")
 
     final_status = "failed"
     result: dict[str, Any]
@@ -1009,6 +1025,11 @@ def process_queued_active_task(
 
     # convert every execution outcome into a supported terminal result without stopping the agent loop
     try:
+        write_agent_heartbeat(shared_root, status="running", task_name=task_type, run_id=(run_context["runId"]))
+        ensure_run_output_layout(run_context)
+        mark_active_task_running(run_context, task)
+        append_agent_install_log(shared_root, f"Handling task '{task_id}' of type '{task_type}' for run '{run_context['runId']}'.")
+        append_run_log(run_context, f"Task '{task_id}' started '{task_type}'.")
         if is_run_cancellation_requested(run_context, shared_root):
             raise AgentTaskCancelled("Cancellation was requested before task execution began.")
 
@@ -1385,7 +1406,7 @@ def write_top_level_windows_snapshot(
             f"rect=({rect['left']},{rect['top']},{rect['right']},{rect['bottom']})"
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(output_path.parent)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
@@ -1490,7 +1511,7 @@ def write_control_tree(
     if len(controls) > limit:
         lines.append(f"... truncated {len(controls) - limit} additional controls")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(output_path.parent)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
@@ -1533,7 +1554,7 @@ def write_control_snapshot(
     if len(controls) > limit:
         lines.append(f"... truncated {len(controls) - limit} additional controls")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(output_path.parent)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return {
@@ -2079,9 +2100,9 @@ def open_app(
     timeout_seconds: int,
     file_dir: Path | None = None,
     abort_check: Callable[[], None] | None = None,
-    opened_window_callback: Callable[[Any], None] | None = None,
+    opened_app_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
-    from pywinauto import Application, Desktop
+    from pywinauto import Application
 
     executable = str(step.get("executable") or "notepad.exe")
     file_name = step.get("fileName")
@@ -2092,10 +2113,10 @@ def open_app(
             target_file = unique_demo_path(target_file)
 
         if bool_value(step.get("resetFile")) or bool_value(step.get("uniqueFilePerRun")):
-            target_file.parent.mkdir(parents=True, exist_ok=True)
+            ensure_directory(target_file.parent)
             target_file.write_text("", encoding="utf-8")
         elif not target_file.exists():
-            target_file.parent.mkdir(parents=True, exist_ok=True)
+            ensure_directory(target_file.parent)
             target_file.touch()
 
         command_line = f'"{executable}" "{target_file}"'
@@ -2106,9 +2127,11 @@ def open_app(
 
     if abort_check is not None:
         abort_check()
-    Application(backend="uia").start(command_line)
-
-    window_spec = Desktop(backend="uia").window(title_re=title_regex)
+    application = Application(backend="uia")
+    if opened_app_callback is not None:
+        opened_app_callback(application)
+    application.start(command_line)
+    window_spec = application.window(title_re=title_regex)
     deadline = time.monotonic() + max(timeout_seconds, 1)
     window = None
     last_error: Exception | None = None
@@ -2129,8 +2152,6 @@ def open_app(
     if window is None:
         detail = f": {type(last_error).__name__}: {last_error}" if last_error is not None else ""
         raise RuntimeError(f"Notepad window did not become visible and ready within {timeout_seconds} seconds{detail}")
-    if opened_window_callback is not None:
-        opened_window_callback(window)
 
     bounds = step.get("windowBounds") or {}
     if bounds:
@@ -2191,7 +2212,7 @@ def _execute_notepad_plan(
     screenshot_name: str | None = None,
     capture_screenshot: bool | None = None,
     abort_check: Callable[[], None] | None = None,
-    opened_window_callback: Callable[[Any], None] | None = None,
+    opened_app_callback: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     from pywinauto import mouse
     from pywinauto.keyboard import send_keys
@@ -2212,7 +2233,7 @@ def _execute_notepad_plan(
         except (AgentTaskCancelled, AgentTaskTimedOut):
             raise
 
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    ensure_directory(artifact_dir)
 
     # Startup is runner-owned now. The user-authored JSON task list should not
     # have to include OPEN_APP or INSPECT just to make CLICK/TYPE possible.
@@ -2222,7 +2243,7 @@ def _execute_notepad_plan(
         timeout_seconds,
         file_dir=file_dir,
         abort_check=check_abort,
-        opened_window_callback=opened_window_callback,
+        opened_app_callback=opened_app_callback,
     )
     active_window = opened["window"]
     check_abort()
@@ -2352,7 +2373,7 @@ def _execute_notepad_plan(
         check_abort()
         screenshot_path = screenshot_dir / (screenshot_name or "notepad.png")
         try:
-            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            ensure_directory(screenshot_path.parent)
             active_window.capture_as_image().save(screenshot_path)
             artifacts["screenshot"] = artifact_path(screenshot_path, artifact_relative_root)
         except Exception as exc:
@@ -2373,12 +2394,13 @@ def execute_notepad_plan(
 ) -> dict[str, Any]:
     """Run a plan and close only its run-owned Notepad window after a failure."""
 
-    # remember the window opened for this plan so error cleanup cannot close an unrelated Notepad window
-    opened_window: Any | None = None
+    # remember the application opened for this plan so error cleanup cannot close an unrelated Notepad window
+    opened_app: Any | None = None
+    execution_failed = False
 
-    def remember_opened_window(window: Any) -> None:
-        nonlocal opened_window
-        opened_window = window
+    def remember_opened_window(application: Any) -> None:
+        nonlocal opened_app
+        opened_app = application
 
     try:
         return _execute_notepad_plan(
@@ -2390,15 +2412,23 @@ def execute_notepad_plan(
             screenshot_name=screenshot_name,
             capture_screenshot=capture_screenshot,
             abort_check=abort_check,
-            opened_window_callback=remember_opened_window,
+            opened_app_callback=remember_opened_window,
         )
-    except Exception:
-        if opened_window is not None:
-            try:
-                opened_window.close()
-            except Exception:
-                pass
+    except Exception: # catch all exceptions to ensure we attempt cleanup
+        execution_failed = True
         raise
+    finally: # ensure that the Notepad process we opened is terminated after the plan execution, regardless of success or failure
+        if opened_app is not None:
+            try:
+                if opened_app.is_process_running():
+                    opened_app.kill(soft=False)
+                    if opened_app.is_process_running():
+                        raise RuntimeError("Notepad is still running after attempted termination.")
+            except Exception as exc:
+                message = f"Could not close run-owned Notepad: {type(exc).__name__}: {exc}"
+                if not execution_failed:
+                    raise RuntimeError(message) from exc
+                print(message, file=sys.stderr)
 
 
 # Compatibility boundary for existing direct callers and uploaded copies of this

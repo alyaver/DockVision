@@ -53,6 +53,31 @@ test("authentication middleware derives the user from a non-expired session", as
   assert.deepEqual(queries.at(-1).values, ["valid-token"]);
 });
 
+test("deletion-pending sessions receive 423 before protected handlers can cause side effects", async (t) => {
+  let handlerCalls = 0;
+  const db = {
+    async query(sql, values) {
+      assert.match(sql, /deletion_status/);
+      assert.deepEqual(values, ["pending-token"]);
+      return { rows: [{ user_id: 17, deletion_status: "pending" }] };
+    },
+  };
+  const app = express();
+  app.use(cookieParser());
+  app.get("/protected", createRequireAuthenticatedUser({ db }), (req, res) => {
+    handlerCalls += 1;
+    res.json({ ok: true });
+  });
+  const base = await startServer(t, app);
+
+  const response = await fetch(`${base}/protected`, {
+    headers: { Cookie: "session_token=pending-token" },
+  });
+  assert.equal(response.status, 423);
+  assert.equal(handlerCalls, 0);
+  assert.equal((await response.json()).code, "ACCOUNT_DELETION_PENDING");
+});
+
 test("run access authentication does not intercept unrelated public routes", async (t) => {
   const app = express();
   app.use(createRunAccessRouter({

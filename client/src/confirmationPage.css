@@ -6,6 +6,8 @@
   align-items: center;
   min-height: 75vh;
   font-family: sans-serif;
+   background: #8FD8FF;
+  padding: 16px;
 }
 
 .Confirmation-Box {

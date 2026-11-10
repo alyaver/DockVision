@@ -5,7 +5,8 @@
 # - This script makes that guest runtime repeatable by finding or installing
 #   Python, then installing the pywinauto dependency used by our UIA runner.
 # - The automatic guest preparer calls this before registering the Python agent
-#   so uploaded .py files do not require a manual runtime setup step.
+#   and install-agent.bat also calls it for the legacy setup path, so uploaded
+#   .py files do not require a manual Python runtime setup step.
 
 param(
     [string]$SharedRoot = "",
