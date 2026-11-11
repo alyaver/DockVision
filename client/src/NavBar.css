@@ -71,3 +71,130 @@
 .nav-avatar-fallback {
   font-size: 14px;
 }
+/* Compact application header shared by authenticated pages. */
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.nav-bar {
+  min-height: 58px;
+  padding: 0 28px;
+  border-bottom: 1px solid #d2d2d7;
+  background: #ffffff;
+  color: #1d1d1f;
+}
+
+.nav-logo a {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #1d1d1f;
+}
+
+.nav-logo img {
+  display: block;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.nav-brand-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+
+.nav-links {
+  gap: 5px;
+}
+
+.hover-underline,
+.nav-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #3a3a3c;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.hover-underline:hover,
+.nav-button:hover {
+  background: #f0f0f2;
+  color: #1d1d1f;
+  text-decoration: none;
+}
+
+.nav-button--active {
+  background: #e8f1ff;
+  color: #0a5ecb;
+  font-weight: 500;
+}
+
+.nav-button-dark {
+  border: 1px solid #d2d2d7;
+  background: transparent;
+  color: #3a3a3c;
+}
+
+.nav-button-dark:hover {
+  border-color: #b8b8be;
+}
+
+.nav-profile-link {
+  gap: 6px;
+}
+
+.nav-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-basis: 20px;
+}
+
+.nav-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e5e5ea;
+  color: #3a3a3c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nav-button:focus-visible,
+.hover-underline:focus-visible {
+  outline: 3px solid rgba(0, 122, 255, 0.35);
+  outline-offset: 2px;
+}
+
+@media (max-width: 700px) {
+  .nav-bar {
+    min-height: auto;
+    padding: 10px 16px;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .nav-links {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .nav-brand-name {
+    display: none;
+  }
+}
+
+.nav-logo a::after {
+  content: "DockVision";
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}

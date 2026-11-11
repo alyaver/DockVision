@@ -96,7 +96,7 @@ const Navigation = () => {
   }
 
   return (
-    <nav className="nav-bar">
+    <nav className={`nav-bar ${location.pathname === "/dashboard" ? "nav-bar-dashboard" : ""}`}>
       <div className="nav-logo">
         <Link to="/">
           <img src="/src/assets/logo.png" alt="Logo" />

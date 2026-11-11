@@ -146,3 +146,143 @@
     grid-template-columns: 1fr;
   }
 }
+/* Native-style runner selection and disclosure groups. */
+.run-instructions {
+  margin: 24px 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1d1d1f;
+}
+
+.run-instructions-heading {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+
+.run-instructions-heading h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+}
+
+.run-instructions-eyebrow {
+  margin: 0;
+  color: #6e6e73;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.run-instructions-summary {
+  margin: 0;
+  color: #6e6e73;
+}
+
+.run-instructions-mode-grid {
+  gap: 10px;
+  margin: 14px 0 18px;
+}
+
+.run-mode-summary {
+  min-height: 126px;
+  padding: 14px;
+  border-color: #d2d2d7;
+  border-radius: 8px;
+  background: #ffffff;
+  transition: none;
+}
+
+.run-mode-summary--selected {
+  border-color: #007aff;
+  background: #f5f9ff;
+  box-shadow: none;
+}
+
+.run-mode-summary:hover {
+  border-color: #9e9ea4;
+}
+
+.run-mode-summary--selected:hover {
+  border-color: #007aff;
+}
+
+.run-mode-summary:focus-visible {
+  outline: 3px solid rgba(0, 122, 255, 0.3);
+  outline-offset: 2px;
+}
+
+.run-mode-summary h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.run-mode-summary p {
+  margin: 7px 0;
+  color: #515154;
+}
+
+.run-mode-summary strong {
+  color: #3a3a3c;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.run-instructions-section {
+  margin: 0;
+  border-top: 1px solid #e5e5ea;
+}
+
+.run-instructions-section:last-child {
+  border-bottom: 1px solid #e5e5ea;
+}
+
+.run-instructions-section summary {
+  padding: 11px 0;
+  color: #1d1d1f;
+  font-weight: 500;
+}
+
+.run-instructions-section summary::marker {
+  color: #6e6e73;
+}
+
+.run-instructions-section summary:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid rgba(0, 122, 255, 0.3);
+  outline-offset: -1px;
+}
+
+.run-instructions-content {
+  padding: 0 0 14px;
+  color: #515154;
+}
+
+.run-instructions-content p {
+  margin: 0 0 10px;
+}
+
+.run-instructions-content ul,
+.run-instructions-content ol {
+  margin: 0 0 10px;
+}
+
+.run-instructions-content dt {
+  color: #1d1d1f;
+  font-weight: 600;
+}
+
+.run-instructions-content code,
+.run-instructions-content pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.run-instructions-content pre {
+  padding: 12px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  background: #f5f5f7;
+  color: #1d1d1f;
+}

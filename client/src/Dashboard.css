@@ -698,3 +698,472 @@ body, #root {
   min-height: 75vh;
   font-family: sans-serif;
 }
+/* Dashboard utility workspace redesign. These overrides preserve existing behavior and selectors. */
+body,
+#root {
+  min-width: 0;
+  background: #f5f5f7;
+  color: #1d1d1f;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.Dashboard-wrapper {
+  min-height: calc(100vh - 58px);
+  padding: 0 28px 40px;
+  background: #f5f5f7;
+  display: block;
+  overflow: visible;
+}
+
+.dash-hero {
+  padding: 30px 28px 20px;
+  background: #f5f5f7;
+  border-bottom: 1px solid #d2d2d7;
+  text-align: left;
+}
+
+.dash-heading-content,
+.Dashboard-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.dash-welcome {
+  margin: 0;
+  color: #1d1d1f;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.65px;
+  line-height: 1.2;
+}
+
+.dash-welcome span {
+  color: inherit;
+}
+
+.dash-email {
+  margin: 5px 0 0;
+  color: #6e6e73;
+  font-size: 13px;
+}
+
+.Dashboard-page {
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.8fr);
+  gap: 20px;
+  align-items: start;
+  padding-top: 22px;
+}
+
+.card {
+  overflow: hidden;
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.dashboard-history-card {
+  grid-column: 1 / -1;
+}
+
+.card-header {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid #e5e5ea;
+}
+
+.card-header--actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.card-title {
+  margin: 0;
+  color: #1d1d1f;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.15px;
+}
+
+.card-description {
+  margin: 4px 0 0;
+  color: #6e6e73;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.card-body {
+  padding: 18px;
+}
+
+.form-label {
+  color: #3a3a3c;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.form-input {
+  min-height: 36px;
+  margin-bottom: 0;
+  padding: 8px 10px;
+  border-color: #c7c7cc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1d1d1f;
+}
+
+.form-input:focus {
+  border-color: #007aff;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2);
+}
+
+.form-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  margin-bottom: 0;
+}
+
+.runner-upload {
+  display: grid;
+  gap: 6px;
+}
+
+.btn,
+.run-open,
+.run-delete,
+.run-refresh,
+.run-retry {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #c7c7cc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1d1d1f;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  box-shadow: none;
+}
+
+.btn {
+  justify-content: flex-start;
+}
+
+.btn:hover,
+.run-open:hover,
+.run-refresh:hover:not(:disabled),
+.run-retry:hover {
+  border-color: #9e9ea4;
+  background: #f5f5f7;
+  opacity: 1;
+  transform: none;
+}
+
+.btn-primary {
+  margin-top: 6px;
+  border-color: #007aff;
+  background: #007aff;
+  color: #ffffff;
+  justify-content: center;
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: #006edc;
+  background: #006edc;
+}
+
+.btn:focus-visible,
+.run-open:focus-visible,
+.run-delete:focus-visible,
+.run-refresh:focus-visible,
+.run-retry:focus-visible {
+  outline: 3px solid rgba(0, 122, 255, 0.3);
+  outline-offset: 2px;
+}
+
+.btn:disabled,
+.btn-primary:disabled,
+.run-refresh:disabled,
+.run-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-name {
+  margin: 0;
+  color: #515154;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.error-text {
+  color: #d70015;
+  font-size: 12px;
+}
+
+.nav-to-generate-page {
+  margin: 15px 0 0;
+  color: #6e6e73;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nav-to-generate-page a,
+.run-open,
+.run-refresh,
+.run-retry {
+  color: #007aff;
+}
+
+.readiness-alert {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid #f0c6cb;
+  border-radius: 6px;
+  background: #fff7f7;
+  color: #a91b2d;
+  font-size: 12px;
+}
+
+.status-row {
+  padding: 12px 0;
+  border-bottom: 1px solid #e5e5ea;
+}
+
+.status-row:last-child {
+  border-bottom: 0;
+}
+
+.status-header {
+  padding-top: 0;
+}
+
+.status-label {
+  color: #3a3a3c;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.status-value,
+.status-note {
+  color: #6e6e73;
+  font-size: 12px;
+}
+
+.status-badge {
+  min-width: 80px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.status-badge.ready,
+.run-status--completed {
+  border-color: #b7dfc4;
+  background: #edf8f0;
+  color: #248a3d;
+}
+
+.status-badge.unready,
+.run-status--failed {
+  border-color: #f1c0c5;
+  background: #fff1f2;
+  color: #c41f31;
+}
+
+.status-badge.unknown,
+.run-status--queued,
+.run-status--cancelled,
+.run-status--unknown {
+  border-color: #d2d2d7;
+  background: #f5f5f7;
+  color: #6e6e73;
+}
+
+.run-status--running,
+.run-active {
+  border-color: #b5d8ff;
+  background: #edf6ff;
+  color: #0070c9;
+}
+
+.run-dot--queued,
+.run-dot--cancelled {
+  background: #8e8e93;
+}
+
+.run-dot--running {
+  background: #007aff;
+}
+
+.run-dot--completed {
+  background: #34c759;
+}
+
+.run-dot--failed {
+  background: #ff3b30;
+}
+
+.run-item {
+  padding: 14px 18px;
+  border-bottom-color: #e5e5ea;
+}
+
+.run-item:hover {
+  background: #fafafa;
+}
+
+.run-name {
+  color: #1d1d1f;
+}
+
+.run-date,
+.empty-sub {
+  color: #6e6e73;
+}
+
+.run-mode,
+.run-status,
+.run-active {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.run-delete {
+  border-color: #f1c0c5;
+  color: #c41f31;
+}
+
+.run-delete:hover:not(:disabled) {
+  border-color: #c41f31;
+  background: #fff1f2;
+}
+
+.run-list-state,
+.empty-state {
+  padding: 34px 18px;
+  color: #6e6e73;
+}
+
+.run-list-state--error {
+  color: #c41f31;
+}
+
+.run-delete-dialog {
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+}
+
+.Notify {
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+}
+
+.Notify-icon {
+  background: #edf6ff;
+  color: #0070c9;
+}
+
+.Notify-icon.error {
+  background: #fff1f2;
+  color: #c41f31;
+}
+
+.Notify-icon.ready {
+  background: #edf8f0;
+  color: #248a3d;
+}
+
+.Notify-title {
+  color: #1d1d1f;
+}
+
+.Notify-msg,
+.Notify-close {
+  color: #515154;
+}
+
+.Auth-Check {
+  min-height: calc(100vh - 58px);
+  background: #f5f5f7;
+  color: #6e6e73;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (max-width: 820px) {
+  .Dashboard-wrapper {
+    padding: 0 18px 28px;
+  }
+
+  .dash-hero {
+    padding: 24px 18px 16px;
+  }
+
+  .Dashboard-page {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding-top: 16px;
+  }
+
+  .dashboard-history-card {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .dash-welcome {
+    font-size: 24px;
+  }
+
+  .card-header,
+  .card-body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .card-header--actions,
+  .run-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .run-actions {
+    width: 100%;
+  }
+
+  .run-open,
+  .run-delete {
+    flex: 1;
+  }
+}
+
+/* Preserve the existing dashboard markup while allowing the history section to span the workspace. */
+.Dashboard-page > .card:last-child {
+  grid-column: 1 / -1;
+}
+
+.dash-hero > .dash-welcome,
+.dash-hero > .dash-email {
+  width: 100%;
+  max-width: 1180px;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+
+@media (max-width: 820px) {
+  .Dashboard-page > .card:last-child {
+    grid-column: auto;
+  }
+}
