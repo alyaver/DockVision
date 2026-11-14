@@ -109,19 +109,31 @@ test("uncertain network failure is not automatically resubmitted", async ({ page
   await expect(page).toHaveURL(/\/confirmation$/);
 });
 
-test("explicit readiness responses are retried before accepted admission", async ({ page }) => {
+test("confirmation displays readiness progress before accepted admission", async ({ page }) => {
   // Prepare a valid test run
   await prepareConfirmation(page);
 
   // Return a retryable readiness response first, then accept the admission request
   let requestCount = 0;
+  let releaseInitialRequest;
+  const initialRequest = new Promise((resolve) => { releaseInitialRequest = resolve; });
   await page.route("**/api/runs/start", async (route) => {
     requestCount += 1;
     if (requestCount === 1) {
+      // Hold the first response until the initial preparation UI is observed.
+      await initialRequest;
       await route.fulfill({
         status: 409,
         contentType: "application/json",
         body: JSON.stringify({ success: false, code: "GUEST_STARTING", message: "Not ready" }),
+      });
+      return;
+    }
+    if (requestCount === 2) {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ success: false, code: "AGENT_NOT_READY", message: "Agent not ready" }),
       });
       return;
     }
@@ -141,6 +153,17 @@ test("explicit readiness responses are retried before accepted admission", async
 
   // Confirm the test run and check that the retry reaches accepted admission
   await page.getByRole("button", { name: "Confirm" }).click();
+  try {
+    await expect(page.getByRole("status").filter({ hasText: "Checking Windows and preparing your test" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Waiting for readiness…" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Preparing run…" })).toBeDisabled();
+  } finally {
+    releaseInitialRequest();
+  }
+  await expect(page.getByRole("status").filter({ hasText: "Starting Windows." })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Waiting for the Windows test agent to connect and become idle" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Waiting for readiness…" })).toBeDisabled();
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page).toHaveURL(/\/running-test\/run-e2e-ready$/);
-  expect(requestCount).toBe(2);
+  expect(requestCount).toBe(3);
 });

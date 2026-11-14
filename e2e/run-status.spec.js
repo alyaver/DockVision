@@ -1,9 +1,82 @@
 const { test, expect } = require('@playwright/test');
+const { stubAuthenticatedDashboard, stubExportStorage } = require('./support/apiStubs');
 
 const {
   RUN_ID,
   makeRun,
 } = require('./fixtures/runFixtures');
+
+test('Running-Test renders queued -> running -> failed status', async ({ page }) => {
+  await stubAuthenticatedDashboard(page);
+  await stubExportStorage(page);
+  let status = 'queued';
+  await page.route(`**/api/runs/${RUN_ID}`, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        run: makeRun({
+          status,
+          result: status === 'failed'
+            ? { success: false, message: 'Fixture runner failed' }
+            : null,
+        }),
+      }),
+    });
+  });
+
+  await page.goto(`/running-test/${RUN_ID}`);
+  const badge = page.locator('.TestPage__statusBadge');
+  await expect(badge).toHaveText('Queued');
+  status = 'running';
+  await expect(badge).toHaveText('Running');
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
+  status = 'failed';
+  await expect(badge).toHaveText('Failed');
+  await expect(badge).toHaveClass(/status-failed/);
+  await expect(page.getByText('Fixture runner failed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+});
+
+test('Running-Test displays cancelling -> cancelled status without duplicate requests', async ({ page }) => {
+  await stubAuthenticatedDashboard(page);
+  await stubExportStorage(page);
+  let status = 'running';
+  let cancelRequests = 0;
+  await page.route(`**/api/runs/${RUN_ID}`, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, run: makeRun({ status }) }),
+    });
+  });
+  await page.route(`**/api/runs/${RUN_ID}/cancel`, async route => {
+    cancelRequests += 1;
+    status = 'cancelling';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, run: makeRun({ status }) }),
+    });
+  });
+
+  await page.goto(`/running-test/${RUN_ID}`);
+  const badge = page.locator('.TestPage__statusBadge');
+  await expect(badge).toHaveText('Running');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(badge).toHaveText('Cancelling');
+  const cancelling = page.getByRole('button', { name: 'Cancelling...', exact: true });
+  await expect(cancelling).toBeDisabled();
+  // A physical second click on the disabled control must not submit again.
+  const box = await cancelling.boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  status = 'cancelled';
+  await expect(badge).toHaveText('Cancelled');
+  await expect(badge).toHaveClass(/status-cancelled/);
+  await expect(page.locator('.TestPage__cancelButton')).toHaveCount(0);
+  expect(cancelRequests).toBe(1);
+});
 
 test(
   'Running-Test renders queued -> running -> completed progress',
