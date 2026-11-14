@@ -171,7 +171,9 @@ client/.vite/*
 .idea
 # Local sprint review document
 /docs/Sprint-08-Team-Review.docx
-tests/__pycache__/vm_agent_lifecycle_test.cpython-312.pyc
+# Python bytecode and interpreter caches
+__pycache__/
+*.py[cod]
 
 # Playwright test results
 test-results/contact-invalid-input-does-not-submit-a-Contact-request/trace.zip
