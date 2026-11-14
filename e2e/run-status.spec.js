@@ -39,6 +39,50 @@ test('Running-Test renders queued -> running -> failed status', async ({ page })
   await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
 });
 
+test('Running-Test displays failed-run output and diagnostic artifact', async ({ page }) => {
+  await stubAuthenticatedDashboard(page);
+  await stubExportStorage(page);
+  const artifactUrl = `/api/runs/${RUN_ID}/files/iterations/1/artifacts/failure-details.json`;
+
+  await page.route(`**/api/runs/${RUN_ID}`, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        run: makeRun({
+          status: 'failed',
+          result: { status: 'failed', message: 'Runner failed with exit code 7' },
+          logs: {
+            task: ['Runner started.', 'Runner exited with code 7.'],
+          },
+          artifacts: {
+            diagnostic: {
+              fileName: 'failure-details.json',
+              url: artifactUrl,
+            },
+          },
+        }),
+      }),
+    });
+  });
+
+  await page.goto(`/running-test/${RUN_ID}`);
+  await expect(page.locator('.TestPage__statusBadge')).toHaveText('Failed');
+  await expect(page.getByText('Runner failed with exit code 7', { exact: true })).toBeVisible();
+  const taskLog = page.locator('section').filter({
+    has: page.getByRole('heading', { name: 'Task Log', exact: true }),
+  });
+  await expect(taskLog.getByText('Runner started.', { exact: true })).toBeVisible();
+  await expect(taskLog.getByText('Runner exited with code 7.', { exact: true })).toBeVisible();
+  const artifact = page.locator('.TestPage__artifactList li').filter({
+    hasText: 'failure-details.json',
+  });
+  await expect(artifact.getByText('failure-details.json', { exact: true })).toBeVisible();
+  await expect(artifact.getByRole('link', { name: 'Open', exact: true })).toHaveAttribute('href', artifactUrl);
+  await expect(artifact.getByRole('button', { name: 'Download', exact: true })).toBeVisible();
+});
+
 test('Running-Test displays cancelling -> cancelled status without duplicate requests', async ({ page }) => {
   await stubAuthenticatedDashboard(page);
   await stubExportStorage(page);
