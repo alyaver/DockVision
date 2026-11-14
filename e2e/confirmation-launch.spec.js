@@ -109,6 +109,47 @@ test("uncertain network failure is not automatically resubmitted", async ({ page
   await expect(page).toHaveURL(/\/confirmation$/);
 });
 
+test("VM startup failure is displayed without automatic retry or run handoff", async ({ page }) => {
+  await prepareConfirmation(page);
+  const storedBefore = await page.evaluate(() =>
+    JSON.parse(sessionStorage.getItem("dockvision-current-run"))
+  );
+  await page.clock.install();
+
+  let requestCount = 0;
+  const message = "Could not start the Windows VM: Docker is unavailable";
+  await page.route("**/api/runs/start", async (route) => {
+    requestCount += 1;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ success: false, code: "GUEST_START_FAILED", message }),
+    });
+  });
+
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText(message);
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Return", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Waiting for readiness…" })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "Checking Windows and preparing your test" })).toHaveCount(0);
+  await expect(page.getByText("Runner Script (runner.py)", { exact: true })).toBeVisible();
+  await expect(page.getByText("Task Plan (plan.json)", { exact: true })).toBeVisible();
+  const previews = page.locator(".Display-Card pre code");
+  await expect(previews.nth(0)).toHaveText(storedBefore.runnerScriptContent);
+  await expect(previews.nth(1)).toHaveText(storedBefore.configContent);
+
+  // Pass two readiness retry intervals without waiting on the wall clock.
+  await page.clock.fastForward(6000);
+  await expect(page).toHaveURL(/\/confirmation$/);
+  expect(requestCount).toBe(1);
+  const storedAfter = await page.evaluate(() =>
+    JSON.parse(sessionStorage.getItem("dockvision-current-run"))
+  );
+  expect(storedAfter).toEqual(storedBefore);
+  expect(storedAfter.runId).toBeFalsy();
+});
+
 test("confirmation displays readiness progress before accepted admission", async ({ page }) => {
   // Prepare a valid test run
   await prepareConfirmation(page);
