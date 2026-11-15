@@ -331,6 +331,25 @@ the backend health check should respond at `http://localhost:5000/api/health`
 
 
 - Start Docker Desktop before using test-run, container, or Windows VM routes.
+- The supported Windows VM service pulls the public, versioned
+  `ghcr.io/alyaver/dockvision-windows-base:0.1.0` image. On a new guest
+  installation, DockVision prepares Python, automation dependencies, and the guest
+  agent through the image's OEM setup hook. Do not manually run
+  `WindowsVm/shared/install-agent.bat` as part of normal setup.
+- Later VM starts reuse the single persisted `DockVisionAgent` scheduled task. A
+  run is accepted only after the agent publishes a fresh idle heartbeat; a running
+  container by itself is not considered ready.
+- `WindowsVm/OS` and `WindowsVm/shared` remain bind-mounted outside the image, so
+  image pulls and normal starts preserve the guest disk and run data. Pulling a
+  newer container image does not upgrade dependencies already installed inside an
+  existing `WindowsVm/OS` guest disk. Do not use
+  `docker compose down -v` or delete these directories as routine setup.
+- Maintainers build the published base image from `WindowsVm/Dockerfile.dockvision`;
+  normal users do not build that image as part of setup. To publish a version,
+  run the **Publish DockVision Windows Base Image** workflow in GitHub Actions and
+  enter the version without a leading `v` (for example, `0.1.0`). After the first
+  publication, set the `dockvision-windows-base` package visibility to public so
+  normal setup can pull it without registry credentials.
 - If registration or login fails on a new setup, make sure PostgreSQL is running and that `server/db/schema.sql` has been applied.
 - Forgot-password requests return a configuration error until valid server-only
   `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, and `CLIENT_URL`

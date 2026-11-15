@@ -15,15 +15,17 @@ test("confirmation waits through cold startup and delayed agent, then accepts on
       assert.equal(body, payload);
       calls++;
       if (calls === 1) throw notReady("GUEST_STARTING");
-      if (calls === 2) throw notReady("AGENT_NOT_READY");
+      if (calls === 2) throw notReady("GUEST_PREPARING");
+      if (calls === 3) throw notReady("AGENT_NOT_READY");
       return { runId: "run-fixture" };
     },
     now: () => clock, sleep: async (ms) => { clock += ms; },
     onProgress: (message) => messages.push(message),
   });
   assert.equal(accepted.runId, "run-fixture");
-  assert.equal(calls, 3);
+  assert.equal(calls, 4);
   assert.ok(messages.some((message) => message.includes("Starting Windows")));
+  assert.ok(messages.some((message) => message.includes("Preparing the Windows test environment")));
   assert.ok(messages.some((message) => message.includes("test agent")));
 });
 
@@ -35,13 +37,13 @@ test("readiness timeout is bounded and provides recovery instructions", async ()
     launch: async () => { calls++; throw notReady("AGENT_NOT_READY"); },
     now: () => clock, sleep: async (ms) => { clock += ms; },
     timeoutMs: 9000,
-  }), /check that the DockVision agent is running/);
+  }), /automatic guest-preparation status and logs/);
   assert.equal(calls, 3);
 });
 
 test("conflict, validation, startup failure and uncertain network failures are never retried", async () => {
   const { launchWhenReady } = await load();
-  for (const error of [notReady("RUN_ACTIVE"), notReady("GUEST_START_FAILED"),
+  for (const error of [notReady("RUN_ACTIVE"), notReady("GUEST_START_FAILED"), notReady("GUEST_PREPARATION_FAILED"),
     Object.assign(new Error("Invalid"), { status: 400 }), new TypeError("Failed to fetch")]) {
     let calls = 0;
     await assert.rejects(launchWhenReady({}, {

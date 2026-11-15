@@ -4,8 +4,9 @@
 # - Uploaded Python runners execute inside the Windows guest, not on the host.
 # - This script makes that guest runtime repeatable by finding or installing
 #   Python, then installing the pywinauto dependency used by our UIA runner.
-# - install-agent.bat calls this before starting DockVisionAgent.ps1 so the
-#   agent can run uploaded .py files without a manual Python setup step.
+# - The automatic guest preparer calls this before registering the Python agent
+#   and install-agent.bat also calls it for the legacy setup path, so uploaded
+#   .py files do not require a manual Python runtime setup step.
 
 param(
     [string]$SharedRoot = "",
@@ -373,14 +374,14 @@ function Assert-PythonAutomationRuntime {
 
     $verifyResult = Invoke-Python -PythonPath $PythonPath -Arguments @(
         "-c",
-        "import win32ui, win32gui, pythoncom, pywinauto; print('automation-runtime-ok')"
+        "import win32ui, win32gui, pythoncom, pywinauto; from PIL import Image; print('automation-runtime-ok')"
     )
 
     if ($verifyResult.ExitCode -ne 0) {
         throw "Python automation runtime import verification failed: $($verifyResult.Output)"
     }
 
-    Write-SetupLog "Verified pywinauto and pywin32 imports."
+    Write-SetupLog "Verified pywinauto, pywin32, and Pillow imports."
 }
 
 function Ensure-AutomationPackages {
@@ -389,6 +390,7 @@ function Ensure-AutomationPackages {
     Ensure-Pip -PythonPath $PythonPath
     Repair-PyWin32Package -PythonPath $PythonPath
     Ensure-PythonPackage -PythonPath $PythonPath -PackageName "pywinauto"
+    Ensure-PythonPackage -PythonPath $PythonPath -PackageName "Pillow"
     Assert-PythonAutomationRuntime -PythonPath $PythonPath
 }
 

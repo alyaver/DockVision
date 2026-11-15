@@ -76,16 +76,33 @@ An existing terminal result is preserved for the backend supervisor to consume.
 The default readiness adapter checks a running container with a resolved ID and
 an idle agent with no run ID. Heartbeat freshness uses host-observed modification
 time and the existing maximum of 60 seconds or three reported heartbeat intervals.
-The guest installer runs the long-lived Python agent under Windows Task Scheduler,
-with restart-on-failure enabled and no execution time limit, so an unexpected agent
-process exit does not leave the current Windows session with a permanently stale
-heartbeat. Reinstalling the guest agent applies these scheduler settings.
+The supported Compose service pulls the versioned public image
+`ghcr.io/alyaver/dockvision-windows-base:0.1.0`. Maintainers build that image from
+`WindowsVm/Dockerfile.dockvision`; normal setup does not build it locally. On a new
+Windows installation, the base image's OEM `install.bat` hook runs DockVision's
+guest preparer automatically. The preparer installs or repairs the Python runtime,
+deploys the long-lived Python agent, replaces the single `DockVisionAgent` Task
+Scheduler registration, and starts it. The task uses restart-on-failure, no
+execution time limit, and `IgnoreNew` instance handling. Subsequent starts use that
+persistent registration and do not require manual installation. Pulling a newer
+container image does not upgrade dependencies inside an existing persistent
+`WindowsVm/OS` guest disk; versioned guest dependency migration is outside this
+contract.
+
+The preparer writes `guest-preparation.json` in the shared root with schema version
+1 and state `preparing`, `ready`, or `failed`. `GUEST_PREPARING` is a retryable 409.
+`GUEST_PREPARATION_FAILED` is a non-retryable 409 whose message identifies the
+failed preparation step. A `ready` preparation status is not launch readiness:
+admission still requires the fresh, idle heartbeat described below. Existing guest
+installations that predate the status file remain compatible because heartbeat
+readiness is authoritative.
 If the container is missing or stopped, admission calls the existing VM startup
 service and returns `409 GUEST_STARTING`, asking the user to retry after boot.
-The confirmation page handles readiness-only 409 responses automatically at
-three-second intervals for up to five minutes, displaying progress and preserving
-the request. It stops after acceptance, validation/conflict/startup failure, or an
-uncertain network response. Individual HTTP attempts time out after 30 seconds;
+The confirmation page handles readiness-only 409 responses, including
+`GUEST_PREPARING`, automatically at three-second intervals for up to five minutes,
+displaying progress and preserving the request. It stops after acceptance,
+validation/conflict/startup/preparation failure, or an uncertain network response.
+Individual HTTP attempts time out after 30 seconds;
 an uncertain outcome is never automatically resent. Leaving the page aborts
 further attempts, not any run already accepted by the backend. Full mode/settings
 selection remains Ticket 8 work; the current upload flow explicitly uses custom.

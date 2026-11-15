@@ -1,6 +1,7 @@
 services:
   windows:
-    image: dockurr/windows
+    image: ghcr.io/alyaver/dockvision-windows-base:0.1.0
+    pull_policy: always
     container_name: windows
     restart: always
     ports:

@@ -1,6 +1,7 @@
 const waitingMessages = {
   GUEST_STARTING: "Starting Windows. Your test will start automatically when the test agent is ready.",
   GUEST_NOT_READY: "Waiting for Windows to become ready…",
+  GUEST_PREPARING: "Preparing the Windows test environment and starting the test agent…",
   AGENT_NOT_READY: "Waiting for the Windows test agent to connect and become idle…",
 };
 
@@ -29,5 +30,5 @@ export async function launchWhenReady(payload, {
       await sleep(Math.min(intervalMs, Math.max(0, deadline - now())));
     }
   }
-  throw new Error("Windows did not become ready within five minutes. No test was queued by these readiness checks. Open the VM desktop and check that the DockVision agent is running, then retry. Your uploaded files are still here.");
+  throw new Error("Windows did not become ready within five minutes. No test was queued by these readiness checks. Check the automatic guest-preparation status and logs, then retry. Your uploaded files are still here.");
 }

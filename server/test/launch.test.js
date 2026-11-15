@@ -468,6 +468,58 @@ test("real readiness adapter checks running guest and fresh idle heartbeat witho
   await assert.rejects(ready(), { code: "AGENT_NOT_READY" });
 });
 
+test("guest preparation states are actionable and readiness still requires a fresh heartbeat", async (t) => {
+  const f = await fixture(t);
+  const status = { running: true, containerId: "stub", startedAt: new Date(Date.now() - 1000).toISOString() };
+  const ready = createGuestReadiness({ sharedRoot: f.root, getStatus: async () => status });
+  const preparationPath = path.join(f.root, "guest-preparation.json");
+
+  await fs.writeFile(preparationPath, JSON.stringify({
+    schemaVersion: 1, state: "preparing", message: "Installing automation dependencies.",
+  }));
+  await assert.rejects(ready(), (error) => {
+    assert.equal(error.code, "GUEST_PREPARING");
+    assert.equal(error.message, "Installing automation dependencies.");
+    return true;
+  });
+
+  await fs.writeFile(preparationPath, JSON.stringify({
+    schemaVersion: 1, state: "failed", message: "Python dependency verification failed.",
+  }));
+  await assert.rejects(ready(), (error) => {
+    assert.equal(error.code, "GUEST_PREPARATION_FAILED");
+    assert.equal(error.message, "Python dependency verification failed.");
+    return true;
+  });
+
+  await fs.writeFile(preparationPath, JSON.stringify({ schemaVersion: 1, state: "ready" }));
+  await assert.rejects(ready(), { code: "AGENT_NOT_READY" });
+  await fs.writeFile(path.join(f.root, "agent-heartbeat.json"), JSON.stringify({
+    agent: { status: "idle", runId: "", intervalSeconds: 15 },
+  }));
+  assert.deepEqual(await ready(), { containerId: "stub" });
+});
+
+test("preparation failure publishes no run and preserves existing shared data", async (t) => {
+  const f = await fixture(t);
+  const preservedRoot = path.join(f.root, "preserved-run");
+  await fs.mkdir(preservedRoot);
+  await fs.writeFile(path.join(preservedRoot, "result.json"), '{"status":"completed"}');
+  await fs.writeFile(path.join(f.root, "guest-preparation.json"), JSON.stringify({
+    schemaVersion: 1, state: "failed", message: "Scheduled task registration failed.",
+  }));
+  const readiness = createGuestReadiness({
+    sharedRoot: f.root,
+    getStatus: async () => ({ running: true, containerId: "stub" }),
+  });
+  const launch = createLaunchService({ store: f.store, readiness });
+
+  await assert.rejects(launch(custom(), { ownerUserId: 101 }), { code: "GUEST_PREPARATION_FAILED" });
+  assert.equal(await fs.readFile(path.join(preservedRoot, "result.json"), "utf8"), '{"status":"completed"}');
+  await assert.rejects(fs.access(path.join(f.root, "active", "current-run.json")), { code: "ENOENT" });
+  await assert.rejects(fs.access(path.join(f.root, "runs")), { code: "ENOENT" });
+});
+
 test("cold launch starts the VM without publishing; ready retry admits the run", async (t) => {
   const f = await fixture(t);
   let status = { running: false, containerId: null };
